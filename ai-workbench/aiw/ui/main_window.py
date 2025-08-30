@@ -803,11 +803,11 @@ class MainWindow(QMainWindow):
 
         # Handle patch approval requests
         elif event_type == "apply_patch_approval_request":
-            self._handle_patch_approval_request(event_obj)
+            self._handle_patch_approval_request(event_obj, task_id)
 
         # Handle exec approval requests
         elif event_type == "exec_approval_request":
-            self._handle_exec_approval_request(event_obj)
+            self._handle_exec_approval_request(event_obj, task_id)
 
         # Handle MCP tool calls
         elif event_type == "mcp_tool_call_begin":
@@ -1007,9 +1007,9 @@ class MainWindow(QMainWindow):
         self._add_message("system", f"💥 Workflow failed: {workflow_id} - {error}")
         self.status_bar.showMessage(f"Workflow failed: {error}", 5000)
 
-    def _handle_patch_approval_request(self, event_obj):
+    def _handle_patch_approval_request(self, event_obj, submission_id):
         """Handle patch approval request from backend"""
-        main_logger.info(f"_handle_patch_approval_request: {event_obj}")
+        main_logger.info(f"_handle_patch_approval_request: {event_obj}, submission_id: {submission_id}")
 
         try:
             # event_obj is already the msg part of the event
@@ -1051,24 +1051,24 @@ class MainWindow(QMainWindow):
             # Handle the response
             if result == QMessageBox.AcceptRole:
                 # User approved
-                self._send_patch_approval_response(call_id, True, False)
+                self._send_patch_approval_response(submission_id, True, False)
                 self._add_message("system", "✅ Changes approved")
             elif result == QMessageBox.RejectRole:
                 # User rejected
-                self._send_patch_approval_response(call_id, False, False)
+                self._send_patch_approval_response(submission_id, False, False)
                 self._add_message("system", "❌ Changes rejected")
             elif msg_box.clickedButton() == auto_approve_button:
                 # User chose auto-approve
-                self._send_patch_approval_response(call_id, True, True)
+                self._send_patch_approval_response(submission_id, True, True)
                 self._add_message("system", "✅ Changes approved (auto-approve enabled)")
 
         except Exception as e:
             main_logger.error(f"Error handling patch approval request: {e}", exc_info=True)
             self._add_message("system", f"❌ Error processing approval request: {e}")
 
-    def _handle_exec_approval_request(self, event_obj):
+    def _handle_exec_approval_request(self, event_obj, submission_id):
         """Handle exec approval request from backend"""
-        main_logger.info(f"_handle_exec_approval_request: {event_obj}")
+        main_logger.info(f"_handle_exec_approval_request: {event_obj}, submission_id: {submission_id}")
 
         try:
             # event_obj is already the msg part of the event
@@ -1123,17 +1123,17 @@ class MainWindow(QMainWindow):
             if result == QMessageBox.AcceptRole or clicked_button == approve_button:
                 # User approved
                 main_logger.info("User approved the command")
-                self._send_exec_approval_response(call_id, True, False)
+                self._send_exec_approval_response(submission_id, True, False)
                 self._add_message("system", "✅ Command approved and executing...")
             elif clicked_button == reject_button:
                 # User rejected
                 main_logger.info("User rejected the command")
-                self._send_exec_approval_response(call_id, False, False)
+                self._send_exec_approval_response(submission_id, False, False)
                 self._add_message("system", "❌ Command rejected")
             elif clicked_button == auto_approve_button:
                 # User chose auto-approve
                 main_logger.info("User chose auto-approve")
-                self._send_exec_approval_response(call_id, True, True)
+                self._send_exec_approval_response(submission_id, True, True)
                 self._add_message("system", "✅ Command approved (auto-approve enabled)")
             else:
                 main_logger.warning(f"Unknown dialog result: {result}, clicked button: {clicked_button}")
@@ -1142,60 +1142,72 @@ class MainWindow(QMainWindow):
             main_logger.error(f"Error handling exec approval request: {e}", exc_info=True)
             self._add_message("system", f"❌ Error processing command approval request: {e}")
 
-    def _send_exec_approval_response(self, call_id: str, approved: bool, auto_approve: bool = False):
+    def _send_exec_approval_response(self, submission_id: str, approved: bool, auto_approve: bool = False):
         """Send exec approval response back to backend"""
         try:
             from aiw.core.models import Operation
             import time
 
-            # Create user_turn operation with approval response embedded
+            # Convert approval response to ReviewDecision
+            if approved and auto_approve:
+                decision = "approved_for_session"
+            elif approved:
+                decision = "approved"
+            else:
+                decision = "denied"
+
+            # Create ExecApproval operation
             op = Operation(
-                id=f"exec_approval_response_{int(time.time())}",
+                id=submission_id,  # Use the original submission ID
                 op={
-                    "type": "user_turn",
-                    "call_id": call_id,
-                    "approved": approved,
-                    "auto_approve": auto_approve,
-                    "approval_type": "exec"
+                    "type": "exec_approval",
+                    "id": submission_id,
+                    "decision": decision
                 }
             )
 
             # Send the response
             result = self.backend.send_op(op.model_dump())
             if result:
-                main_logger.info(f"Sent exec approval response for call_id: {call_id}")
+                main_logger.info(f"Sent exec approval response for submission_id: {submission_id}, decision: {decision}")
             else:
-                main_logger.error(f"Failed to send exec approval response for call_id: {call_id}")
+                main_logger.error(f"Failed to send exec approval response for submission_id: {submission_id}")
 
         except Exception as e:
             main_logger.error(f"Error sending exec approval response: {e}", exc_info=True)
 
-    def _send_patch_approval_response(self, call_id: str, approved: bool, auto_approve: bool = False):
+    def _send_patch_approval_response(self, submission_id: str, approved: bool, auto_approve: bool = False):
         """Send approval response back to backend"""
         try:
             from aiw.core.models import Operation
 
-            # Create user_turn operation with approval response embedded
+            # Convert approval response to ReviewDecision
+            if approved and auto_approve:
+                decision = "approved_for_session"
+            elif approved:
+                decision = "approved"
+            else:
+                decision = "denied"
+
+            # Create PatchApproval operation
             op = Operation(
-                id=f"approval_response_{int(time.time())}",
+                id=submission_id,  # Use the original submission ID
                 op={
-                    "type": "user_turn",
-                    "call_id": call_id,
-                    "approved": approved,
-                    "auto_approve": auto_approve,
-                    "approval_type": "apply_patch"
+                    "type": "patch_approval",
+                    "id": submission_id,
+                    "decision": decision
                 }
             )
 
-            main_logger.info(f"Created approval response operation: {op.model_dump()}")
+            main_logger.info(f"Created patch approval response operation: {op.model_dump()}")
 
             # Send the response
             result = self.backend.send_op(op.model_dump())
-            main_logger.info(f"Sent approval response: approved={approved}, auto_approve={auto_approve}, result={result}")
+            main_logger.info(f"Sent patch approval response: submission_id={submission_id}, decision={decision}, result={result}")
             main_logger.info(f"Full operation sent: {op.model_dump()}")
 
         except Exception as e:
-            main_logger.error(f"Error sending approval response: {e}", exc_info=True)
+            main_logger.error(f"Error sending patch approval response: {e}", exc_info=True)
             import traceback
             main_logger.error(f"Traceback: {traceback.format_exc()}")
             if 'op' in locals():
