@@ -375,6 +375,10 @@ class MainWindow(QMainWindow):
         self.repo_status_label = QLabel("No repository")
         self.status_bar.addWidget(self.repo_status_label)
 
+        # Working directory status
+        self.cwd_status_label = QLabel("Dir: Project")
+        self.status_bar.addWidget(self.cwd_status_label)
+
         # Progress bar for operations
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
@@ -424,6 +428,7 @@ class MainWindow(QMainWindow):
             # Update UI
             self.repo_info_label.setText(f"Repository: {repo.display_name}")
             self.repo_status_label.setText(f"Repo: {repo_name}")
+            self.cwd_status_label.setText(f"Dir: {repo_name}")
 
             # Load repository files
             self._load_repository_files(repo_path)
@@ -558,7 +563,7 @@ class MainWindow(QMainWindow):
 
             main_logger.info("Backend is available, preparing operation")
 
-            # Prepare context
+            # Prepare context with improved directory detection
             repo_context = {}
             cwd_path = None
             if self.current_repository:
@@ -566,11 +571,32 @@ class MainWindow(QMainWindow):
                 cwd_path = self.current_repository.path
                 main_logger.info(f"Repository context: {repo_context}")
             else:
-                # Use current working directory as fallback
-                import os
-                cwd_path = os.getcwd()
+                # Improved directory detection logic
+                current_file = self.code_editor.get_current_file_path()
+
+                if current_file:
+                    # Use directory of currently open file
+                    import os
+                    from pathlib import Path
+                    file_dir = str(Path(current_file).parent)
+                    cwd_path = file_dir
+                    main_logger.info(f"Using directory of current file: {cwd_path}")
+                else:
+                    # Use AI Workbench project directory as fallback instead of os.getcwd()
+                    import os
+                    from pathlib import Path
+                    # Get the directory containing the ai-workbench project
+                    workbench_dir = Path(__file__).parent.parent.parent  # ai-workbench/aiw/ui/main_window.py -> ai-workbench/
+                    cwd_path = str(workbench_dir)
+                    main_logger.info(f"No repository or file selected, using AI Workbench directory: {cwd_path}")
+
                 repo_context["repository_path"] = cwd_path
-                main_logger.info(f"No repository selected, using current working directory: {cwd_path}")
+
+            # Update working directory status
+            import os
+            from pathlib import Path
+            cwd_display = Path(cwd_path).name if len(cwd_path) > 30 else cwd_path
+            self.cwd_status_label.setText(f"Dir: {cwd_display}")
 
             # Determine operation type - use user_turn with working directory
             current_file = self.code_editor.get_current_file_path()
@@ -586,10 +612,11 @@ class MainWindow(QMainWindow):
                     op = Operation.create_user_turn(enhanced_prompt, normalized_cwd)
                     self._add_message("system", f"📝 Sending request for {Path(current_file).name}...")
                     main_logger.info(f"Created user turn operation with file context for: {current_file}")
+                    main_logger.info(f"Working directory context: {normalized_cwd}")
                 else:
                     op = Operation.create_user_turn(prompt, normalized_cwd)
                     self._add_message("system", "💬 Sending general prompt...")
-                    main_logger.info("Created user turn operation")
+                    main_logger.info(f"Created user turn operation with working directory: {normalized_cwd}")
             else:
                 # Fallback to user_input if no repository is selected
                 if current_file:
@@ -774,6 +801,29 @@ class MainWindow(QMainWindow):
             self.current_message = ""
             self.last_task_id = task_id
 
+        # Handle patch approval requests
+        elif event_type == "apply_patch_approval_request":
+            self._handle_patch_approval_request(event_obj)
+
+        # Handle exec approval requests
+        elif event_type == "exec_approval_request":
+            self._handle_exec_approval_request(event_obj)
+
+        # Handle MCP tool calls
+        elif event_type == "mcp_tool_call_begin":
+            self._handle_mcp_tool_call_begin(event_obj)
+
+        elif event_type == "mcp_tool_call_end":
+            self._handle_mcp_tool_call_end(event_obj)
+
+        # Handle token count updates
+        elif event_type == "token_count":
+            self._handle_token_count(event_obj)
+
+        # Handle session configured
+        elif event_type == "session_configured":
+            self._handle_session_configured(event_obj)
+
         # Show other events only if they contain useful information
         else:
             # Only show events that might be relevant to the user
@@ -956,3 +1006,349 @@ class MainWindow(QMainWindow):
         main_logger.error(f"_on_workflow_failed: workflow={workflow_id}, error={error}")
         self._add_message("system", f"💥 Workflow failed: {workflow_id} - {error}")
         self.status_bar.showMessage(f"Workflow failed: {error}", 5000)
+
+    def _handle_patch_approval_request(self, event_obj):
+        """Handle patch approval request from backend"""
+        main_logger.info(f"_handle_patch_approval_request: {event_obj}")
+
+        try:
+            # event_obj is already the msg part of the event
+            call_id = event_obj.get("call_id", "")
+            changes = event_obj.get("changes", {})
+
+            if not changes:
+                main_logger.warning("No changes found in approval request")
+                return
+
+            # Display the approval request
+            self._add_message("system", "🔄 <b>AI wants to make changes:</b>")
+
+            # Show each file and its changes
+            for file_path, change_info in changes.items():
+                if "update" in change_info:
+                    update_info = change_info["update"]
+                    unified_diff = update_info.get("unified_diff", "")
+
+                    self._add_message("system", f"📝 File: <code>{file_path}</code>")
+                    self._add_message("system", f"<pre>{unified_diff}</pre>")
+
+            # Create approval dialog
+            from PySide6.QtWidgets import QMessageBox, QPushButton
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Approve Changes")
+            msg_box.setText("The AI wants to apply the above changes. Do you approve?")
+            msg_box.setDetailedText(f"Call ID: {call_id}")
+
+            # Add custom buttons
+            approve_button = msg_box.addButton("Approve", QMessageBox.AcceptRole)
+            reject_button = msg_box.addButton("Reject", QMessageBox.RejectRole)
+            auto_approve_button = msg_box.addButton("Auto-Approve All", QMessageBox.ActionRole)
+
+            msg_box.setDefaultButton(approve_button)
+            result = msg_box.exec()
+
+            # Handle the response
+            if result == QMessageBox.AcceptRole:
+                # User approved
+                self._send_patch_approval_response(call_id, True, False)
+                self._add_message("system", "✅ Changes approved")
+            elif result == QMessageBox.RejectRole:
+                # User rejected
+                self._send_patch_approval_response(call_id, False, False)
+                self._add_message("system", "❌ Changes rejected")
+            elif msg_box.clickedButton() == auto_approve_button:
+                # User chose auto-approve
+                self._send_patch_approval_response(call_id, True, True)
+                self._add_message("system", "✅ Changes approved (auto-approve enabled)")
+
+        except Exception as e:
+            main_logger.error(f"Error handling patch approval request: {e}", exc_info=True)
+            self._add_message("system", f"❌ Error processing approval request: {e}")
+
+    def _handle_exec_approval_request(self, event_obj):
+        """Handle exec approval request from backend"""
+        main_logger.info(f"_handle_exec_approval_request: {event_obj}")
+
+        try:
+            # event_obj is already the msg part of the event
+            call_id = event_obj.get("call_id", "")
+            command = event_obj.get("command", [])
+            cwd = event_obj.get("cwd", "")
+
+            if not command:
+                main_logger.warning("No command found in exec approval request")
+                return
+
+            main_logger.info(f"Exec approval request - Call ID: {call_id}, Command: {command}, CWD: {cwd}")
+
+            # Format the command for display
+            command_str = " ".join(command) if isinstance(command, list) else str(command)
+
+            # Display the approval request
+            self._add_message("system", "⚡ <b>AI wants to run a command:</b>")
+            self._add_message("system", f"💻 Command: <code>{command_str}</code>")
+            if cwd:
+                self._add_message("system", f"📁 Directory: <code>{cwd}</code>")
+
+            main_logger.info("About to show exec approval dialog")
+
+            # Create approval dialog
+            from PySide6.QtWidgets import QMessageBox, QPushButton
+
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Approve Command Execution")
+            msg_box.setText("The AI wants to execute the above command. Do you approve?")
+            msg_box.setDetailedText(f"Call ID: {call_id}\nCommand: {command_str}\nDirectory: {cwd}")
+            msg_box.setModal(True)
+            msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowStaysOnTopHint)
+            msg_box.show()
+            msg_box.raise_()
+            msg_box.activateWindow()
+
+            main_logger.info("Exec approval dialog created and shown, about to exec")
+
+            # Add custom buttons
+            approve_button = msg_box.addButton("Approve", QMessageBox.AcceptRole)
+            reject_button = msg_box.addButton("Reject", QMessageBox.RejectRole)
+            auto_approve_button = msg_box.addButton("Auto-Approve All", QMessageBox.ActionRole)
+
+            msg_box.setDefaultButton(approve_button)
+            main_logger.info("About to call msg_box.exec()")
+            result = msg_box.exec()
+            main_logger.info(f"Dialog result: {result}, clicked button: {msg_box.clickedButton()}")
+
+            # Handle the response
+            clicked_button = msg_box.clickedButton()
+            if result == QMessageBox.AcceptRole or clicked_button == approve_button:
+                # User approved
+                main_logger.info("User approved the command")
+                self._send_exec_approval_response(call_id, True, False)
+                self._add_message("system", "✅ Command approved and executing...")
+            elif clicked_button == reject_button:
+                # User rejected
+                main_logger.info("User rejected the command")
+                self._send_exec_approval_response(call_id, False, False)
+                self._add_message("system", "❌ Command rejected")
+            elif clicked_button == auto_approve_button:
+                # User chose auto-approve
+                main_logger.info("User chose auto-approve")
+                self._send_exec_approval_response(call_id, True, True)
+                self._add_message("system", "✅ Command approved (auto-approve enabled)")
+            else:
+                main_logger.warning(f"Unknown dialog result: {result}, clicked button: {clicked_button}")
+
+        except Exception as e:
+            main_logger.error(f"Error handling exec approval request: {e}", exc_info=True)
+            self._add_message("system", f"❌ Error processing command approval request: {e}")
+
+    def _send_exec_approval_response(self, call_id: str, approved: bool, auto_approve: bool = False):
+        """Send exec approval response back to backend"""
+        try:
+            from aiw.core.models import Operation
+            import time
+
+            # Create user_turn operation with approval response embedded
+            op = Operation(
+                id=f"exec_approval_response_{int(time.time())}",
+                op={
+                    "type": "user_turn",
+                    "call_id": call_id,
+                    "approved": approved,
+                    "auto_approve": auto_approve,
+                    "approval_type": "exec"
+                }
+            )
+
+            # Send the response
+            result = self.backend.send_op(op.model_dump())
+            if result:
+                main_logger.info(f"Sent exec approval response for call_id: {call_id}")
+            else:
+                main_logger.error(f"Failed to send exec approval response for call_id: {call_id}")
+
+        except Exception as e:
+            main_logger.error(f"Error sending exec approval response: {e}", exc_info=True)
+
+    def _send_patch_approval_response(self, call_id: str, approved: bool, auto_approve: bool = False):
+        """Send approval response back to backend"""
+        try:
+            from aiw.core.models import Operation
+
+            # Create user_turn operation with approval response embedded
+            op = Operation(
+                id=f"approval_response_{int(time.time())}",
+                op={
+                    "type": "user_turn",
+                    "call_id": call_id,
+                    "approved": approved,
+                    "auto_approve": auto_approve,
+                    "approval_type": "apply_patch"
+                }
+            )
+
+            main_logger.info(f"Created approval response operation: {op.model_dump()}")
+
+            # Send the response
+            result = self.backend.send_op(op.model_dump())
+            main_logger.info(f"Sent approval response: approved={approved}, auto_approve={auto_approve}, result={result}")
+            main_logger.info(f"Full operation sent: {op.model_dump()}")
+
+        except Exception as e:
+            main_logger.error(f"Error sending approval response: {e}", exc_info=True)
+            import traceback
+            main_logger.error(f"Traceback: {traceback.format_exc()}")
+            if 'op' in locals():
+                main_logger.error(f"Operation that failed: {op.model_dump()}")
+            self._add_message("system", f"❌ Error sending approval response: {e}")
+
+    def _handle_mcp_tool_call_begin(self, event_obj):
+        """Handle MCP tool call begin event"""
+        try:
+            msg = event_obj.get("msg", {})
+            call_id = msg.get("call_id", "")
+            invocation = msg.get("invocation", {})
+            server = invocation.get("server", "")
+            tool = invocation.get("tool", "")
+            arguments = invocation.get("arguments", {})
+
+            # Format the tool call message with relevant arguments
+            tool_info = f"{server}.{tool}"
+
+            # Add relevant arguments based on tool type
+            if server == "filesystem":
+                if tool == "read_text_file" and "path" in arguments:
+                    tool_info += f" 📖 {arguments['path']}"
+                    if "head" in arguments:
+                        tool_info += f" (first {arguments['head']} lines)"
+                    elif "tail" in arguments:
+                        tool_info += f" (last {arguments['tail']} lines)"
+                elif tool == "list_directory" and "path" in arguments:
+                    tool_info += f" 📁 {arguments['path']}"
+                elif tool in ["write_text_file", "edit_text_file"] and "path" in arguments:
+                    tool_info += f" ✏️ {arguments['path']}"
+                elif tool == "create_directory" and "path" in arguments:
+                    tool_info += f" � {arguments['path']}"
+                elif tool == "move_path" and "source" in arguments and "destination" in arguments:
+                    tool_info += f" 📁 {arguments['source']} → {arguments['destination']}"
+                elif "path" in arguments:
+                    tool_info += f" 📄 {arguments['path']}"
+            elif server == "git":
+                if tool == "status" and "path" in arguments:
+                    tool_info += f" 📊 {arguments['path']}"
+                elif tool == "commit" and "message" in arguments:
+                    tool_info += f" 💾 {arguments['message'][:50]}..."
+                elif "path" in arguments:
+                    tool_info += f" 📄 {arguments['path']}"
+            elif server == "run_terminal":
+                if tool == "run_command" and "command" in arguments:
+                    cmd = arguments['command']
+                    # Truncate long commands
+                    if len(cmd) > 60:
+                        cmd = cmd[:57] + "..."
+                    tool_info += f" 💻 {cmd}"
+
+            self._add_message("system", f"🔧 AI calling: <code>{tool_info}</code>")
+
+        except Exception as e:
+            main_logger.error(f"Error handling MCP tool call begin: {e}", exc_info=True)
+
+    def _handle_mcp_tool_call_end(self, event_obj):
+        """Handle MCP tool call end event"""
+        try:
+            msg = event_obj.get("msg", {})
+            call_id = msg.get("call_id", "")
+            invocation = msg.get("invocation", {})
+            server = invocation.get("server", "")
+            tool = invocation.get("tool", "")
+            result = msg.get("result", {})
+
+            # Format completion message
+            tool_info = f"{server}.{tool}"
+
+            # Check if the call was successful
+            if "Ok" in result:
+                # Add result summary for certain tools
+                if server == "filesystem":
+                    if tool == "read_text_file":
+                        if "content" in result.get("Ok", {}):
+                            content = result["Ok"]["content"]
+                            if isinstance(content, str):
+                                lines = len(content.split('\n'))
+                                tool_info += f" ✅ Read {lines} lines"
+                            else:
+                                tool_info += f" ✅ Read content"
+                        else:
+                            tool_info += f" ✅ Completed"
+                    elif tool == "list_directory":
+                        if "entries" in result.get("Ok", {}):
+                            entries = result["Ok"]["entries"]
+                            if isinstance(entries, list):
+                                tool_info += f" ✅ Found {len(entries)} items"
+                            else:
+                                tool_info += f" ✅ Listed directory"
+                        else:
+                            tool_info += f" ✅ Completed"
+                    elif tool in ["write_text_file", "edit_text_file"]:
+                        tool_info += f" ✅ File updated"
+                    elif tool == "create_directory":
+                        tool_info += f" ✅ Directory created"
+                    elif tool == "move_path":
+                        tool_info += f" ✅ Path moved"
+                    else:
+                        tool_info += f" ✅ Completed"
+                elif server == "git":
+                    if tool == "status":
+                        tool_info += f" ✅ Status retrieved"
+                    elif tool == "commit":
+                        tool_info += f" ✅ Changes committed"
+                    else:
+                        tool_info += f" ✅ Completed"
+                elif server == "run_terminal":
+                    if tool == "run_command":
+                        if "exit_code" in result.get("Ok", {}):
+                            exit_code = result["Ok"]["exit_code"]
+                            if exit_code == 0:
+                                tool_info += f" ✅ Command succeeded"
+                            else:
+                                tool_info += f" ⚠️ Command failed (exit code: {exit_code})"
+                        else:
+                            tool_info += f" ✅ Command completed"
+                    else:
+                        tool_info += f" ✅ Completed"
+                else:
+                    tool_info += f" ✅ Completed"
+
+                self._add_message("system", f"🔧 AI finished: <code>{tool_info}</code>")
+            elif "Err" in result:
+                error = result.get("Err", "Unknown error")
+                self._add_message("system", f"❌ Tool call failed: <code>{server}.{tool}</code> - {error}")
+            else:
+                self._add_message("system", f"✅ Tool call completed: <code>{server}.{tool}</code>")
+
+        except Exception as e:
+            main_logger.error(f"Error handling MCP tool call end: {e}", exc_info=True)
+
+    def _handle_token_count(self, event_obj):
+        """Handle token count updates"""
+        try:
+            msg = event_obj.get("msg", {})
+            input_tokens = msg.get("input_tokens", 0)
+            output_tokens = msg.get("output_tokens", 0)
+            total_tokens = msg.get("total_tokens", 0)
+
+            # Update status bar with token information
+            self.status_bar.showMessage(f"Tokens: {total_tokens} (In: {input_tokens}, Out: {output_tokens})", 5000)
+
+        except Exception as e:
+            main_logger.error(f"Error handling token count: {e}", exc_info=True)
+
+    def _handle_session_configured(self, event_obj):
+        """Handle session configured event"""
+        try:
+            self._add_message("system", "🔗 Backend session configured and ready")
+            self.backend_status_label.setText("Backend: Connected")
+            self.status_bar.showMessage("Backend ready", 3000)
+
+        except Exception as e:
+            main_logger.error(f"Error handling session configured: {e}", exc_info=True)
