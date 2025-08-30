@@ -110,6 +110,8 @@ class Operation(BaseModel):
     """JSON operation sent to backend"""
     id: str
     op: Dict[str, Any]
+    context: Optional[Dict[str, Any]] = None
+
 
     @classmethod
     def create_user_input(cls, text: str, operation_id: Optional[str] = None) -> 'Operation':
@@ -153,6 +155,22 @@ class Operation(BaseModel):
             op_data["content"] = content
 
         return cls(id=operation_id, op=op_data)
+
+    @classmethod
+    def create_edit_file_operation(cls, file_path: str, instruction: str,
+                                 operation_id: Optional[str] = None) -> 'Operation':
+        """Create an edit file operation"""
+        if operation_id is None:
+            operation_id = f"edit_file_{int(datetime.now().timestamp())}"
+
+        return cls(
+            id=operation_id,
+            op={
+                "type": "edit_file",
+                "file_path": file_path,
+                "instruction": instruction
+            }
+        )
 
 
 class Event(BaseModel):

@@ -70,9 +70,7 @@ class TaskRunner(QThread):
         """Execute the specific task type"""
         task_type = self.task.type
 
-        if task_type == "edit_file":
-            return self._execute_edit_file()
-        elif task_type == "run_tests":
+        if task_type == "run_tests":
             return self._execute_run_tests()
         elif task_type == "apply_patch":
             return self._execute_apply_patch()

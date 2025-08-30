@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 from typing import Optional
-from PySide6.QtCore import Qt, Signal, Slot, QTimer
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread
 from PySide6.QtWidgets import (
     QMainWindow, QTextEdit, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QWidget, QDockWidget, QSplitter, QTreeWidget, QTreeWidgetItem,
@@ -18,9 +18,9 @@ from PySide6.QtGui import QAction, QIcon, QFont
 from ..core.backend_service import BackendService
 from ..core.config import get_config_manager
 from ..core.models import Repository, FileItem, Operation, Task
-from ..core.task_runner import get_workflow_runner
 from .code_editor import CodeEditorWidget
 from .diff_view import DiffViewWidget
+import patch
 
 
 class MainWindow(QMainWindow):
@@ -35,10 +35,7 @@ class MainWindow(QMainWindow):
         self.config_manager = get_config_manager()
         self.current_repository: Optional[Repository] = None
         self.backend: Optional[BackendService] = None
-
-        # Initialize task runner
-        self.task_runner = get_workflow_runner()
-        self._connect_task_signals()
+        self.backend_thread: Optional[QThread] = None
 
         # Initialize message accumulation
         self.current_reasoning = ""
@@ -83,61 +80,56 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Move backend to a new thread
+        self.backend_thread = QThread()
         self.backend = BackendService(codex_path)
+        self.backend.moveToThread(self.backend_thread)
+
+        # Connect signals across threads
+        self.backend_thread.started.connect(self.backend.start)
         self.backend.new_event.connect(self._on_backend_event)
         self.backend.backend_error.connect(self._on_backend_error)
         self.backend.backend_started.connect(self._on_backend_started)
         self.backend.backend_stopped.connect(self._on_backend_stopped)
-        self.backend.start()
+
+        # Start the thread
+        self.backend_thread.start()
 
     def _setup_ui(self):
         """Setup the main UI with docks"""
-        # Create central widget with chat interface
-        central_widget = QWidget()
-        central_layout = QVBoxLayout(central_widget)
-
-        # Console for output
-        self.console_widget = QTextEdit()
-        self.console_widget.setReadOnly(True)
-        self.console_widget.setFont(QFont("Consolas", 10))
-        central_layout.addWidget(self.console_widget)
-
-        # Input area
-        input_layout = QHBoxLayout()
-
-        self.prompt_input = QTextEdit()
-        self.prompt_input.setMaximumHeight(80)
-        self.prompt_input.setFont(QFont("Consolas", 10))
-        self.prompt_input.setPlaceholderText("Enter your prompt here...")
-        input_layout.addWidget(self.prompt_input)
-
-        send_button = QPushButton("Send")
-        send_button.clicked.connect(self._send_prompt)
-        input_layout.addWidget(send_button)
-
-        central_layout.addLayout(input_layout)
-        self.setCentralWidget(central_widget)
+        # Set the code editor as the central widget
+        self.code_editor = CodeEditorWidget()
+        self.setCentralWidget(self.code_editor)
 
         # Create docks
         self._create_repository_dock()
-        self._create_editor_dock()
+        self._create_console_dock()
         self._create_diff_dock()
         self._create_artifacts_dock()
 
         # Setup dock layout
         self.setCorner(Qt.Corner.TopLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
+
+        # Tabify the bottom docks
+        self.tabifyDockWidget(self.console_dock, self.diff_dock)
+        self.tabifyDockWidget(self.diff_dock, self.artifacts_dock)
+
+        # Set initial focus
+        self.console_dock.raise_()
 
     def _create_repository_dock(self):
         """Create repository explorer dock"""
         self.repo_dock = QDockWidget("Repository", self)
         self.repo_dock.setObjectName("Repository")
-        self.repo_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.repo_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
 
         # Repository tree widget
         self.repo_tree = QTreeWidget()
         self.repo_tree.setHeaderLabel("Files")
-        self.repo_tree.itemDoubleClicked.connect(self._on_file_double_clicked)
+        self.repo_tree.itemClicked.connect(self._on_file_clicked) # Changed to single click
 
         # Repository actions
         repo_widget = QWidget()
@@ -152,28 +144,37 @@ class MainWindow(QMainWindow):
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.repo_dock)
 
-    def _create_editor_dock(self):
-        """Create code editor dock"""
-        self.editor_dock = QDockWidget("Editor", self)
-        self.editor_dock.setObjectName("Editor")
-        self.editor_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+    def _create_console_dock(self):
+        """Create the console and prompt input dock"""
+        self.console_dock = QDockWidget("Console", self)
+        self.console_dock.setObjectName("Console")
+        self.console_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
 
-        # Enhanced code editor widget
-        self.code_editor = CodeEditorWidget()
+        console_widget_container = QWidget()
+        console_layout = QVBoxLayout(console_widget_container)
 
-        # Editor actions
-        editor_widget = QWidget()
-        editor_layout = QVBoxLayout(editor_widget)
-        editor_layout.setContentsMargins(0, 0, 0, 0)
+        # Console for output
+        self.console_widget = QTextEdit()
+        self.console_widget.setReadOnly(True)
+        self.console_widget.setFont(QFont("Consolas", 10))
+        console_layout.addWidget(self.console_widget)
 
-        # File info label
-        self.editor_file_label = QLabel("No file selected")
-        editor_layout.addWidget(self.editor_file_label)
+        # Input area
+        input_layout = QHBoxLayout()
+        self.prompt_input = QTextEdit()
+        self.prompt_input.setMaximumHeight(80)
+        self.prompt_input.setFont(QFont("Consolas", 10))
+        self.prompt_input.setPlaceholderText("Enter your prompt here...")
+        input_layout.addWidget(self.prompt_input)
 
-        editor_layout.addWidget(self.code_editor)
-        self.editor_dock.setWidget(editor_widget)
+        send_button = QPushButton("Send")
+        send_button.clicked.connect(self._send_prompt)
+        input_layout.addWidget(send_button)
 
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.editor_dock)
+        console_layout.addLayout(input_layout)
+        self.console_dock.setWidget(console_widget_container)
+
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.console_dock)
 
     def _create_diff_dock(self):
         """Create diff viewer dock"""
@@ -183,6 +184,7 @@ class MainWindow(QMainWindow):
 
         # Enhanced diff viewer widget
         self.diff_viewer = DiffViewWidget()
+        self.diff_viewer.diff_widget.apply_requested.connect(self._on_apply_diff)
 
         self.diff_dock.setWidget(self.diff_viewer)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.diff_dock)
@@ -200,9 +202,6 @@ class MainWindow(QMainWindow):
 
         self.artifacts_dock.setWidget(self.artifacts_list)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.artifacts_dock)
-
-        # Tabify with diff dock
-        self.tabifyDockWidget(self.diff_dock, self.artifacts_dock)
 
     def _setup_menus(self):
         """Setup menu bar"""
@@ -246,9 +245,9 @@ class MainWindow(QMainWindow):
         repo_dock_action.setText("Repository Explorer")
         view_menu.addAction(repo_dock_action)
 
-        editor_dock_action = self.editor_dock.toggleViewAction()
-        editor_dock_action.setText("Code Editor")
-        view_menu.addAction(editor_dock_action)
+        console_dock_action = self.console_dock.toggleViewAction()
+        console_dock_action.setText("Console")
+        view_menu.addAction(console_dock_action)
 
         diff_dock_action = self.diff_dock.toggleViewAction()
         diff_dock_action.setText("Diff Viewer")
@@ -270,10 +269,6 @@ class MainWindow(QMainWindow):
         edit_task_action = QAction("&Edit File with AI", self)
         edit_task_action.triggered.connect(self._run_edit_task)
         tools_menu.addAction(edit_task_action)
-
-        test_task_action = QAction("Run &Tests", self)
-        test_task_action.triggered.connect(self._run_test_task)
-        tools_menu.addAction(test_task_action)
 
     def _setup_toolbar(self):
         """Setup toolbar"""
@@ -305,10 +300,6 @@ class MainWindow(QMainWindow):
         edit_task_action = QAction("AI Edit", self)
         edit_task_action.triggered.connect(self._run_edit_task)
         toolbar.addAction(edit_task_action)
-
-        run_tests_action = QAction("Run Tests", self)
-        run_tests_action.triggered.connect(self._run_test_task)
-        toolbar.addAction(run_tests_action)
 
     def _setup_status_bar(self):
         """Setup status bar"""
@@ -423,8 +414,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.console_widget.append(f"Error loading repository files: {str(e)}")
 
-    def _on_file_double_clicked(self, item, column):
-        """Handle file double-click in repository tree"""
+    def _on_file_clicked(self, item, column):
+        """Handle file click in repository tree"""
         file_path = item.data(0, Qt.ItemDataRole.UserRole)
         if file_path and Path(file_path).is_file():
             self._load_file_into_editor(file_path)
@@ -433,15 +424,48 @@ class MainWindow(QMainWindow):
         """Load a file into the code editor"""
         success = self.code_editor.load_file(file_path)
         if success:
-            self.editor_file_label.setText(f"File: {self.code_editor.editor.get_current_file_name()}")
             self.file_selected.emit(file_path)
-        else:
-            self.editor_file_label.setText("Failed to load file")
 
     def _on_artifact_double_clicked(self, item, column):
         """Handle artifact double-click"""
         # TODO: Implement artifact viewing
         pass
+
+    def _on_apply_diff(self):
+        """Handle request to apply a diff."""
+        current_file = self.code_editor.get_current_file_path()
+        if not current_file:
+            QMessageBox.warning(self, "No File", "An open file is required to apply a patch.")
+            return
+
+        selected_diff_text = self.diff_viewer.diff_widget.get_selected_diff_text()
+        if not selected_diff_text:
+            QMessageBox.information(self, "No Changes Selected", "Please select one or more hunks to apply.")
+            return
+
+        try:
+            # Get the original content from the editor
+            original_content = self.code_editor.editor.toPlainText()
+            
+            # Create a patch set from the diff text
+            patch_set = patch.from_string(selected_diff_text.encode('utf-8'))
+            
+            # Apply the patch in memory
+            patched_content = patch_set.apply(original_content.encode('utf-8'))
+            
+            if patched_content:
+                # Update the editor with the patched content
+                self.code_editor.set_text(patched_content.decode('utf-8'))
+                self.status_bar.showMessage("Changes applied successfully.", 3000)
+                
+                # Clear the diff viewer and bring focus to the editor
+                self.diff_viewer.clear()
+                self.code_editor.editor.setFocus()
+            else:
+                QMessageBox.critical(self, "Patch Failed", "The selected changes could not be applied.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error Applying Patch", f"An unexpected error occurred: {e}")
 
     def _send_prompt(self):
         """Send a prompt to the AI backend."""
@@ -449,26 +473,39 @@ class MainWindow(QMainWindow):
         if not prompt:
             return
 
-        # Clear any accumulated messages from previous interactions
-        self.current_reasoning = ""
-        self.current_message = ""
-
-        # Add user message to chat
         self._add_message("user", prompt)
-
-        # Clear input
         self.prompt_input.clear()
 
-        # Send to backend
         try:
-            if self.backend:
-                op = Operation.create_user_input(prompt)
-                self.backend.send_op(op.model_dump())
-                self._add_message("system", "⏳ Sending prompt to AI backend...")
+            if not self.backend:
+                self._add_message("system", "❌ Backend not connected. Please check configuration.")
+                return
+
+            # Prepare context
+            repo_context = {}
+            if self.current_repository:
+                repo_context["repository_path"] = self.current_repository.path
+
+            # Determine operation type
+            current_file = self.code_editor.get_current_file_path()
+            if current_file:
+                op = Operation.create_edit_file_operation(current_file, prompt)
+                self._add_message("system", f"📝 Sending edit request for {Path(current_file).name}...")
             else:
-                self._add_message("system", "❌ Backend not connected. Please check Codex configuration.")
+                op = Operation.create_user_input(prompt)
+                self._add_message("system", "💬 Sending general prompt...")
+
+            op.context = repo_context
+            
+            # Log the full operation for debugging
+            self.console_widget.append(f"<font color='grey'><i>Sending op: {op.model_dump_json(indent=2)}</i></font>")
+            
+            self.backend.send_op(op.model_dump())
+            self.status_bar.showMessage("⏳ Waiting for AI response...", 0)
+
         except Exception as e:
             self._add_message("system", f"❌ Error sending prompt: {str(e)}")
+            self.status_bar.clearMessage()
 
     def _add_message(self, role: str, content: str):
         """Add a message to the console"""
@@ -487,31 +524,11 @@ class MainWindow(QMainWindow):
         cursor.movePosition(cursor.MoveOperation.End)
         self.console_widget.setTextCursor(cursor)
 
-    def _run_edit_task(self):
-        """Run an AI edit task on the current file."""
-        if not self.code_editor.current_file:
-            QMessageBox.warning(self, "No File Selected", "Please open a file in the code editor first.")
-            return
-
-        # Get the current file content
-        file_path = self.code_editor.current_file
-        content = self.code_editor.get_text()
-        prompt = "Please improve this code"  # This could be made configurable
-
-        # Create an edit task
-        task = Task(
-            id=f"edit_{int(time.time())}",
-            name="AI Edit Task",
-            type="edit_file",
-            parameters={
-                "file_path": file_path,
-                "instruction": prompt,
-                "content": content
-            }
-        )
-
-        # Run the task
-        self.task_runner.run_single_task(task)
+    def _start_login(self):
+        """Start ChatGPT login process"""
+        if self.backend:
+            op = Operation.create_login_request()
+            self.backend.send_op(op.model_dump())
 
     def _run_test_task(self):
         """Run tests for the current project."""
@@ -609,6 +626,17 @@ class MainWindow(QMainWindow):
                     self._add_message("system", f"🤔 {clean_reasoning}")
                 self.current_reasoning = ""
 
+        # Handle agent edit file response (the diff)
+        elif event_type == "agent_edit_file_response":
+            diff = event_obj.get("diff", "")
+            file_path = event_obj.get("file_path", "unknown_file")
+            if diff:
+                self._add_message("system", f"✅ Received diff for {file_path}")
+                self.diff_viewer.set_diff_content(diff, file_path)
+                self.diff_dock.raise_()  # Bring the diff dock to the front
+            else:
+                self._add_message("system", f"⚠️ Received an empty diff for {file_path}")
+
         # Handle login events
         elif event_type == "login_chat_gpt_response":
             auth_url = event_obj.get("auth_url")
@@ -654,89 +682,22 @@ class MainWindow(QMainWindow):
         """Handle backend stopped"""
         self.backend_status_label.setText("Backend: Disconnected")
 
-    def _connect_task_signals(self):
-        """Connect task runner signals"""
-        self.task_runner.task_started.connect(self._on_task_started)
-        self.task_runner.task_completed.connect(self._on_task_completed)
-        self.task_runner.task_failed.connect(self._on_task_failed)
-        self.task_runner.task_progress.connect(self._on_task_progress)
-
-    def _on_task_started(self, workflow_id: str, task_id: str):
-        """Handle task started"""
-        self.console_widget.append(f"<b>Task Started:</b> {task_id}")
-        self.status_bar.showMessage(f"Running task: {task_id}")
-        self.progress_bar.setVisible(True)
-
-    def _on_task_completed(self, workflow_id: str, task_id: str, result):
-        """Handle task completed"""
-        self.console_widget.append(f"<b>Task Completed:</b> {task_id}")
-        self.status_bar.showMessage(f"Task completed: {task_id}", 3000)
-        self.progress_bar.setVisible(False)
-
-        # Display results in diff viewer if applicable
-        if hasattr(result, 'output') and result.output:
-            output_text = str(result.output)
-            self.diff_viewer.set_diff_content(output_text, "Task Results")
-
-    def _on_task_failed(self, workflow_id: str, task_id: str, error: str):
-        """Handle task failed"""
-        self.console_widget.append(f"<font color='red'><b>Task Failed:</b> {task_id} - {error}</font>")
-        self.status_bar.showMessage(f"Task failed: {task_id}", 5000)
-        self.progress_bar.setVisible(False)
-
-    def _on_task_progress(self, workflow_id: str, task_id: str, progress: int, message: str):
-        """Handle task progress"""
-        self.progress_bar.setValue(progress)
-        self.status_bar.showMessage(f"{task_id}: {message}")
-
     def _run_edit_task(self):
-        """Run an edit file task"""
+        """Run an AI edit task on the current file."""
         current_file = self.code_editor.get_current_file_path()
         if not current_file:
-            QMessageBox.warning(self, "No File Selected", "Please select a file to edit first.")
+            QMessageBox.warning(self, "No File Selected", "Please open a file in the code editor first.")
             return
 
-        # Get instruction from user
         from PySide6.QtWidgets import QInputDialog
-        import time
-
         instruction, ok = QInputDialog.getText(
-            self, "Edit Instruction",
-            "Enter your edit instruction:"
+            self, "AI Edit Instruction",
+            "Enter your edit instruction for the current file:"
         )
 
         if ok and instruction:
-            task = Task(
-                id=f"edit_{int(time.time())}",
-                name="Edit File",
-                type="edit_file",
-                parameters={
-                    "file_path": current_file,
-                    "instruction": instruction
-                }
-            )
-
-            context = {"repository_path": self.current_repository.path if self.current_repository else ""}
-            self.task_runner.run_single_task(task, context)
-
-    def _run_test_task(self):
-        """Run a test task"""
-        if not self.current_repository:
-            QMessageBox.warning(self, "No Repository", "Please open a repository first.")
-            return
-
-        import time
-        task = Task(
-            id=f"test_{int(time.time())}",
-            name="Run Tests",
-            type="run_tests",
-            parameters={
-                "command": ["pytest", "-v"]
-            }
-        )
-
-        context = {"repository_path": self.current_repository.path}
-        self.task_runner.run_single_task(task, context)
+            self.prompt_input.setPlainText(instruction)
+            self._send_prompt()
 
     def _show_settings(self):
         """Show settings dialog"""
@@ -752,8 +713,10 @@ class MainWindow(QMainWindow):
         }
         self.config_manager.set_window_geometry(geometry)
 
-        # Stop backend
-        if self.backend:
+        # Stop backend thread
+        if self.backend_thread:
             self.backend.stop()
+            self.backend_thread.quit()
+            self.backend_thread.wait()
 
         event.accept()

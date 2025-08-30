@@ -243,7 +243,9 @@ class CodeEditor(QTextEdit):
         # Line numbers
         self.line_number_area = LineNumberArea(self)
         self.document().blockCountChanged.connect(self.update_line_number_area_width)
-        self.verticalScrollBar().valueChanged.connect(self.update_line_number_area)
+        self.verticalScrollBar().valueChanged.connect(
+            lambda value: self.update_line_number_area()
+        )
         self.update_line_number_area_width()
 
         # Syntax highlighting
@@ -404,15 +406,9 @@ class CodeEditor(QTextEdit):
         """Update line number area width"""
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
-    def update_line_number_area(self, rect, dy):
+    def update_line_number_area(self):
         """Update line number area when scrolling"""
-        if dy:
-            self.line_number_area.scroll(0, dy)
-        else:
-            self.line_number_area.update(0, rect.y(), self.line_number_area.width(), rect.height())
-
-        if rect.contains(self.viewport().rect()):
-            self.update_line_number_area_width()
+        self.line_number_area.update()
 
     def resizeEvent(self, event):
         """Handle resize events"""
@@ -521,6 +517,13 @@ class CodeEditorWidget(QWidget):
     def get_current_file_path(self) -> str:
         """Get current file path"""
         return self.editor.get_current_file_path()
+
+    def set_text(self, text: str):
+        """Set the editor's text content programmatically."""
+        self.editor.setPlainText(text)
+        # We consider this a new "original" state, so unsaved changes are reset
+        self.editor.original_content = text
+        self.editor._on_text_changed()
 
     def _save_file(self):
         """Save file button clicked"""

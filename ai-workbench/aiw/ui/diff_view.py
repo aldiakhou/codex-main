@@ -281,6 +281,31 @@ class DiffWidget(QWidget):
         """Get indices of selected hunks"""
         return [i for i, hunk in enumerate(self.hunks) if hunk.selected]
 
+    def get_selected_diff_text(self) -> Optional[str]:
+        """Construct a diff text from selected hunks only."""
+        if not any(hunk.selected for hunk in self.hunks):
+            return None
+
+        full_diff_lines = self.diff_viewer.toPlainText().split('\n')
+        header_lines = [line for line in full_diff_lines if line.startswith('---') or line.startswith('+++')]
+        
+        new_diff_parts = header_lines
+        
+        selected_hunk_indices = self.get_selected_hunks()
+        
+        for i in selected_hunk_indices:
+            hunk = self.hunks[i]
+            new_diff_parts.append(hunk.header)
+            for line in hunk.lines:
+                if line.is_addition:
+                    new_diff_parts.append(f'+{line.content}')
+                elif line.is_removal:
+                    new_diff_parts.append(f'-{line.content}')
+                elif line.is_context:
+                    new_diff_parts.append(f' {line.content}')
+
+        return "\n".join(new_diff_parts)
+
     def select_all_hunks(self):
         """Select all hunks"""
         for hunk in self.hunks:
