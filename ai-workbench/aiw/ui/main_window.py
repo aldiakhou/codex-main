@@ -4,6 +4,8 @@ Enhanced main window with dock-based layout for AI Development Workbench
 import json
 import os
 import time
+import logging
+import sys
 from pathlib import Path
 from typing import Optional
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread
@@ -18,9 +20,21 @@ from PySide6.QtGui import QAction, QIcon, QFont
 from ..core.backend_service import BackendService
 from ..core.config import get_config_manager
 from ..core.models import Repository, FileItem, Operation, Task
+from ..core.task_runner import get_workflow_runner
 from .code_editor import CodeEditorWidget
 from .diff_view import DiffViewWidget
 import patch
+
+# Set up logging for main window
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('ai_workbench_main_debug.log', mode='w')
+    ]
+)
+main_logger = logging.getLogger('MainWindow')
 
 
 class MainWindow(QMainWindow):
@@ -31,11 +45,13 @@ class MainWindow(QMainWindow):
     file_selected = Signal(str)     # file path
 
     def __init__(self):
+        main_logger.info("MainWindow.__init__() called")
         super().__init__()
         self.config_manager = get_config_manager()
         self.current_repository: Optional[Repository] = None
         self.backend: Optional[BackendService] = None
         self.backend_thread: Optional[QThread] = None
+        self.task_runner = get_workflow_runner()  # Initialize task runner
 
         # Initialize message accumulation
         self.current_reasoning = ""
@@ -71,16 +87,50 @@ class MainWindow(QMainWindow):
         self._load_initial_state()
 
     def _setup_backend(self):
-        """Initialize the backend service"""
+        """Initialize the backend service with improved error handling"""
+        main_logger.info("_setup_backend() called")
         codex_path = self.config_manager.get_codex_path()
+        main_logger.info(f"Codex path from config: {codex_path}")
+
         if not codex_path:
-            QMessageBox.warning(
-                self, "Codex Not Found",
-                "Codex executable not found. Please configure the path in settings."
-            )
-            return
+            # Try auto-detection one more time
+            main_logger.info("No codex path configured, trying auto-detection")
+            self.config_manager._auto_detect_codex_path()
+            codex_path = self.config_manager.get_codex_path()
+            main_logger.info(f"Auto-detected codex path: {codex_path}")
+
+            if not codex_path:
+                main_logger.warning("No codex executable found")
+                result = QMessageBox.question(
+                    self, "Codex Not Found",
+                    "Codex executable not found. Would you like to:\n\n"
+                    "• Browse for the executable manually\n"
+                    "• Continue without backend (limited functionality)\n\n"
+                    "Note: You can also install Codex CLI from https://github.com/openai/codex",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+                )
+
+                if result == QMessageBox.StandardButton.Yes:
+                    codex_path, _ = QFileDialog.getOpenFileName(
+                        self, "Select Codex Executable",
+                        "", "Executable files (*.*);;All files (*.*)"
+                    )
+                    if codex_path:
+                        self.config_manager.config.backend.codex_path = codex_path
+                        self.config_manager.save_config()
+                        main_logger.info(f"User selected codex path: {codex_path}")
+                    else:
+                        return
+                elif result == QMessageBox.StandardButton.No:
+                    # Continue without backend
+                    self.backend_status_label.setText("Backend: Not configured")
+                    main_logger.info("User chose to continue without backend")
+                    return
+                else:
+                    return
 
         # Move backend to a new thread
+        main_logger.info("Setting up backend thread")
         self.backend_thread = QThread()
         self.backend = BackendService(codex_path)
         self.backend.moveToThread(self.backend_thread)
@@ -91,8 +141,20 @@ class MainWindow(QMainWindow):
         self.backend.backend_error.connect(self._on_backend_error)
         self.backend.backend_started.connect(self._on_backend_started)
         self.backend.backend_stopped.connect(self._on_backend_stopped)
+        self.backend.connection_status_changed.connect(self._on_connection_status_changed)
+        self.backend.operation_progress.connect(self._on_operation_progress)
+        self.backend.operation_cleanup.connect(self._on_operation_cleanup)
 
-        # Start the thread
+        # Connect task runner signals
+        self.task_runner.task_started.connect(self._on_task_started)
+        self.task_runner.task_completed.connect(self._on_task_completed)
+        self.task_runner.task_failed.connect(self._on_task_failed)
+        self.task_runner.task_progress.connect(self._on_task_progress)
+        self.task_runner.workflow_started.connect(self._on_workflow_started)
+        self.task_runner.workflow_completed.connect(self._on_workflow_completed)
+        self.task_runner.workflow_failed.connect(self._on_workflow_failed)
+
+        main_logger.info("Starting backend thread")
         self.backend_thread.start()
 
     def _setup_ui(self):
@@ -366,6 +428,14 @@ class MainWindow(QMainWindow):
             # Load repository files
             self._load_repository_files(repo_path)
 
+            # Set working directory for backend operations
+            if self.backend and self.backend.running:
+                # Ensure path uses forward slashes for JSON compatibility
+                normalized_path = repo_path.replace("\\", "/")
+                main_logger.info(f"Setting backend working directory to: {normalized_path}")
+                override_op = Operation.create_override_turn_context(normalized_path)
+                self.backend.send_op(override_op.model_dump())
+
             # Emit signal
             self.repository_opened.emit(repo_path)
 
@@ -469,8 +539,12 @@ class MainWindow(QMainWindow):
 
     def _send_prompt(self):
         """Send a prompt to the AI backend."""
+        main_logger.info("_send_prompt() called")
         prompt = self.prompt_input.toPlainText().strip()
+        main_logger.info(f"Prompt text: '{prompt}' (length: {len(prompt)})")
+
         if not prompt:
+            main_logger.info("Prompt is empty, returning")
             return
 
         self._add_message("user", prompt)
@@ -478,32 +552,71 @@ class MainWindow(QMainWindow):
 
         try:
             if not self.backend:
+                main_logger.error("Backend is None")
                 self._add_message("system", "❌ Backend not connected. Please check configuration.")
                 return
 
+            main_logger.info("Backend is available, preparing operation")
+
             # Prepare context
             repo_context = {}
+            cwd_path = None
             if self.current_repository:
                 repo_context["repository_path"] = self.current_repository.path
-
-            # Determine operation type
-            current_file = self.code_editor.get_current_file_path()
-            if current_file:
-                op = Operation.create_edit_file_operation(current_file, prompt)
-                self._add_message("system", f"📝 Sending edit request for {Path(current_file).name}...")
+                cwd_path = self.current_repository.path
+                main_logger.info(f"Repository context: {repo_context}")
             else:
-                op = Operation.create_user_input(prompt)
-                self._add_message("system", "💬 Sending general prompt...")
+                # Use current working directory as fallback
+                import os
+                cwd_path = os.getcwd()
+                repo_context["repository_path"] = cwd_path
+                main_logger.info(f"No repository selected, using current working directory: {cwd_path}")
+
+            # Determine operation type - use user_turn with working directory
+            current_file = self.code_editor.get_current_file_path()
+            main_logger.info(f"Current file: {current_file}")
+
+            # Use user_turn operation with working directory
+            if cwd_path:
+                # Ensure path uses forward slashes for JSON compatibility
+                normalized_cwd = cwd_path.replace("\\", "/")
+                if current_file:
+                    # Include file context in the prompt text
+                    enhanced_prompt = f"Regarding the file '{Path(current_file).name}': {prompt}"
+                    op = Operation.create_user_turn(enhanced_prompt, normalized_cwd)
+                    self._add_message("system", f"📝 Sending request for {Path(current_file).name}...")
+                    main_logger.info(f"Created user turn operation with file context for: {current_file}")
+                else:
+                    op = Operation.create_user_turn(prompt, normalized_cwd)
+                    self._add_message("system", "💬 Sending general prompt...")
+                    main_logger.info("Created user turn operation")
+            else:
+                # Fallback to user_input if no repository is selected
+                if current_file:
+                    enhanced_prompt = f"Regarding the file '{Path(current_file).name}': {prompt}"
+                    op = Operation.create_user_input(enhanced_prompt)
+                    self._add_message("system", f"📝 Sending request for {Path(current_file).name}...")
+                    main_logger.info(f"Created user input operation with file context for: {current_file}")
+                else:
+                    op = Operation.create_user_input(prompt)
+                    self._add_message("system", "💬 Sending general prompt...")
+                    main_logger.info("Created user input operation")
 
             op.context = repo_context
-            
+
             # Log the full operation for debugging
-            self.console_widget.append(f"<font color='grey'><i>Sending op: {op.model_dump_json(indent=2)}</i></font>")
-            
-            self.backend.send_op(op.model_dump())
+            op_json = op.model_dump_json(indent=2)
+            main_logger.info(f"Operation JSON: {op_json}")
+            self.console_widget.append(f"<font color='grey'><i>Sending op: {op_json}</i></font>")
+
+            main_logger.info("Calling backend.send_op()")
+            result = self.backend.send_op(op.model_dump())
+            main_logger.info(f"backend.send_op() returned: {result}")
+
             self.status_bar.showMessage("⏳ Waiting for AI response...", 0)
 
         except Exception as e:
+            main_logger.error(f"Exception in _send_prompt: {str(e)}", exc_info=True)
             self._add_message("system", f"❌ Error sending prompt: {str(e)}")
             self.status_bar.clearMessage()
 
@@ -592,9 +705,11 @@ class MainWindow(QMainWindow):
     @Slot(dict)
     def _on_backend_event(self, event):
         """Handle backend events"""
+        main_logger.info(f"_on_backend_event called with event: {event}")
         event_obj = event.get("msg", {})
         event_type = event_obj.get("type")
         task_id = event.get("id", "")
+        main_logger.debug(f"Event type: {event_type}, Task ID: {task_id}")
 
         # Handle reasoning deltas (accumulate them)
         if event_type == "agent_reasoning_delta":
@@ -677,11 +792,6 @@ class MainWindow(QMainWindow):
         """Handle backend started"""
         self.backend_status_label.setText("Backend: Connected")
 
-    @Slot(int)
-    def _on_backend_stopped(self, exit_code):
-        """Handle backend stopped"""
-        self.backend_status_label.setText("Backend: Disconnected")
-
     def _run_edit_task(self):
         """Run an AI edit task on the current file."""
         current_file = self.code_editor.get_current_file_path()
@@ -720,3 +830,129 @@ class MainWindow(QMainWindow):
             self.backend_thread.wait()
 
         event.accept()
+
+    # Backend Signal Handlers
+    @Slot(str)
+    def _on_backend_error(self, error_message):
+        """Handle backend errors"""
+        main_logger.error(f"_on_backend_error called with message: {error_message}")
+        self.console_widget.append(f"<font color='red'><b>Backend Error:</b> {error_message}</font>")
+        self.backend_status_label.setText("Backend: Error")
+
+    @Slot()
+    def _on_backend_started(self):
+        """Handle backend started"""
+        main_logger.info("_on_backend_started called - backend is now connected")
+        self.backend_status_label.setText("Backend: Connected")
+
+    @Slot(int)
+    def _on_backend_stopped(self, exit_code):
+        """Handle backend stopped"""
+        main_logger.info(f"_on_backend_stopped called with exit code: {exit_code}")
+        self.backend_status_label.setText("Backend: Disconnected")
+        if exit_code != 0:
+            self._add_message("system", f"⚠️ Backend stopped with exit code: {exit_code}")
+
+    @Slot(str)
+    def _on_connection_status_changed(self, status: str):
+        """Handle backend connection status changes"""
+        main_logger.info(f"_on_connection_status_changed called with status: {status}")
+        status_messages = {
+            "connecting": "Backend: Connecting...",
+            "connected": "Backend: Connected",
+            "disconnected": "Backend: Disconnected",
+            "error": "Backend: Error"
+        }
+
+        message = status_messages.get(status, f"Backend: {status}")
+        self.backend_status_label.setText(message)
+
+        # Update progress bar based on status
+        if status == "connecting":
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setRange(0, 0)  # Indeterminate progress
+            self.status_bar.showMessage("Connecting to backend...", 0)
+        elif status == "connected":
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage("Backend connected successfully", 3000)
+        elif status == "error":
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage("Backend connection failed", 5000)
+
+    @Slot(str, int, str)
+    def _on_operation_progress(self, operation_id: str, progress: int, message: str):
+        """Handle operation progress updates"""
+        main_logger.debug(f"_on_operation_progress: {operation_id}, progress: {progress}, message: {message}")
+        if progress >= 0:
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(progress)
+            self.status_bar.showMessage(f"{message}", 0)
+        else:
+            # Negative progress indicates completion/cancellation
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage(f"Operation {operation_id}: {message}", 3000)
+
+    @Slot(str)
+    def _on_operation_cleanup(self, operation_id: str):
+        """Handle operation cleanup with delay from main thread"""
+        main_logger.debug(f"_on_operation_cleanup: {operation_id}")
+        # Use QTimer from main thread to clean up operation after delay
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(5000, lambda: self.backend._cleanup_operation(operation_id))
+
+    # Task Runner Signal Handlers
+    @Slot(str, str)
+    def _on_task_started(self, workflow_id: str, task_id: str):
+        """Handle task started"""
+        main_logger.info(f"_on_task_started: workflow={workflow_id}, task={task_id}")
+        self._add_message("system", f"🔄 Started task: {task_id}")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+
+    @Slot(str, str, object)
+    def _on_task_completed(self, workflow_id: str, task_id: str, result):
+        """Handle task completed"""
+        main_logger.info(f"_on_task_completed: workflow={workflow_id}, task={task_id}, result={result}")
+        self._add_message("system", f"✅ Task completed: {task_id}")
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage(f"Task {task_id} completed successfully", 3000)
+
+    @Slot(str, str, str)
+    def _on_task_failed(self, workflow_id: str, task_id: str, error: str):
+        """Handle task failed"""
+        main_logger.error(f"_on_task_failed: workflow={workflow_id}, task={task_id}, error={error}")
+        self._add_message("system", f"❌ Task failed: {task_id} - {error}")
+        self.progress_bar.setVisible(False)
+        self.status_bar.showMessage(f"Task {task_id} failed: {error}", 5000)
+
+    @Slot(str, str, int, str)
+    def _on_task_progress(self, workflow_id: str, task_id: str, progress: int, message: str):
+        """Handle task progress"""
+        main_logger.debug(f"_on_task_progress: workflow={workflow_id}, task={task_id}, progress={progress}, message={message}")
+        if progress >= 0:
+            self.progress_bar.setValue(progress)
+            self.status_bar.showMessage(f"{message}", 0)
+        else:
+            self.progress_bar.setVisible(False)
+
+    @Slot(str)
+    def _on_workflow_started(self, workflow_id: str):
+        """Handle workflow started"""
+        main_logger.info(f"_on_workflow_started: workflow={workflow_id}")
+        self._add_message("system", f"🚀 Started workflow: {workflow_id}")
+
+    @Slot(str)
+    def _on_workflow_completed(self, workflow_id: str):
+        """Handle workflow completed"""
+        main_logger.info(f"_on_workflow_completed: workflow={workflow_id}")
+        self._add_message("system", f"🎉 Workflow completed: {workflow_id}")
+        self.status_bar.showMessage("Workflow completed successfully", 3000)
+
+    @Slot(str, str)
+    def _on_workflow_failed(self, workflow_id: str, error: str):
+        """Handle workflow failed"""
+        main_logger.error(f"_on_workflow_failed: workflow={workflow_id}, error={error}")
+        self._add_message("system", f"💥 Workflow failed: {workflow_id} - {error}")
+        self.status_bar.showMessage(f"Workflow failed: {error}", 5000)

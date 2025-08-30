@@ -68,29 +68,38 @@ def test_send_prompt_without_file(window):
     
     window._send_prompt()
 
-    # It should create a standard 'user_input' operation
+    # It should create a 'user_turn' operation with current working directory
     window.backend.send_op.assert_called_once()
     call_args = window.backend.send_op.call_args[0][0]
-    assert call_args['op']['type'] == 'user_input'
+    assert call_args['op']['type'] == 'user_turn'
     assert call_args['op']['items'][0]['text'] == prompt_text
+    assert 'cwd' in call_args['op']  # Should have working directory
+    assert call_args['op']['approval_policy'] == 'on-request'
+    assert call_args['op']['model'] == 'gpt-5'
 
 def test_send_prompt_with_file_open(window):
     """Test sending a prompt when a file is open in the editor."""
+    from aiw.core.models import Repository
     file_path = "/test/file.py"
     prompt_text = "Add a docstring to this function"
     
     # Simulate an open file
     window.code_editor.get_current_file_path = Mock(return_value=file_path)
     
+    # Set up a current repository so it uses create_user_turn instead of create_user_input
+    window.current_repository = Repository(path="/test", name="test-repo")
+    
     window.prompt_input.setPlainText(prompt_text)
     window._send_prompt()
 
-    # It should create an 'edit_file' operation
+    # It should create a 'user_turn' operation with file context
     window.backend.send_op.assert_called_once()
     call_args = window.backend.send_op.call_args[0][0]
-    assert call_args['op']['type'] == 'edit_file'
-    assert call_args['op']['file_path'] == file_path
-    assert call_args['op']['instruction'] == prompt_text
+    assert call_args['op']['type'] == 'user_turn'
+    assert "Regarding the file 'file.py':" in call_args['op']['items'][0]['text']
+    assert call_args['op']['items'][0]['text'].endswith(prompt_text)
+    assert call_args['op']['approval_policy'] == 'on-request'
+    assert call_args['op']['model'] == 'gpt-5'
 
 def test_handle_diff_event(window):
     """Test the handler for an incoming diff event from the backend."""

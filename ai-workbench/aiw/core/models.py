@@ -2,10 +2,170 @@
 Data models for AI Development Workbench
 """
 from __future__ import annotations
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from typing import Dict, Any, Optional, List
+from pydantic import BaseModel, Field
 from pathlib import Path
+
+
+class Repository(BaseModel):
+    """Represents a Git repository"""
+    path: str
+    name: str
+    current_branch: str = "main"
+    last_opened: Optional[datetime] = None
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.name} ({Path(self.path).name})"
+
+
+class FileItem(BaseModel):
+    """Represents a file in the repository"""
+    path: str
+    name: str
+    is_directory: bool = False
+    size: Optional[int] = None
+    modified_time: Optional[datetime] = None
+    git_status: Optional[str] = None  # "modified", "staged", "untracked", etc.
+
+
+class BackendConfig(BaseModel):
+    """Backend/Codex configuration"""
+    codex_path: Optional[str] = None
+    profile: Optional[str] = None
+    timeout: int = 300  # seconds
+    max_retries: int = 3
+    log_level: str = "info"
+
+
+class Operation(BaseModel):
+    """JSON operation sent to backend"""
+    id: str
+    op: Dict[str, Any]
+    context: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    def create_user_input(cls, text: str, operation_id: Optional[str] = None) -> 'Operation':
+        """Create a user input operation"""
+        if operation_id is None:
+            operation_id = f"user_input_{int(datetime.now().timestamp())}"
+
+        return cls(
+            id=operation_id,
+            op={
+                "type": "user_input",
+                "items": [{"type": "text", "text": text}]
+            }
+        )
+
+    @classmethod
+    def create_user_turn(cls, text: str, cwd: str, operation_id: Optional[str] = None) -> 'Operation':
+        """Create a user turn operation with working directory"""
+        if operation_id is None:
+            operation_id = f"user_turn_{int(datetime.now().timestamp())}"
+
+        # Ensure path uses forward slashes for JSON compatibility
+        normalized_cwd = cwd.replace("\\", "/")
+
+        return cls(
+            id=operation_id,
+            op={
+                "type": "user_turn",
+                "items": [{"type": "text", "text": text}],
+                "cwd": normalized_cwd,
+                "approval_policy": "on-request",  # kebab-case for AskForApproval enum
+                "sandbox_policy": {"mode": "read-only"},  # correct structure for SandboxPolicy
+                "model": "gpt-5",  # use gpt-5 as shown in session
+                "effort": "medium",  # lowercase for ReasoningEffort enum
+                "summary": "auto"  # valid value for ReasoningSummary enum
+            }
+        )
+
+    @classmethod
+    def create_override_turn_context(cls, cwd: str, operation_id: Optional[str] = None) -> 'Operation':
+        """Create an operation to override the working directory for future turns"""
+        if operation_id is None:
+            operation_id = f"override_context_{int(datetime.now().timestamp())}"
+
+        # Ensure path uses forward slashes for JSON compatibility
+        normalized_cwd = cwd.replace("\\", "/")
+
+        return cls(
+            id=operation_id,
+            op={
+                "type": "override_turn_context",
+                "cwd": normalized_cwd
+            }
+        )
+
+    @classmethod
+    def create_login_request(cls, operation_id: Optional[str] = None) -> 'Operation':
+        """Create a login request operation"""
+        if operation_id is None:
+            operation_id = f"login_{int(datetime.now().timestamp())}"
+
+        return cls(
+            id=operation_id,
+            op={"type": "login_chat_gpt"}
+        )
+
+    @classmethod
+    def create_file_operation(cls, operation_type: str, file_path: str,
+                            content: Optional[str] = None,
+                            operation_id: Optional[str] = None) -> 'Operation':
+        """Create a file-related operation"""
+        if operation_id is None:
+            operation_id = f"file_op_{int(datetime.now().timestamp())}"
+
+        op_data = {
+            "type": operation_type,
+            "file_path": file_path
+        }
+
+        if content is not None:
+            op_data["content"] = content
+
+        return cls(id=operation_id, op=op_data)
+
+    @classmethod
+    def create_edit_file_operation(cls, file_path: str, instruction: str,
+                                 operation_id: Optional[str] = None) -> 'Operation':
+        """Create an edit file operation"""
+        if operation_id is None:
+            operation_id = f"edit_file_{int(datetime.now().timestamp())}"
+
+        return cls(
+            id=operation_id,
+            op={
+                "type": "edit_file",
+                "file_path": file_path,
+                "instruction": instruction
+            }
+        )
+
+
+class Event(BaseModel):
+    """Event received from backend"""
+    type: str
+    msg: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def is_agent_message(self) -> bool:
+        return self.type == "agent_message"
+
+    @property
+    def is_agent_reasoning(self) -> bool:
+        return self.type == "agent_reasoning"
+
+    @property
+    def is_login_response(self) -> bool:
+        return self.type in ["login_chat_gpt_response", "login_chat_gpt_complete"]
+
+    @property
+    def is_error(self) -> bool:
+        return self.type == "error"
 
 
 class Repository(BaseModel):
@@ -104,93 +264,3 @@ class BackendConfig(BaseModel):
     timeout: int = 300  # seconds
     max_retries: int = 3
     log_level: str = "info"
-
-
-class Operation(BaseModel):
-    """JSON operation sent to backend"""
-    id: str
-    op: Dict[str, Any]
-    context: Optional[Dict[str, Any]] = None
-
-
-    @classmethod
-    def create_user_input(cls, text: str, operation_id: Optional[str] = None) -> 'Operation':
-        """Create a user input operation"""
-        if operation_id is None:
-            operation_id = f"user_input_{int(datetime.now().timestamp())}"
-
-        return cls(
-            id=operation_id,
-            op={
-                "type": "user_input",
-                "items": [{"type": "text", "text": text}]
-            }
-        )
-
-    @classmethod
-    def create_login_request(cls, operation_id: Optional[str] = None) -> 'Operation':
-        """Create a login request operation"""
-        if operation_id is None:
-            operation_id = f"login_{int(datetime.now().timestamp())}"
-
-        return cls(
-            id=operation_id,
-            op={"type": "login_chat_gpt"}
-        )
-
-    @classmethod
-    def create_file_operation(cls, operation_type: str, file_path: str,
-                            content: Optional[str] = None,
-                            operation_id: Optional[str] = None) -> 'Operation':
-        """Create a file-related operation"""
-        if operation_id is None:
-            operation_id = f"file_op_{int(datetime.now().timestamp())}"
-
-        op_data = {
-            "type": operation_type,
-            "file_path": file_path
-        }
-
-        if content is not None:
-            op_data["content"] = content
-
-        return cls(id=operation_id, op=op_data)
-
-    @classmethod
-    def create_edit_file_operation(cls, file_path: str, instruction: str,
-                                 operation_id: Optional[str] = None) -> 'Operation':
-        """Create an edit file operation"""
-        if operation_id is None:
-            operation_id = f"edit_file_{int(datetime.now().timestamp())}"
-
-        return cls(
-            id=operation_id,
-            op={
-                "type": "edit_file",
-                "file_path": file_path,
-                "instruction": instruction
-            }
-        )
-
-
-class Event(BaseModel):
-    """Event received from backend"""
-    type: str
-    msg: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.now)
-
-    @property
-    def is_agent_message(self) -> bool:
-        return self.type == "agent_message"
-
-    @property
-    def is_agent_reasoning(self) -> bool:
-        return self.type == "agent_reasoning"
-
-    @property
-    def is_login_response(self) -> bool:
-        return self.type in ["login_chat_gpt_response", "login_chat_gpt_complete"]
-
-    @property
-    def is_error(self) -> bool:
-        return self.type == "error"

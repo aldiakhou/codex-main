@@ -108,20 +108,111 @@ class ConfigManager:
         self.save_config()
 
     def get_codex_path(self) -> Optional[str]:
-        """Get the configured Codex executable path"""
+        """Get the Codex executable path, with auto-detection if not configured"""
+        # First check if it's already configured
         if self.config.backend.codex_path:
             return self.config.backend.codex_path
 
-        # Try to find it in the default location relative to ai-workbench
-        default_path = Path(__file__).parent.parent.parent.parent / "codex-main" / "codex-rs" / "target" / "debug" / "codex.exe"
-        if default_path.exists():
-            return str(default_path)
+        # Auto-detect Codex executable
+        detected_path = self._auto_detect_codex_path()
+        if detected_path:
+            # Save the detected path for future use
+            self.config.backend.codex_path = detected_path
+            self.save_config()
+            return detected_path
 
         return None
 
-    def set_codex_path(self, path: str) -> None:
-        """Set the Codex executable path"""
-        self.update_backend_config(codex_path=path)
+    def _auto_detect_codex_path(self) -> Optional[str]:
+        """Auto-detect Codex executable in common locations"""
+        import platform
+        import shutil
+
+        system = platform.system().lower()
+
+        # Common installation paths for different platforms
+        search_paths = []
+
+        if system == "windows":
+            # Windows paths
+            search_paths.extend([
+                # Local installation
+                Path.home() / "AppData" / "Local" / "Programs" / "Codex",
+                Path.home() / "AppData" / "Roaming" / "npm",
+                "C:\\Program Files\\Codex",
+                "C:\\Program Files (x86)\\Codex",
+                # Check PATH
+                self._find_in_path("codex.exe"),
+            ])
+        elif system == "darwin":  # macOS
+            search_paths.extend([
+                "/usr/local/bin",
+                "/opt/homebrew/bin",
+                Path.home() / "Library" / "Application Support" / "Codex",
+                # Check PATH
+                self._find_in_path("codex"),
+            ])
+        elif system == "linux":
+            search_paths.extend([
+                "/usr/local/bin",
+                "/usr/bin",
+                "/opt/codex",
+                Path.home() / ".local" / "bin",
+                # Check PATH
+                self._find_in_path("codex"),
+            ])
+
+        # Also check for codex-rs binary in the current project
+        project_codex_paths = [
+            Path.cwd().parent / "codex-main" / "codex-rs" / "target" / "release" / "codex",
+            Path.cwd().parent / "codex-main" / "codex-rs" / "target" / "debug" / "codex",
+        ]
+
+        if system == "windows":
+            project_codex_paths.extend([
+                Path.cwd().parent / "codex-main" / "codex-rs" / "target" / "release" / "codex.exe",
+                Path.cwd().parent / "codex-main" / "codex-rs" / "target" / "debug" / "codex.exe",
+            ])
+
+        # Check all paths
+        for path in search_paths + project_codex_paths:
+            if path:
+                # Ensure path is a Path object
+                path_obj = Path(path) if isinstance(path, str) else path
+                if self._is_valid_codex_executable(path_obj):
+                    return str(path_obj)
+
+        return None
+
+    def _find_in_path(self, executable_name: str) -> Optional[Path]:
+        """Find executable in PATH"""
+        import shutil
+        executable_path = shutil.which(executable_name)
+        return Path(executable_path) if executable_path else None
+
+    def _is_valid_codex_executable(self, path: Path) -> bool:
+        """Check if the path points to a valid Codex executable"""
+        if not path.exists():
+            return False
+
+        # Check if it's executable
+        if not path.is_file():
+            return False
+
+        # On Windows, check for .exe extension
+        import platform
+        if platform.system().lower() == "windows" and not path.suffix.lower() == ".exe":
+            return False
+
+        # Try to check if it's actually the codex binary by checking file size or running a version check
+        # For now, we'll just check if the file exists and is executable
+        try:
+            # Basic check: file should be reasonably sized (not empty)
+            if path.stat().st_size < 1000:  # Less than 1KB is probably not a real executable
+                return False
+            return True
+        except (OSError, PermissionError):
+            return False
 
     def get_window_geometry(self) -> Optional[Dict[str, Any]]:
         """Get saved window geometry"""
