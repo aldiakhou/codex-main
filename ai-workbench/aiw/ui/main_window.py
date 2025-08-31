@@ -1048,6 +1048,21 @@ class MainWindow(QMainWindow):
             msg_box.setDefaultButton(approve_button)
             result = msg_box.exec()
 
+            # Prefer clickedButton to determine which custom button was chosen
+            clicked_button = msg_box.clickedButton()
+            if clicked_button == approve_button:
+                self._send_patch_approval_response(submission_id, True, False)
+                self._add_message("system", "Changes approved")
+                return
+            if clicked_button == reject_button:
+                self._send_patch_approval_response(submission_id, False, False)
+                self._add_message("system", "Changes rejected")
+                return
+            if clicked_button == auto_approve_button:
+                self._send_patch_approval_response(submission_id, True, True)
+                self._add_message("system", "Changes approved (auto-approve enabled)")
+                return
+
             # Handle the response
             if result == QMessageBox.AcceptRole:
                 # User approved
