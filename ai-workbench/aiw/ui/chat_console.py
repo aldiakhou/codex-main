@@ -31,7 +31,7 @@ class MessageBubble(QFrame):
         self.setFrameShape(QFrame.Shape.NoFrame)
 
         outer = QHBoxLayout(self)
-        outer.setContentsMargins(8, 2, 8, 2)
+        outer.setContentsMargins(8, 4, 8, 4)
 
         # Align user messages to the right, others to the left
         align_right = role in ("user",)
@@ -68,6 +68,12 @@ class MessageBubble(QFrame):
         self.collapse_btn = QToolButton()
         self.collapse_btn.setText("Collapse")
         actions.addWidget(self.collapse_btn)
+        # Compact action buttons styling (QSS hooks)
+        try:
+            copy_btn.setObjectName("BubbleAction")
+            self.collapse_btn.setObjectName("BubbleAction")
+        except Exception:
+            pass
         v.addLayout(actions)
 
         # Use QTextBrowser to allow rich content like <pre>, code, etc.
@@ -91,6 +97,12 @@ class MessageBubble(QFrame):
             body.setHtml(f"<span>{safe}</span>")
 
         v.addWidget(body)
+        # Tighter bubble margins and width for right-dock layout
+        try:
+            v.setContentsMargins(10, 6, 10, 6)
+            container.setMaximumWidth(560)
+        except Exception:
+            pass
 
         # Restrict max width so long lines wrap nicely
         container.setMaximumWidth(720)
@@ -165,6 +177,12 @@ class ChatConsole(QWidget):
         self.next_code_btn.setText("Next code ⤵")
         tools.addWidget(self.next_code_btn)
         root.addLayout(tools)
+        # Ensure plain-text labels to avoid emoji rendering issues
+        try:
+            self.search_line.setPlaceholderText("Search chat...")
+            self.next_code_btn.setText("Next code")
+        except Exception:
+            pass
 
         self.next_code_btn.clicked.connect(self.jump_to_next_code)
         self.search_line.returnPressed.connect(lambda: self.search(self.search_line.text()))

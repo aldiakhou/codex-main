@@ -8,7 +8,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Optional
-from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread, QSize
 from PySide6.QtWidgets import (
     QMainWindow, QTextEdit, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QWidget, QDockWidget, QSplitter, QTreeWidget, QTreeWidgetItem, QStyle,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel, QProgressBar
 )
 from PySide6.QtGui import QAction, QIcon, QFont
+from .design_system import apply_theme
 
 from ..core.backend_service import BackendService
 from ..core.config import get_config_manager
@@ -160,7 +161,7 @@ class MainWindow(QMainWindow):
         self.backend_thread.start()
 
     def _setup_ui(self):
-        """Setup the main UI with docks"""
+        """Setup the main UI with docks (focus on workspace)."""
         # Set the code editor as the central widget
         self.code_editor = CodeEditorWidget()
         self.setCentralWidget(self.code_editor)
@@ -177,12 +178,9 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
-        # Tabify the bottom docks
-        self.tabifyDockWidget(self.console_dock, self.diff_dock)
-        self.tabifyDockWidget(self.diff_dock, self.artifacts_dock)
-
-        # Set initial focus
-        self.console_dock.raise_()
+        # Start with auxiliary docks hidden to maximize editor space
+        self.console_dock.hide()
+        self.artifacts_dock.hide()
 
     def _create_repository_dock(self):
         """Create repository explorer dock"""
@@ -209,26 +207,26 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.repo_dock)
 
     def _create_console_dock(self):
-        """Create the chat console and prompt input dock with modern styling"""
-        self.console_dock = QDockWidget("Chat", self)
+        """Create the assistant (chat) dock with compact styling"""
+        self.console_dock = QDockWidget("Assistant", self)
         self.console_dock.setObjectName("Console")
-        self.console_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
-        self.console_dock.setMinimumHeight(260)
+        self.console_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+        self.console_dock.setMinimumWidth(340)
 
         console_widget_container = QWidget()
         console_layout = QVBoxLayout(console_widget_container)
 
-        # Modern chat console
+        # Chat console
         self.chat_console = ChatConsole()
-        self.chat_console.setMinimumHeight(220)
+        self.chat_console.setMinimumWidth(320)
         console_layout.addWidget(self.chat_console)
 
         # Input area
         input_layout = QHBoxLayout()
         self.prompt_input = QTextEdit()
-        self.prompt_input.setMaximumHeight(80)
+        self.prompt_input.setMaximumHeight(60)
         self.prompt_input.setFont(QFont("Consolas", 10))
-        self.prompt_input.setPlaceholderText("Enter your prompt here...")
+        self.prompt_input.setPlaceholderText("Ask the AI...")
         input_layout.addWidget(self.prompt_input)
 
         send_button = QPushButton("Send")
@@ -238,7 +236,7 @@ class MainWindow(QMainWindow):
         console_layout.addLayout(input_layout)
         self.console_dock.setWidget(console_widget_container)
 
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.console_dock)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
 
     def _create_diff_dock(self):
         """Create diff viewer dock"""
@@ -257,7 +255,7 @@ class MainWindow(QMainWindow):
         """Create artifacts dock"""
         self.artifacts_dock = QDockWidget("Artifacts", self)
         self.artifacts_dock.setObjectName("Artifacts")
-        self.artifacts_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.artifacts_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
 
         # Artifacts list
         self.artifacts_list = QTreeWidget()
@@ -265,7 +263,8 @@ class MainWindow(QMainWindow):
         self.artifacts_list.itemDoubleClicked.connect(self._on_artifact_double_clicked)
 
         self.artifacts_dock.setWidget(self.artifacts_list)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.artifacts_dock)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.artifacts_dock)
+        self.artifacts_dock.hide()
 
     def _setup_menus(self):
         """Setup menu bar"""
@@ -310,7 +309,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(repo_dock_action)
 
         console_dock_action = self.console_dock.toggleViewAction()
-        console_dock_action.setText("Console")
+        console_dock_action.setText("Assistant")
         view_menu.addAction(console_dock_action)
 
         diff_dock_action = self.diff_dock.toggleViewAction()
@@ -360,6 +359,11 @@ class MainWindow(QMainWindow):
         """Setup toolbar"""
         toolbar = self.addToolBar("Main Toolbar")
         toolbar.setObjectName("Main Toolbar")
+        toolbar.setMovable(False)
+        try:
+            toolbar.setIconSize(QSize(18, 18))
+        except Exception:
+            pass
 
         # Repository actions
         open_repo_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open Repo", self)
@@ -372,6 +376,12 @@ class MainWindow(QMainWindow):
         save_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self)
         save_action.triggered.connect(self._save_current_file)
         toolbar.addAction(save_action)
+
+        # Local diff view for current editor
+        view_diff_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "View Changes", self)
+        view_diff_action.setToolTip("Show unsaved changes for the current file")
+        view_diff_action.triggered.connect(self._show_local_diff)
+        toolbar.addAction(view_diff_action)
 
         toolbar.addSeparator()
 
@@ -386,6 +396,28 @@ class MainWindow(QMainWindow):
         edit_task_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "AI Edit", self)
         edit_task_action.triggered.connect(self._run_edit_task)
         toolbar.addAction(edit_task_action)
+
+    def _show_local_diff(self):
+        """Show unified diff of unsaved changes in the current editor file."""
+        try:
+            import difflib
+            current_file = self.code_editor.get_current_file_path()
+            if not current_file:
+                QMessageBox.information(self, "No File", "Open a file in the editor to view changes.")
+                return
+            before = (self.code_editor.editor.original_content or "").splitlines(keepends=True)
+            after = self.code_editor.editor.toPlainText().splitlines(keepends=True)
+            from_label = f"a/{Path(current_file).name}"
+            to_label = f"b/{Path(current_file).name}"
+            diff_lines = list(difflib.unified_diff(before, after, fromfile=from_label, tofile=to_label, n=3))
+            diff_text = "".join(diff_lines)
+            if not diff_text.strip():
+                QMessageBox.information(self, "No Changes", "No unsaved changes to show.")
+                return
+            self.diff_viewer.set_diff_content(diff_text, current_file)
+            self.diff_dock.raise_()
+        except Exception as e:
+            QMessageBox.warning(self, "Diff Error", f"Failed to compute diff: {e}")
 
     def _setup_status_bar(self):
         """Setup status bar"""
@@ -694,6 +726,8 @@ class MainWindow(QMainWindow):
             main_logger.info("Calling backend.send_op()")
             result = self.backend.send_op(op.model_dump())
             main_logger.info(f"backend.send_op() returned: {result}")
+            # Ensure clean status text (overrides any prior emoji-laden message)
+            self.status_bar.showMessage("Waiting for AI response...", 0)
 
             self.status_bar.showMessage("â³ Waiting for AI response...", 0)
 
@@ -711,15 +745,12 @@ class MainWindow(QMainWindow):
         self.chat_console.add_message(norm_role, content, rich=rich)
 
     def _apply_theme(self):
-        """Load and apply global QSS theme for a modern look."""
+        """Apply project design system theme (compact, editor-first)."""
         try:
             theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-            filename = "styles_light.qss" if theme == 'light' else "styles.qss"
-            qss_path = os.path.join(os.path.dirname(__file__), filename)
-            with open(qss_path, "r", encoding="utf-8") as f:
-                self.setStyleSheet(f.read())
+            apply_theme(self, theme=theme if theme in ("dark", "light") else "dark", base_font_pt=10.0)
         except Exception as e:
-            main_logger.warning(f"Failed to load theme: {e}")
+            main_logger.warning(f"Failed to apply theme: {e}")
 
     def _set_theme(self, theme: str):
         try:
@@ -833,6 +864,16 @@ class MainWindow(QMainWindow):
                     self._add_message("system", f"ðŸ¤” {clean_reasoning}")
                 self.current_reasoning = ""
 
+        # Handle unified diff for the entire turn (codex-rs EventMsg::TurnDiff)
+        elif event_type == "turn_diff":
+            unified_diff = event_obj.get("unified_diff", "")
+            if unified_diff:
+                self._add_message("system", "Received changes for this turn.")
+                self.diff_viewer.set_diff_content(unified_diff, "")
+                self.diff_dock.raise_()
+            else:
+                self._add_message("system", "No changes in this turn.")
+
         # Handle agent edit file response (the diff)
         elif event_type == "agent_edit_file_response":
             diff = event_obj.get("diff", "")
@@ -868,6 +909,20 @@ class MainWindow(QMainWindow):
 
         # Handle patch approval requests
         elif event_type == "apply_patch_approval_request":
+            # Surface diffs in viewer for review
+            try:
+                changes = event_obj.get("changes", {}) or {}
+                combined = []
+                for file_path, change in changes.items():
+                    if isinstance(change, dict) and "update" in change:
+                        udiff = change.get("update", {}).get("unified_diff", "")
+                        if udiff:
+                            combined.append(f"--- a/{file_path}\n+++ b/{file_path}\n{udiff}\n")
+                if combined:
+                    self.diff_viewer.set_diff_content("\n".join(combined), "")
+                    self.diff_dock.raise_()
+            except Exception:
+                pass
             self._handle_patch_approval_request(event_obj, task_id)
 
         # Handle exec approval requests
