@@ -1,0 +1,94 @@
+/* Global Light Theme */
+QMainWindow, QWidget {
+  background-color: #f7f8fa;
+  color: #1f2430;
+  font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 11pt;
+}
+
+QDockWidget::title {
+  background: #eef1f5;
+  padding: 6px 10px;
+  color: #3a4354;
+  font-weight: 600;
+  border-bottom: 1px solid #d7dde6;
+}
+
+QTreeView, QTreeWidget {
+  background: #ffffff;
+  border: 1px solid #d7dde6;
+  border-radius: 8px;
+}
+QTreeView::item:selected, QTreeWidget::item:selected {
+  background: #dfe9ff;
+  color: #1f2430;
+}
+
+QTextEdit, QLineEdit, QTextBrowser {
+  background: #ffffff;
+  border: 1px solid #d7dde6;
+  border-radius: 10px;
+  padding: 6px 10px;
+  selection-background-color: #2b84ff;
+}
+
+QPushButton {
+  background-color: #ffffff;
+  color: #1f2430;
+  border: 1px solid #cfd6e1;
+  padding: 6px 12px;
+  border-radius: 10px;
+}
+QPushButton:hover { background-color: #f1f4f8; }
+QPushButton:pressed { background-color: #e8edf4; }
+
+QTabWidget::pane { border-top: 1px solid #d7dde6; }
+QTabBar::tab {
+  background: #eef1f5;
+  color: #3a4354;
+  padding: 6px 14px;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  margin-right: 6px;
+}
+QTabBar::tab:selected { background: #ffffff; color: #1f2430; }
+
+QSplitter::handle { background: #eef1f5; }
+QSplitter::handle:horizontal { width: 6px; }
+QSplitter::handle:vertical { height: 6px; }
+
+/* ChatConsole */
+QScrollArea#ChatScroll { border: none; }
+
+QFrame#BubbleContainer[msgRole="user"] {
+  background: #e4f0ff;
+  border: 1px solid #c3dcff;
+  border-radius: 14px;
+}
+QLabel#BubbleHeader[msgRole="user"] { color: #1a4e8a; font-weight: 600; }
+QTextBrowser#BubbleBody[msgRole="user"] { color: #0d2240; }
+
+QFrame#BubbleContainer[msgRole="assistant"] {
+  background: #ffffff;
+  border: 1px solid #d7dde6;
+  border-radius: 14px;
+}
+QLabel#BubbleHeader[msgRole="assistant"] { color: #0f5132; font-weight: 600; }
+QTextBrowser#BubbleBody[msgRole="assistant"] { color: #1f2430; }
+
+QFrame#BubbleContainer[msgRole="system"] {
+  background: #fff2f0;
+  border: 1px solid #ffcdc4;
+  border-radius: 14px;
+}
+QLabel#BubbleHeader[msgRole="system"] { color: #b02a37; font-weight: 700; }
+QTextBrowser#BubbleBody[msgRole="system"] { color: #5f1a1e; }
+
+QStatusBar {
+  background: #f7f8fa;
+  border-top: 1px solid #d7dde6;
+  color: #3a4354;
+}
+
+QTextBrowser { font-size: 10.5pt; }
+

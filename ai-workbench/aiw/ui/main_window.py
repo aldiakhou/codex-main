@@ -1,4 +1,4 @@
-"""
+﻿"""
 Enhanced main window with dock-based layout for AI Development Workbench
 """
 import json
@@ -11,7 +11,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread
 from PySide6.QtWidgets import (
     QMainWindow, QTextEdit, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
-    QWidget, QDockWidget, QSplitter, QTreeWidget, QTreeWidgetItem,
+    QWidget, QDockWidget, QSplitter, QTreeWidget, QTreeWidgetItem, QStyle,
     QStatusBar, QMenuBar, QMenu, QToolBar, QFileDialog, QMessageBox,
     QLabel, QProgressBar
 )
@@ -23,6 +23,7 @@ from ..core.models import Repository, FileItem, Operation, Task
 from ..core.task_runner import get_workflow_runner
 from .code_editor import CodeEditorWidget
 from .diff_view import DiffViewWidget
+from .chat_console import ChatConsole
 import patch
 
 # Set up logging for main window
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
                 print(f"Warning: Could not restore window geometry: {e}")
 
         self._setup_ui()
+        self._apply_theme()
         self._setup_menus()
         self._setup_toolbar()
         self._setup_status_bar()
@@ -104,8 +106,8 @@ class MainWindow(QMainWindow):
                 result = QMessageBox.question(
                     self, "Codex Not Found",
                     "Codex executable not found. Would you like to:\n\n"
-                    "• Browse for the executable manually\n"
-                    "• Continue without backend (limited functionality)\n\n"
+                    "â€¢ Browse for the executable manually\n"
+                    "â€¢ Continue without backend (limited functionality)\n\n"
                     "Note: You can also install Codex CLI from https://github.com/openai/codex",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
                 )
@@ -207,19 +209,19 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.repo_dock)
 
     def _create_console_dock(self):
-        """Create the console and prompt input dock"""
-        self.console_dock = QDockWidget("Console", self)
+        """Create the chat console and prompt input dock with modern styling"""
+        self.console_dock = QDockWidget("Chat", self)
         self.console_dock.setObjectName("Console")
         self.console_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.console_dock.setMinimumHeight(260)
 
         console_widget_container = QWidget()
         console_layout = QVBoxLayout(console_widget_container)
 
-        # Console for output
-        self.console_widget = QTextEdit()
-        self.console_widget.setReadOnly(True)
-        self.console_widget.setFont(QFont("Consolas", 10))
-        console_layout.addWidget(self.console_widget)
+        # Modern chat console
+        self.chat_console = ChatConsole()
+        self.chat_console.setMinimumHeight(220)
+        console_layout.addWidget(self.chat_console)
 
         # Input area
         input_layout = QHBoxLayout()
@@ -319,6 +321,28 @@ class MainWindow(QMainWindow):
         artifacts_dock_action.setText("Artifacts")
         view_menu.addAction(artifacts_dock_action)
 
+        # Theme toggle
+        view_menu.addSeparator()
+        from PySide6.QtGui import QActionGroup
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        theme_dark = QAction("Dark Theme", self, checkable=True)
+        theme_light = QAction("Light Theme", self, checkable=True)
+        theme_group.addAction(theme_dark)
+        theme_group.addAction(theme_light)
+        view_menu.addAction(theme_dark)
+        view_menu.addAction(theme_light)
+
+        # Initialize checked state
+        current_theme = getattr(self.config_manager.config.ui, 'theme', 'system')
+        if current_theme == 'light':
+            theme_light.setChecked(True)
+        else:
+            theme_dark.setChecked(True)
+
+        theme_dark.triggered.connect(lambda: self._set_theme('dark'))
+        theme_light.triggered.connect(lambda: self._set_theme('light'))
+
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
 
@@ -338,28 +362,28 @@ class MainWindow(QMainWindow):
         toolbar.setObjectName("Main Toolbar")
 
         # Repository actions
-        open_repo_action = QAction("Open Repo", self)
+        open_repo_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open Repo", self)
         open_repo_action.triggered.connect(self._open_repository)
         toolbar.addAction(open_repo_action)
 
         toolbar.addSeparator()
 
         # File actions
-        save_action = QAction("Save", self)
+        save_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self)
         save_action.triggered.connect(self._save_current_file)
         toolbar.addAction(save_action)
 
         toolbar.addSeparator()
 
         # AI actions
-        send_prompt_action = QAction("Send Prompt", self)
+        send_prompt_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Send Prompt", self)
         send_prompt_action.triggered.connect(self._send_prompt)
         toolbar.addAction(send_prompt_action)
 
         toolbar.addSeparator()
 
         # Task actions
-        edit_task_action = QAction("AI Edit", self)
+        edit_task_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "AI Edit", self)
         edit_task_action.triggered.connect(self._run_edit_task)
         toolbar.addAction(edit_task_action)
 
@@ -466,12 +490,12 @@ class MainWindow(QMainWindow):
                     item.setText(0, item_path.name)
 
                     if item_path.is_dir():
-                        item.setText(0, f"📁 {item_path.name}")
+                        item.setText(0, f"ðŸ“ {item_path.name}")
                         # Add dummy child to make it expandable
                         dummy = QTreeWidgetItem(item)
                         dummy.setText(0, "Loading...")
                     else:
-                        item.setText(0, f"📄 {item_path.name}")
+                        item.setText(0, f"ðŸ“„ {item_path.name}")
 
                     # Store full path
                     item.setData(0, Qt.ItemDataRole.UserRole, str(item_path))
@@ -486,8 +510,39 @@ class MainWindow(QMainWindow):
             add_items(root_item, repo_path_obj)
             self.repo_tree.expandItem(root_item)
 
+            # Post-process: replace emoji prefixes and apply standard icons
+            try:
+                self._apply_standard_icons_to_repo_tree(root_item)
+            except Exception as e2:
+                main_logger.warning(f"Icon post-process failed: {e2}")
+
         except Exception as e:
-            self.console_widget.append(f"Error loading repository files: {str(e)}")
+            self._add_message("system", f"Error loading repository files: {str(e)}")
+
+    def _apply_standard_icons_to_repo_tree(self, item: QTreeWidgetItem):
+        """Ensure file tree items use platform icons and clean any mojibake text."""
+        stack = [item]
+        while stack:
+            it = stack.pop()
+            text = it.text(0)
+            data_path = it.data(0, Qt.ItemDataRole.UserRole)
+
+            if isinstance(text, str) and (text.startswith("ð") or text.startswith("�")):
+                # Replace with actual filename if available
+                if data_path:
+                    it.setText(0, Path(str(data_path)).name)
+
+            # Apply icons based on path/children
+            try:
+                if data_path and Path(str(data_path)).is_dir():
+                    it.setIcon(0, self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+                elif data_path and Path(str(data_path)).is_file():
+                    it.setIcon(0, self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+            except Exception:
+                pass
+
+            for i in range(it.childCount()):
+                stack.append(it.child(i))
 
     def _on_file_clicked(self, item, column):
         """Handle file click in repository tree"""
@@ -558,7 +613,7 @@ class MainWindow(QMainWindow):
         try:
             if not self.backend:
                 main_logger.error("Backend is None")
-                self._add_message("system", "❌ Backend not connected. Please check configuration.")
+                self._add_message("system", "âŒ Backend not connected. Please check configuration.")
                 return
 
             main_logger.info("Backend is available, preparing operation")
@@ -610,23 +665,23 @@ class MainWindow(QMainWindow):
                     # Include file context in the prompt text
                     enhanced_prompt = f"Regarding the file '{Path(current_file).name}': {prompt}"
                     op = Operation.create_user_turn(enhanced_prompt, normalized_cwd)
-                    self._add_message("system", f"📝 Sending request for {Path(current_file).name}...")
+                    self._add_message("system", f"ðŸ“ Sending request for {Path(current_file).name}...")
                     main_logger.info(f"Created user turn operation with file context for: {current_file}")
                     main_logger.info(f"Working directory context: {normalized_cwd}")
                 else:
                     op = Operation.create_user_turn(prompt, normalized_cwd)
-                    self._add_message("system", "💬 Sending general prompt...")
+                    self._add_message("system", "ðŸ’¬ Sending general prompt...")
                     main_logger.info(f"Created user turn operation with working directory: {normalized_cwd}")
             else:
                 # Fallback to user_input if no repository is selected
                 if current_file:
                     enhanced_prompt = f"Regarding the file '{Path(current_file).name}': {prompt}"
                     op = Operation.create_user_input(enhanced_prompt)
-                    self._add_message("system", f"📝 Sending request for {Path(current_file).name}...")
+                    self._add_message("system", f"ðŸ“ Sending request for {Path(current_file).name}...")
                     main_logger.info(f"Created user input operation with file context for: {current_file}")
                 else:
                     op = Operation.create_user_input(prompt)
-                    self._add_message("system", "💬 Sending general prompt...")
+                    self._add_message("system", "ðŸ’¬ Sending general prompt...")
                     main_logger.info("Created user input operation")
 
             op.context = repo_context
@@ -634,35 +689,45 @@ class MainWindow(QMainWindow):
             # Log the full operation for debugging
             op_json = op.model_dump_json(indent=2)
             main_logger.info(f"Operation JSON: {op_json}")
-            self.console_widget.append(f"<font color='grey'><i>Sending op: {op_json}</i></font>")
+            self._add_message("system", f"<i>Sending op:</i> <pre>{op_json}</pre>", rich=True)
 
             main_logger.info("Calling backend.send_op()")
             result = self.backend.send_op(op.model_dump())
             main_logger.info(f"backend.send_op() returned: {result}")
 
-            self.status_bar.showMessage("⏳ Waiting for AI response...", 0)
+            self.status_bar.showMessage("â³ Waiting for AI response...", 0)
 
         except Exception as e:
             main_logger.error(f"Exception in _send_prompt: {str(e)}", exc_info=True)
-            self._add_message("system", f"❌ Error sending prompt: {str(e)}")
+            self._add_message("system", f"âŒ Error sending prompt: {str(e)}")
             self.status_bar.clearMessage()
 
-    def _add_message(self, role: str, content: str):
-        """Add a message to the console"""
-        timestamp = time.strftime("%H:%M:%S")
-        if role == "user":
-            self.console_widget.append(f"<b>[{timestamp}] You:</b> {content}")
-        elif role == "assistant":
-            self.console_widget.append(f"<b>[{timestamp}] AI:</b> {content}")
-        elif role == "system":
-            self.console_widget.append(f"<font color='red'><b>[{timestamp}] System:</b> {content}</font>")
-        else:
-            self.console_widget.append(f"<b>[{timestamp}] {role.title()}:</b> {content}")
+    def _add_message(self, role: str, content: str, rich: bool = False):
+        """Add a bubble-styled message to the chat console."""
+        # Normalize roles to our three styles
+        norm_role = role
+        if role not in ("user", "assistant", "system"):
+            norm_role = "assistant" if role == "agent" else "system"
+        self.chat_console.add_message(norm_role, content, rich=rich)
 
-        # Auto scroll to bottom
-        cursor = self.console_widget.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.console_widget.setTextCursor(cursor)
+    def _apply_theme(self):
+        """Load and apply global QSS theme for a modern look."""
+        try:
+            theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
+            filename = "styles_light.qss" if theme == 'light' else "styles.qss"
+            qss_path = os.path.join(os.path.dirname(__file__), filename)
+            with open(qss_path, "r", encoding="utf-8") as f:
+                self.setStyleSheet(f.read())
+        except Exception as e:
+            main_logger.warning(f"Failed to load theme: {e}")
+
+    def _set_theme(self, theme: str):
+        try:
+            self.config_manager.config.ui.theme = theme
+            self.config_manager.save_config()
+        except Exception:
+            pass
+        self._apply_theme()
 
     def _start_login(self):
         """Start ChatGPT login process"""
@@ -749,7 +814,7 @@ class MainWindow(QMainWindow):
                 # Clean up the reasoning text (remove markdown formatting)
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
-                    self._add_message("system", f"🤔 {clean_reasoning}")
+                    self._add_message("system", f"ðŸ¤” {clean_reasoning}")
                 self.current_reasoning = ""
 
         # Handle message deltas (accumulate them)
@@ -765,7 +830,7 @@ class MainWindow(QMainWindow):
             if self.current_reasoning.strip():
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
-                    self._add_message("system", f"🤔 {clean_reasoning}")
+                    self._add_message("system", f"ðŸ¤” {clean_reasoning}")
                 self.current_reasoning = ""
 
         # Handle agent edit file response (the diff)
@@ -773,11 +838,11 @@ class MainWindow(QMainWindow):
             diff = event_obj.get("diff", "")
             file_path = event_obj.get("file_path", "unknown_file")
             if diff:
-                self._add_message("system", f"✅ Received diff for {file_path}")
+                self._add_message("system", f"âœ… Received diff for {file_path}")
                 self.diff_viewer.set_diff_content(diff, file_path)
                 self.diff_dock.raise_()  # Bring the diff dock to the front
             else:
-                self._add_message("system", f"⚠️ Received an empty diff for {file_path}")
+                self._add_message("system", f"âš ï¸ Received an empty diff for {file_path}")
 
         # Handle login events
         elif event_type == "login_chat_gpt_response":
@@ -785,14 +850,14 @@ class MainWindow(QMainWindow):
             if auth_url:
                 import webbrowser
                 webbrowser.open(auth_url)
-                self._add_message("system", "🔗 Please complete the login in your browser.")
+                self._add_message("system", "ðŸ”— Please complete the login in your browser.")
 
         elif event_type == "login_chat_gpt_complete":
             if event_obj.get("success"):
-                self._add_message("system", "✅ Login successful!")
+                self._add_message("system", "âœ… Login successful!")
             else:
                 error = event_obj.get("error", "Unknown error")
-                self._add_message("system", f"❌ Login failed: {error}")
+                self._add_message("system", f"âŒ Login failed: {error}")
 
         # Handle task started (clear any previous accumulations)
         elif event_type == "task_started":
@@ -829,12 +894,12 @@ class MainWindow(QMainWindow):
             # Only show events that might be relevant to the user
             if event_type not in ["mcp_connection_manager"]:
                 pretty_event = json.dumps(event_obj, indent=2)
-                self._add_message("system", f"📋 Event: {event_type}")
+                self._add_message("system", f"ðŸ“‹ Event: {event_type}")
 
     @Slot(str)
     def _on_backend_error(self, error_message):
         """Handle backend errors"""
-        self.console_widget.append(f"<font color='red'><b>Backend Error:</b> {error_message}</font>")
+        self._add_message("system", f"<b>Backend Error:</b> {error_message}", rich=True)
         self.backend_status_label.setText("Backend: Error")
 
     @Slot()
@@ -886,7 +951,7 @@ class MainWindow(QMainWindow):
     def _on_backend_error(self, error_message):
         """Handle backend errors"""
         main_logger.error(f"_on_backend_error called with message: {error_message}")
-        self.console_widget.append(f"<font color='red'><b>Backend Error:</b> {error_message}</font>")
+        self._add_message("system", f"<b>Backend Error:</b> {error_message}", rich=True)
         self.backend_status_label.setText("Backend: Error")
 
     @Slot()
@@ -901,7 +966,7 @@ class MainWindow(QMainWindow):
         main_logger.info(f"_on_backend_stopped called with exit code: {exit_code}")
         self.backend_status_label.setText("Backend: Disconnected")
         if exit_code != 0:
-            self._add_message("system", f"⚠️ Backend stopped with exit code: {exit_code}")
+            self._add_message("system", f"âš ï¸ Backend stopped with exit code: {exit_code}")
 
     @Slot(str)
     def _on_connection_status_changed(self, status: str):
@@ -956,7 +1021,7 @@ class MainWindow(QMainWindow):
     def _on_task_started(self, workflow_id: str, task_id: str):
         """Handle task started"""
         main_logger.info(f"_on_task_started: workflow={workflow_id}, task={task_id}")
-        self._add_message("system", f"🔄 Started task: {task_id}")
+        self._add_message("system", f"ðŸ”„ Started task: {task_id}")
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -965,7 +1030,7 @@ class MainWindow(QMainWindow):
     def _on_task_completed(self, workflow_id: str, task_id: str, result):
         """Handle task completed"""
         main_logger.info(f"_on_task_completed: workflow={workflow_id}, task={task_id}, result={result}")
-        self._add_message("system", f"✅ Task completed: {task_id}")
+        self._add_message("system", f"âœ… Task completed: {task_id}")
         self.progress_bar.setVisible(False)
         self.status_bar.showMessage(f"Task {task_id} completed successfully", 3000)
 
@@ -973,7 +1038,7 @@ class MainWindow(QMainWindow):
     def _on_task_failed(self, workflow_id: str, task_id: str, error: str):
         """Handle task failed"""
         main_logger.error(f"_on_task_failed: workflow={workflow_id}, task={task_id}, error={error}")
-        self._add_message("system", f"❌ Task failed: {task_id} - {error}")
+        self._add_message("system", f"âŒ Task failed: {task_id} - {error}")
         self.progress_bar.setVisible(False)
         self.status_bar.showMessage(f"Task {task_id} failed: {error}", 5000)
 
@@ -991,20 +1056,20 @@ class MainWindow(QMainWindow):
     def _on_workflow_started(self, workflow_id: str):
         """Handle workflow started"""
         main_logger.info(f"_on_workflow_started: workflow={workflow_id}")
-        self._add_message("system", f"🚀 Started workflow: {workflow_id}")
+        self._add_message("system", f"ðŸš€ Started workflow: {workflow_id}")
 
     @Slot(str)
     def _on_workflow_completed(self, workflow_id: str):
         """Handle workflow completed"""
         main_logger.info(f"_on_workflow_completed: workflow={workflow_id}")
-        self._add_message("system", f"🎉 Workflow completed: {workflow_id}")
+        self._add_message("system", f"ðŸŽ‰ Workflow completed: {workflow_id}")
         self.status_bar.showMessage("Workflow completed successfully", 3000)
 
     @Slot(str, str)
     def _on_workflow_failed(self, workflow_id: str, error: str):
         """Handle workflow failed"""
         main_logger.error(f"_on_workflow_failed: workflow={workflow_id}, error={error}")
-        self._add_message("system", f"💥 Workflow failed: {workflow_id} - {error}")
+        self._add_message("system", f"ðŸ’¥ Workflow failed: {workflow_id} - {error}")
         self.status_bar.showMessage(f"Workflow failed: {error}", 5000)
 
     def _handle_patch_approval_request(self, event_obj, submission_id):
@@ -1021,7 +1086,7 @@ class MainWindow(QMainWindow):
                 return
 
             # Display the approval request
-            self._add_message("system", "🔄 <b>AI wants to make changes:</b>")
+            self._add_message("system", "ðŸ”„ <b>AI wants to make changes:</b>")
 
             # Show each file and its changes
             for file_path, change_info in changes.items():
@@ -1029,7 +1094,7 @@ class MainWindow(QMainWindow):
                     update_info = change_info["update"]
                     unified_diff = update_info.get("unified_diff", "")
 
-                    self._add_message("system", f"📝 File: <code>{file_path}</code>")
+                    self._add_message("system", f"ðŸ“ File: <code>{file_path}</code>")
                     self._add_message("system", f"<pre>{unified_diff}</pre>")
 
             # Create approval dialog
@@ -1067,19 +1132,19 @@ class MainWindow(QMainWindow):
             if result == QMessageBox.AcceptRole:
                 # User approved
                 self._send_patch_approval_response(submission_id, True, False)
-                self._add_message("system", "✅ Changes approved")
+                self._add_message("system", "âœ… Changes approved")
             elif result == QMessageBox.RejectRole:
                 # User rejected
                 self._send_patch_approval_response(submission_id, False, False)
-                self._add_message("system", "❌ Changes rejected")
+                self._add_message("system", "âŒ Changes rejected")
             elif msg_box.clickedButton() == auto_approve_button:
                 # User chose auto-approve
                 self._send_patch_approval_response(submission_id, True, True)
-                self._add_message("system", "✅ Changes approved (auto-approve enabled)")
+                self._add_message("system", "âœ… Changes approved (auto-approve enabled)")
 
         except Exception as e:
             main_logger.error(f"Error handling patch approval request: {e}", exc_info=True)
-            self._add_message("system", f"❌ Error processing approval request: {e}")
+            self._add_message("system", f"âŒ Error processing approval request: {e}")
 
     def _handle_exec_approval_request(self, event_obj, submission_id):
         """Handle exec approval request from backend"""
@@ -1101,10 +1166,10 @@ class MainWindow(QMainWindow):
             command_str = " ".join(command) if isinstance(command, list) else str(command)
 
             # Display the approval request
-            self._add_message("system", "⚡ <b>AI wants to run a command:</b>")
-            self._add_message("system", f"💻 Command: <code>{command_str}</code>")
+            self._add_message("system", "âš¡ <b>AI wants to run a command:</b>")
+            self._add_message("system", f"ðŸ’» Command: <code>{command_str}</code>")
             if cwd:
-                self._add_message("system", f"📁 Directory: <code>{cwd}</code>")
+                self._add_message("system", f"ðŸ“ Directory: <code>{cwd}</code>")
 
             main_logger.info("About to show exec approval dialog")
 
@@ -1139,23 +1204,23 @@ class MainWindow(QMainWindow):
                 # User approved
                 main_logger.info("User approved the command")
                 self._send_exec_approval_response(submission_id, True, False)
-                self._add_message("system", "✅ Command approved and executing...")
+                self._add_message("system", "âœ… Command approved and executing...")
             elif clicked_button == reject_button:
                 # User rejected
                 main_logger.info("User rejected the command")
                 self._send_exec_approval_response(submission_id, False, False)
-                self._add_message("system", "❌ Command rejected")
+                self._add_message("system", "âŒ Command rejected")
             elif clicked_button == auto_approve_button:
                 # User chose auto-approve
                 main_logger.info("User chose auto-approve")
                 self._send_exec_approval_response(submission_id, True, True)
-                self._add_message("system", "✅ Command approved (auto-approve enabled)")
+                self._add_message("system", "âœ… Command approved (auto-approve enabled)")
             else:
                 main_logger.warning(f"Unknown dialog result: {result}, clicked button: {clicked_button}")
 
         except Exception as e:
             main_logger.error(f"Error handling exec approval request: {e}", exc_info=True)
-            self._add_message("system", f"❌ Error processing command approval request: {e}")
+            self._add_message("system", f"âŒ Error processing command approval request: {e}")
 
     def _send_exec_approval_response(self, submission_id: str, approved: bool, auto_approve: bool = False):
         """Send exec approval response back to backend"""
@@ -1227,7 +1292,7 @@ class MainWindow(QMainWindow):
             main_logger.error(f"Traceback: {traceback.format_exc()}")
             if 'op' in locals():
                 main_logger.error(f"Operation that failed: {op.model_dump()}")
-            self._add_message("system", f"❌ Error sending approval response: {e}")
+            self._add_message("system", f"âŒ Error sending approval response: {e}")
 
     def _handle_mcp_tool_call_begin(self, event_obj):
         """Handle MCP tool call begin event"""
@@ -1245,37 +1310,37 @@ class MainWindow(QMainWindow):
             # Add relevant arguments based on tool type
             if server == "filesystem":
                 if tool == "read_text_file" and "path" in arguments:
-                    tool_info += f" 📖 {arguments['path']}"
+                    tool_info += f" ðŸ“– {arguments['path']}"
                     if "head" in arguments:
                         tool_info += f" (first {arguments['head']} lines)"
                     elif "tail" in arguments:
                         tool_info += f" (last {arguments['tail']} lines)"
                 elif tool == "list_directory" and "path" in arguments:
-                    tool_info += f" 📁 {arguments['path']}"
+                    tool_info += f" ðŸ“ {arguments['path']}"
                 elif tool in ["write_text_file", "edit_text_file"] and "path" in arguments:
-                    tool_info += f" ✏️ {arguments['path']}"
+                    tool_info += f" âœï¸ {arguments['path']}"
                 elif tool == "create_directory" and "path" in arguments:
-                    tool_info += f" � {arguments['path']}"
+                    tool_info += f" ï¿½ {arguments['path']}"
                 elif tool == "move_path" and "source" in arguments and "destination" in arguments:
-                    tool_info += f" 📁 {arguments['source']} → {arguments['destination']}"
+                    tool_info += f" ðŸ“ {arguments['source']} â†’ {arguments['destination']}"
                 elif "path" in arguments:
-                    tool_info += f" 📄 {arguments['path']}"
+                    tool_info += f" ðŸ“„ {arguments['path']}"
             elif server == "git":
                 if tool == "status" and "path" in arguments:
-                    tool_info += f" 📊 {arguments['path']}"
+                    tool_info += f" ðŸ“Š {arguments['path']}"
                 elif tool == "commit" and "message" in arguments:
-                    tool_info += f" 💾 {arguments['message'][:50]}..."
+                    tool_info += f" ðŸ’¾ {arguments['message'][:50]}..."
                 elif "path" in arguments:
-                    tool_info += f" 📄 {arguments['path']}"
+                    tool_info += f" ðŸ“„ {arguments['path']}"
             elif server == "run_terminal":
                 if tool == "run_command" and "command" in arguments:
                     cmd = arguments['command']
                     # Truncate long commands
                     if len(cmd) > 60:
                         cmd = cmd[:57] + "..."
-                    tool_info += f" 💻 {cmd}"
+                    tool_info += f" ðŸ’» {cmd}"
 
-            self._add_message("system", f"🔧 AI calling: <code>{tool_info}</code>")
+            self._add_message("system", f"ðŸ”§ AI calling: <code>{tool_info}</code>")
 
         except Exception as e:
             main_logger.error(f"Error handling MCP tool call begin: {e}", exc_info=True)
@@ -1302,56 +1367,56 @@ class MainWindow(QMainWindow):
                             content = result["Ok"]["content"]
                             if isinstance(content, str):
                                 lines = len(content.split('\n'))
-                                tool_info += f" ✅ Read {lines} lines"
+                                tool_info += f" âœ… Read {lines} lines"
                             else:
-                                tool_info += f" ✅ Read content"
+                                tool_info += f" âœ… Read content"
                         else:
-                            tool_info += f" ✅ Completed"
+                            tool_info += f" âœ… Completed"
                     elif tool == "list_directory":
                         if "entries" in result.get("Ok", {}):
                             entries = result["Ok"]["entries"]
                             if isinstance(entries, list):
-                                tool_info += f" ✅ Found {len(entries)} items"
+                                tool_info += f" âœ… Found {len(entries)} items"
                             else:
-                                tool_info += f" ✅ Listed directory"
+                                tool_info += f" âœ… Listed directory"
                         else:
-                            tool_info += f" ✅ Completed"
+                            tool_info += f" âœ… Completed"
                     elif tool in ["write_text_file", "edit_text_file"]:
-                        tool_info += f" ✅ File updated"
+                        tool_info += f" âœ… File updated"
                     elif tool == "create_directory":
-                        tool_info += f" ✅ Directory created"
+                        tool_info += f" âœ… Directory created"
                     elif tool == "move_path":
-                        tool_info += f" ✅ Path moved"
+                        tool_info += f" âœ… Path moved"
                     else:
-                        tool_info += f" ✅ Completed"
+                        tool_info += f" âœ… Completed"
                 elif server == "git":
                     if tool == "status":
-                        tool_info += f" ✅ Status retrieved"
+                        tool_info += f" âœ… Status retrieved"
                     elif tool == "commit":
-                        tool_info += f" ✅ Changes committed"
+                        tool_info += f" âœ… Changes committed"
                     else:
-                        tool_info += f" ✅ Completed"
+                        tool_info += f" âœ… Completed"
                 elif server == "run_terminal":
                     if tool == "run_command":
                         if "exit_code" in result.get("Ok", {}):
                             exit_code = result["Ok"]["exit_code"]
                             if exit_code == 0:
-                                tool_info += f" ✅ Command succeeded"
+                                tool_info += f" âœ… Command succeeded"
                             else:
-                                tool_info += f" ⚠️ Command failed (exit code: {exit_code})"
+                                tool_info += f" âš ï¸ Command failed (exit code: {exit_code})"
                         else:
-                            tool_info += f" ✅ Command completed"
+                            tool_info += f" âœ… Command completed"
                     else:
-                        tool_info += f" ✅ Completed"
+                        tool_info += f" âœ… Completed"
                 else:
-                    tool_info += f" ✅ Completed"
+                    tool_info += f" âœ… Completed"
 
-                self._add_message("system", f"🔧 AI finished: <code>{tool_info}</code>")
+                self._add_message("system", f"ðŸ”§ AI finished: <code>{tool_info}</code>")
             elif "Err" in result:
                 error = result.get("Err", "Unknown error")
-                self._add_message("system", f"❌ Tool call failed: <code>{server}.{tool}</code> - {error}")
+                self._add_message("system", f"âŒ Tool call failed: <code>{server}.{tool}</code> - {error}")
             else:
-                self._add_message("system", f"✅ Tool call completed: <code>{server}.{tool}</code>")
+                self._add_message("system", f"âœ… Tool call completed: <code>{server}.{tool}</code>")
 
         except Exception as e:
             main_logger.error(f"Error handling MCP tool call end: {e}", exc_info=True)
@@ -1373,9 +1438,11 @@ class MainWindow(QMainWindow):
     def _handle_session_configured(self, event_obj):
         """Handle session configured event"""
         try:
-            self._add_message("system", "🔗 Backend session configured and ready")
+            self._add_message("system", "ðŸ”— Backend session configured and ready")
             self.backend_status_label.setText("Backend: Connected")
             self.status_bar.showMessage("Backend ready", 3000)
 
         except Exception as e:
             main_logger.error(f"Error handling session configured: {e}", exc_info=True)
+
+
