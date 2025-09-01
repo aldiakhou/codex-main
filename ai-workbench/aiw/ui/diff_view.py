@@ -3,7 +3,7 @@ Diff viewer widget for AI Development Workbench
 """
 import difflib
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QFont, QTextCharFormat, QColor, QPainter
 from PySide6.QtWidgets import (
@@ -43,10 +43,11 @@ class DiffLine:
 class DiffHunk:
     """Represents a hunk (section) of a diff"""
 
-    def __init__(self, header: str, lines: List[DiffLine]):
+    def __init__(self, header: str, lines: List[DiffLine], file_path: Optional[str] = None):
         self.header = header
         self.lines = lines
         self.selected = False
+        self.file_path = file_path
 
     @property
     def has_changes(self) -> bool:
@@ -173,10 +174,16 @@ class DiffWidget(QWidget):
         self.diff_viewer = DiffViewer()
         layout.addWidget(self.diff_viewer)
 
-        # Hunk controls
+        # Hunk controls (wrapped in scroll area to cap height)
         self.hunk_controls_widget = QWidget()
         self.hunk_controls_layout = QVBoxLayout(self.hunk_controls_widget)
-        layout.addWidget(self.hunk_controls_widget)
+        from PySide6.QtWidgets import QScrollArea
+        self.hunk_controls_scroll = QScrollArea()
+        self.hunk_controls_scroll.setWidgetResizable(True)
+        self.hunk_controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.hunk_controls_scroll.setWidget(self.hunk_controls_widget)
+        self.hunk_controls_scroll.setMaximumHeight(180)
+        layout.addWidget(self.hunk_controls_scroll)
 
     def set_diff_content(self, diff_text: str, file_path: str = ""):
         """Set the diff content to display"""
@@ -185,6 +192,10 @@ class DiffWidget(QWidget):
 
         # Parse the diff into hunks
         self.hunks = self._parse_diff(diff_text)
+        # Auto-select hunks by default for convenience
+        for h in self.hunks:
+            if h.has_changes:
+                h.selected = True
 
         # Display the diff
         self.diff_viewer.set_diff_content(diff_text)
@@ -196,41 +207,52 @@ class DiffWidget(QWidget):
         self._update_button_states()
 
     def _parse_diff(self, diff_text: str) -> List[DiffHunk]:
-        """Parse diff text into hunks"""
-        hunks = []
+        """Parse diff text into hunks and track file for each hunk."""
+        hunks: List[DiffHunk] = []
         lines = diff_text.split('\n')
 
-        current_hunk_lines = []
+        current_hunk_lines: List[DiffLine] = []
         current_header = ""
+        current_file: Optional[str] = None
+
+        def flush_hunk():
+            nonlocal current_hunk_lines, current_header, current_file
+            if current_hunk_lines:
+                hunks.append(DiffHunk(current_header, current_hunk_lines, file_path=current_file))
+                current_hunk_lines = []
+                current_header = ""
 
         for line in lines:
+            if line.startswith('diff --git '):
+                flush_hunk()
+                continue
+            if line.startswith('+++ '):
+                plus_path = line[4:].strip()
+                if plus_path.startswith('b/'):
+                    current_file = plus_path[2:]
+                elif plus_path != '/dev/null':
+                    current_file = plus_path
+                continue
+            if line.startswith('--- '):
+                # old-file header; ignore
+                continue
             if line.startswith('@@'):
-                # New hunk header
-                if current_hunk_lines:
-                    hunks.append(DiffHunk(current_header, current_hunk_lines))
-
+                flush_hunk()
                 current_header = line
                 current_hunk_lines = []
-            elif line.startswith('+++') or line.startswith('---'):
-                # File header, skip
                 continue
+
+            if line.startswith('+') and not line.startswith('+++'):
+                diff_line = DiffLine('add', line[1:], None, None)
+            elif line.startswith('-') and not line.startswith('---'):
+                diff_line = DiffLine('remove', line[1:], None, None)
+            elif line.startswith(' '):
+                diff_line = DiffLine('context', line[1:], None, None)
             else:
-                # Diff line
-                if line.startswith('+'):
-                    diff_line = DiffLine('add', line[1:], None, None)
-                elif line.startswith('-'):
-                    diff_line = DiffLine('remove', line[1:], None, None)
-                elif line.startswith(' '):
-                    diff_line = DiffLine('context', line[1:], None, None)
-                else:
-                    diff_line = DiffLine('header', line, None, None)
+                diff_line = DiffLine('header', line, None, None)
+            current_hunk_lines.append(diff_line)
 
-                current_hunk_lines.append(diff_line)
-
-        # Add the last hunk
-        if current_hunk_lines:
-            hunks.append(DiffHunk(current_header, current_hunk_lines))
-
+        flush_hunk()
         return hunks
 
     def _create_hunk_controls(self):
@@ -244,18 +266,27 @@ class DiffWidget(QWidget):
         if not self.hunks:
             return
 
-        # Add hunk selection controls
+        # Add hunk selection controls (compact)
         for i, hunk in enumerate(self.hunks):
             if hunk.has_changes:
                 hunk_layout = QHBoxLayout()
-
-                checkbox = QCheckBox(f"Hunk {i+1}: +{hunk.additions} -{hunk.removals}")
+                label = f"Hunk {i+1} (+{hunk.additions}/-{hunk.removals})"
+                if getattr(hunk, 'file_path', None):
+                    try:
+                        label += f" — {Path(hunk.file_path).name}"
+                    except Exception:
+                        pass
+                checkbox = QCheckBox(label)
                 checkbox.setChecked(hunk.selected)
                 checkbox.stateChanged.connect(lambda state, idx=i: self._on_hunk_toggled(idx, state))
                 hunk_layout.addWidget(checkbox)
 
                 hunk_layout.addStretch()
                 self.hunk_controls_layout.addLayout(hunk_layout)
+        try:
+            self.hunk_controls_widget.update()
+        except Exception:
+            pass
 
     def _on_hunk_toggled(self, hunk_index: int, state: int):
         """Handle hunk selection toggle"""
@@ -282,29 +313,30 @@ class DiffWidget(QWidget):
         return [i for i, hunk in enumerate(self.hunks) if hunk.selected]
 
     def get_selected_diff_text(self) -> Optional[str]:
-        """Construct a diff text from selected hunks only."""
-        if not any(hunk.selected for hunk in self.hunks):
+        """Construct a diff text from selected hunks only (may contain multiple files)."""
+        files = self.get_selected_diffs_by_file()
+        if not files:
             return None
+        return "\n".join(files.values())
 
-        full_diff_lines = self.diff_viewer.toPlainText().split('\n')
-        header_lines = [line for line in full_diff_lines if line.startswith('---') or line.startswith('+++')]
-        
-        new_diff_parts = header_lines
-        
-        selected_hunk_indices = self.get_selected_hunks()
-        
-        for i in selected_hunk_indices:
-            hunk = self.hunks[i]
-            new_diff_parts.append(hunk.header)
+    def get_selected_diffs_by_file(self) -> Dict[str, str]:
+        """Return mapping: repo-relative file path -> unified diff text for selected hunks."""
+        result: Dict[str, List[str]] = {}
+        for hunk in self.hunks:
+            if not hunk.selected or not hunk.has_changes or not getattr(hunk, 'file_path', None):
+                continue
+            fp = hunk.file_path
+            if fp not in result:
+                result[fp] = [f"--- a/{fp}", f"+++ b/{fp}"]
+            result[fp].append(hunk.header)
             for line in hunk.lines:
                 if line.is_addition:
-                    new_diff_parts.append(f'+{line.content}')
+                    result[fp].append(f"+{line.content}")
                 elif line.is_removal:
-                    new_diff_parts.append(f'-{line.content}')
+                    result[fp].append(f"-{line.content}")
                 elif line.is_context:
-                    new_diff_parts.append(f' {line.content}')
-
-        return "\n".join(new_diff_parts)
+                    result[fp].append(f" {line.content}")
+        return {fp: "\n".join(parts) for fp, parts in result.items()}
 
     def select_all_hunks(self):
         """Select all hunks"""

@@ -594,40 +594,80 @@ class MainWindow(QMainWindow):
         pass
 
     def _on_apply_diff(self):
-        """Handle request to apply a diff."""
-        current_file = self.code_editor.get_current_file_path()
-        if not current_file:
-            QMessageBox.warning(self, "No File", "An open file is required to apply a patch.")
-            return
+        """Apply selected hunks directly to files in the opened repository.
+        - Applies per-file; editor does not need to have the file open.
+        - Updates the editor if the current file was modified.
+        """
+        # Collect selected hunks grouped by file
+        diffs_by_file = getattr(self.diff_viewer.diff_widget, 'get_selected_diffs_by_file', None)
+        if callable(diffs_by_file):
+            files_map = diffs_by_file()
+        else:
+            # Back-compat fallback
+            selected = self.diff_viewer.diff_widget.get_selected_diff_text()
+            files_map = {}
+            if selected:
+                # The patch library prefers --- a/.. +++ b/.. headers; ensure a filename
+                fake = Path(self.code_editor.get_current_file_path() or "selected.patch").name
+                if not selected.lstrip().startswith('---'):
+                    selected = f"--- a/{fake}\n+++ b/{fake}\n" + selected
+                files_map[fake] = selected
 
-        selected_diff_text = self.diff_viewer.diff_widget.get_selected_diff_text()
-        if not selected_diff_text:
+        if not files_map:
             QMessageBox.information(self, "No Changes Selected", "Please select one or more hunks to apply.")
             return
 
-        try:
-            # Get the original content from the editor
-            original_content = self.code_editor.editor.toPlainText()
-            
-            # Create a patch set from the diff text
-            patch_set = patch.from_string(selected_diff_text.encode('utf-8'))
-            
-            # Apply the patch in memory
-            patched_content = patch_set.apply(original_content.encode('utf-8'))
-            
-            if patched_content:
-                # Update the editor with the patched content
-                self.code_editor.set_text(patched_content.decode('utf-8'))
-                self.status_bar.showMessage("Changes applied successfully.", 3000)
-                
-                # Clear the diff viewer and bring focus to the editor
-                self.diff_viewer.clear()
-                self.code_editor.editor.setFocus()
-            else:
-                QMessageBox.critical(self, "Patch Failed", "The selected changes could not be applied.")
+        if not self.current_repository:
+            QMessageBox.warning(self, "No Repository", "Open a repository before applying changes.")
+            return
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error Applying Patch", f"An unexpected error occurred: {e}")
+        repo_root = Path(self.current_repository.path)
+        modified_files = []
+        errors = []
+
+        # Apply per-file using in-memory patching to avoid bytes/str issues
+        for rel_path, diff_text in files_map.items():
+            try:
+                # Normalize path separators to POSIX for diff headers
+                rel_posix = rel_path.replace('\\', '/')
+                dt = diff_text
+                if not dt.lstrip().startswith('---'):
+                    dt = f"--- a/{rel_posix}\n+++ b/{rel_posix}\n" + dt
+
+                target_path = (repo_root / rel_path).resolve()
+                original_bytes = b""
+                if target_path.exists():
+                    original_bytes = target_path.read_bytes()
+
+                try:
+                    pset = patch.fromstring(dt)
+                    patched_bytes = pset.apply(original_bytes)
+                except AttributeError:
+                    # Some versions require bytes in from_string
+                    pset = patch.from_string(dt.encode('utf-8'))
+                    patched_bytes = pset.apply(original_bytes)
+
+                if not patched_bytes:
+                    errors.append(f"{rel_path}: failed to apply selected hunks")
+                    continue
+
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_bytes(patched_bytes)
+                modified_files.append(str(target_path))
+            except Exception as e:
+                errors.append(f"{rel_path}: {e}")
+
+        if modified_files and not errors:
+            self.status_bar.showMessage(f"Applied changes to {len(modified_files)} file(s)", 3000)
+            # Refresh editor if current file modified
+            cur = self.code_editor.get_current_file_path()
+            if cur and any(Path(cur).resolve() == Path(p).resolve() for p in modified_files):
+                self.code_editor.load_file(cur)
+        else:
+            QMessageBox.critical(self, "Patch Failed", "No changes were applied.")
+
+        if errors:
+            self._add_message("system", "Some patches failed:\n" + "\n".join(errors))
 
     def _send_prompt(self):
         """Send a prompt to the AI backend."""
