@@ -987,10 +987,9 @@ class MainWindow(QMainWindow):
 
         # Show other events only if they contain useful information
         else:
-            # Only show events that might be relevant to the user
-            if event_type not in ["mcp_connection_manager"]:
-                pretty_event = json.dumps(event_obj, indent=2)
-                self._add_message("system", f"ðŸ“‹ Event: {event_type}")
+            # Only show events that might be relevant to the user, but log them for debugging
+            if event_type not in ["mcp_connection_manager", "agent_reasoning_delta", "agent_message_delta"]:
+                main_logger.debug(f"Unhandled Event: {event_type}")
 
     @Slot(str)
     def _on_backend_error(self, error_message):

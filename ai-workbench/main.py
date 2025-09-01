@@ -21,6 +21,9 @@ def main():
     window = MainWindow()
     window.show()
 
+    # Apply the theme after the window is shown
+    window._apply_theme()
+
     # Start event loop
     sys.exit(app.exec())
 

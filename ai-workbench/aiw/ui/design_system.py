@@ -32,23 +32,23 @@ class ThemeTokens:
 # Inspired by modern editor themes like VS Code's default dark theme
 THEMES: Dict[str, ThemeTokens] = {
     "dark": ThemeTokens(
-        bg="#1e1e1e",
-        bg_offset="#252526",
-        fg="#d4d4d4",
-        fg_muted="#8c8c8c",
-        border="#3c3c3c",
-        border_subtle="#2a2a2a",
-        accent="#007acc",
+        bg="#1c1c1c",
+        bg_offset="#2a2a2a",
+        fg="#e0e0e0",
+        fg_muted="#9a9a9a",
+        border="#4a4a4a",
+        border_subtle="#333333",
+        accent="#0a84ff",
         accent_fg="#ffffff",
-        accent_hover="#009aff",
-        selection_bg="#264f78",
-        danger="#f44747",
-        bubble_user_bg="#264f78",
-        bubble_user_fg="#d4d4d4",
-        bubble_ai_bg="#252526",
-        bubble_ai_fg="#d4d4d4",
+        accent_hover="#3b9dff",
+        selection_bg="#2a5c8e",
+        danger="#ff4d4d",
+        bubble_user_bg="#2a5c8e",
+        bubble_user_fg="#e0e0e0",
+        bubble_ai_bg="#2a2a2a",
+        bubble_ai_fg="#e0e0e0",
         bubble_sys_bg="#3c3c3c",
-        bubble_sys_fg="#a0a0a0",
+        bubble_sys_fg="#b0b0b0",
     ),
     "light": ThemeTokens(
         bg="#ffffff",
@@ -72,211 +72,215 @@ THEMES: Dict[str, ThemeTokens] = {
 }
 
 def generate_qss(theme: str = "dark", base_font_pt: float = 10.5) -> str:
-    t = THEMES.get(theme, THEMES["dark"])
-    code_pt = max(9.0, base_font_pt - 1.0)
-    
-    return f"""
-/* AI Workbench - Generated Theme: {theme} */
+  """Generate a Qt Style Sheet string for the given theme.
 
-/* --- Global --- */
-QWidget {{
-  background-color: {t.bg};
-  color: {t.fg};
-  font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
-  font-size: {base_font_pt}pt;
-  border: none;
-}}
+  NOTE: Avoid f-string curly-brace escaping issues by building line-by-line.
+  """
+  t = THEMES.get(theme, THEMES["dark"])
+  code_pt = max(9.0, base_font_pt - 1.0)
 
-/* --- Main Window & Docks --- */
-QMainWindow::separator {{
-  background-color: {t.bg_offset};
-  width: 6px; /* vertical */
-  height: 6px; /* horizontal */
-}}
-QDockWidget {{
-  titlebar-close-icon: url(none);
-  titlebar-normal-icon: url(none);
-}}
-QDockWidget::title {{
-  background: {t.bg_offset};
-  color: {t.fg_muted};
-  padding: 8px 12px;
-  font-weight: 600;
-  border-bottom: 1px solid {t.border};
-}}
+  lines: list[str] = []
+  ap = lines.append
+  ap(f"/* AI Workbench - Generated Theme: {theme} */")
+  ap("")
+  # Global
+  ap("QWidget {")
+  ap(f"  background-color: {t.bg};")
+  ap(f"  color: {t.fg};")
+  ap(f"  font-family: 'Cascadia Code', 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;")
+  ap(f"  font-size: {base_font_pt}pt;")
+  ap("  border: none;")
+  ap("}")
 
-/* --- Text & Input --- */
-QTextEdit, QLineEdit, QTextBrowser {{
-  background-color: {t.bg_offset};
-  color: {t.fg};
-  border: 1px solid {t.border};
-  border-radius: 6px;
-  padding: 8px;
-  selection-background-color: {t.selection_bg};
-}}
-QTextEdit:focus, QLineEdit:focus {{
-  border: 1px solid {t.accent};
-}}
-QTextBrowser {{
-  font-size: {code_pt}pt;
-  font-family: "Consolas", "Fira Code", "Courier New", monospace;
-}}
+  # Main window & docks
+  ap("QMainWindow::separator {")
+  ap(f"  background-color: {t.bg_offset};")
+  ap("  width: 6px;")
+  ap("  height: 6px;")
+  ap("}")
+  ap("QDockWidget {")
+  ap("  titlebar-close-icon: url(none);")
+  ap("  titlebar-normal-icon: url(none);")
+  ap("}")
+  ap("QDockWidget::title {")
+  ap(f"  background: {t.bg_offset};")
+  ap(f"  color: {t.fg_muted};")
+  ap("  padding: 8px 12px;")
+  ap("  font-weight: 600;")
+  ap(f"  border-bottom: 1px solid {t.border};")
+  ap("}")
 
-/* --- Buttons --- */
-QPushButton {{
-  background-color: {t.accent};
-  color: {t.accent_fg};
-  border: 1px solid {t.accent};
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-weight: 600;
-}}
-QPushButton:hover {{
-  background-color: {t.accent_hover};
-  border-color: {t.accent_hover};
-}}
-QPushButton:pressed {{
-  background-color: {t.accent};
-}}
-QToolButton {{
-  background-color: {t.bg_offset};
-  color: {t.fg_muted};
-  border: 1px solid {t.border};
-  padding: 6px;
-  border-radius: 6px;
-}}
-QToolButton:hover {{
-  background-color: {t.bg};
-  border-color: {t.border};
-  color: {t.fg};
-}}
-QToolButton#BubbleAction {{
-  background: transparent;
-  border: 1px solid transparent;
-  color: {t.fg_muted};
-  padding: 2px;
-}}
-QToolButton#BubbleAction:hover {{
-  background: {t.bg_offset};
-  border: 1px solid {t.border};
-  color: {t.fg};
-}}
+  # Text inputs
+  ap("QTextEdit, QLineEdit, QTextBrowser {")
+  ap(f"  background-color: {t.bg_offset};")
+  ap(f"  color: {t.fg};")
+  ap(f"  border: 1px solid {t.border};")
+  ap("  border-radius: 6px;")
+  ap("  padding: 8px;")
+  ap(f"  selection-background-color: {t.selection_bg};")
+  ap("}")
+  ap("QTextEdit:focus, QLineEdit:focus {")
+  ap(f"  border: 1px solid {t.accent};")
+  ap("}")
+  ap("QTextBrowser {")
+  ap(f"  font-size: {code_pt}pt;")
+  ap("  font-family: 'Consolas', 'Fira Code', 'Courier New', monospace;")
+  ap("}")
 
-/* --- Tree View (Repo Explorer) --- */
-QTreeView, QTreeWidget {{
-  background-color: {t.bg};
-  border: 1px solid {t.border};
-  padding: 4px;
-}}
-QTreeView::item, QTreeWidget::item {{
-  padding: 6px;
-  border-radius: 4px;
-}}
-QTreeView::item:hover, QTreeWidget::item:hover {{
-  background-color: {t.bg_offset};
-}}
-QTreeView::item:selected, QTreeWidget::item:selected {{
-  background-color: {t.selection_bg};
-  color: {t.fg};
-}}
+  # Buttons
+  ap("QPushButton {")
+  ap(f"  background-color: {t.accent};")
+  ap(f"  color: {t.accent_fg};")
+  ap(f"  border: 1px solid {t.accent};")
+  ap("  padding: 8px 16px;")
+  ap("  border-radius: 6px;")
+  ap("  font-weight: 600;")
+  ap("}")
+  ap("QPushButton:hover {")
+  ap(f"  background-color: {t.accent_hover};")
+  ap(f"  border-color: {t.accent_hover};")
+  ap("}")
+  ap("QPushButton:pressed {")
+  ap(f"  background-color: {t.accent};")
+  ap("}")
+  ap("QToolButton {")
+  ap(f"  background-color: {t.bg_offset};")
+  ap(f"  color: {t.fg_muted};")
+  ap(f"  border: 1px solid {t.border};")
+  ap("  padding: 6px;")
+  ap("  border-radius: 6px;")
+  ap("}")
+  ap("QToolButton:hover {")
+  ap(f"  background-color: {t.bg};")
+  ap(f"  border-color: {t.border};")
+  ap(f"  color: {t.fg};")
+  ap("}")
+  ap("QToolButton#BubbleAction {")
+  ap("  background: transparent;")
+  ap("  border: 1px solid transparent;")
+  ap(f"  color: {t.fg_muted};")
+  ap("  padding: 2px;")
+  ap("}")
+  ap("QToolButton#BubbleAction:hover {")
+  ap(f"  background: {t.bg_offset};")
+  ap(f"  border: 1px solid {t.border};")
+  ap(f"  color: {t.fg};")
+  ap("}")
 
-/* --- Tabs --- */
-QTabWidget::pane {{
-  border-top: 1px solid {t.border};
-}}
-QTabBar::tab {{
-  background: {t.bg};
-  color: {t.fg_muted};
-  padding: 8px 16px;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
-}}
-QTabBar::tab:hover {{
-  color: {t.fg};
-}}
-QTabBar::tab:selected {{
-  background: {t.bg_offset};
-  color: {t.fg};
-  border: 1px solid {t.border};
-  border-bottom: 1px solid {t.bg_offset};
-}}
+  # Tree view
+  ap("QTreeView, QTreeWidget {")
+  ap(f"  background-color: {t.bg};")
+  ap(f"  border: 1px solid {t.border};")
+  ap("  padding: 4px;")
+  ap("}")
+  ap("QTreeView::item, QTreeWidget::item {")
+  ap("  padding: 6px;")
+  ap("  border-radius: 4px;")
+  ap("}")
+  ap("QTreeView::item:hover, QTreeWidget::item:hover {")
+  ap(f"  background-color: {t.bg_offset};")
+  ap("}")
+  ap("QTreeView::item:selected, QTreeWidget::item:selected {")
+  ap(f"  background-color: {t.selection_bg};")
+  ap(f"  color: {t.fg};")
+  ap("}")
 
-/* --- Status & Tool Bars --- */
-QStatusBar {{
-  background: {t.bg_offset};
-  border-top: 1px solid {t.border};
-}}
-QStatusBar::item {{
-  border: none;
-  padding: 0 8px;
-}}
-QToolBar {{
-  background: {t.bg};
-  border-bottom: 1px solid {t.border};
-  spacing: 8px;
-  padding: 8px;
-}}
+  # Tabs
+  ap("QTabWidget::pane {")
+  ap(f"  border-top: 1px solid {t.border};")
+  ap("}")
+  ap("QTabBar::tab {")
+  ap(f"  background: {t.bg};")
+  ap(f"  color: {t.fg_muted};")
+  ap("  padding: 8px 16px;")
+  ap("  border: 1px solid transparent;")
+  ap("  border-bottom: none;")
+  ap("  border-top-left-radius: 6px;")
+  ap("  border-top-right-radius: 6px;")
+  ap("}")
+  ap("QTabBar::tab:hover {")
+  ap(f"  color: {t.fg};")
+  ap("}")
+  ap("QTabBar::tab:selected {")
+  ap(f"  background: {t.bg_offset};")
+  ap(f"  color: {t.fg};")
+  ap(f"  border: 1px solid {t.border};")
+  ap(f"  border-bottom: 1px solid {t.bg_offset};")
+  ap("}")
 
-/* --- Scroll & Splitter --- */
-QSplitter::handle {{
-  background: {t.bg_offset};
-}}
-QSplitter::handle:horizontal {{ width: 4px; }}
-QSplitter::handle:vertical {{ height: 4px; }}
+  # Status & tool bars
+  ap("QStatusBar {")
+  ap(f"  background: {t.bg_offset};")
+  ap(f"  border-top: 1px solid {t.border};")
+  ap("}")
+  ap("QStatusBar::item {")
+  ap("  border: none;")
+  ap("  padding: 0 8px;")
+  ap("}")
+  ap("QToolBar {")
+  ap(f"  background: {t.bg};")
+  ap(f"  border-bottom: 1px solid {t.border};")
+  ap("  spacing: 8px;")
+  ap("  padding: 8px;")
+  ap("}")
 
-QScrollBar:vertical {{
-  background: {t.bg};
-  width: 10px;
-  margin: 0;
-}}
-QScrollBar::handle:vertical {{
-  background: {t.bg_offset};
-  min-height: 20px;
-  border-radius: 5px;
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-  height: 0px;
-}}
-QScrollBar:horizontal {{
-  background: {t.bg};
-  height: 10px;
-  margin: 0;
-}}
-QScrollBar::handle:horizontal {{
-  background: {t.bg_offset};
-  min-width: 20px;
-  border-radius: 5px;
-}}
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-  width: 0px;
-}}
+  # Splitter & scrollbars
+  ap("QSplitter::handle {")
+  ap(f"  background: {t.bg_offset};")
+  ap("}")
+  ap("QSplitter::handle:horizontal { width: 4px; }")
+  ap("QSplitter::handle:vertical { height: 4px; }")
+  ap("QScrollBar:vertical {")
+  ap(f"  background: {t.bg};")
+  ap("  width: 10px;")
+  ap("  margin: 0;")
+  ap("}")
+  ap("QScrollBar::handle:vertical {")
+  ap(f"  background: {t.bg_offset};")
+  ap("  min-height: 20px;")
+  ap("  border-radius: 5px;")
+  ap("}")
+  ap("QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }")
+  ap("QScrollBar:horizontal {")
+  ap(f"  background: {t.bg};")
+  ap("  height: 10px;")
+  ap("  margin: 0;")
+  ap("}")
+  ap("QScrollBar::handle:horizontal {")
+  ap(f"  background: {t.bg_offset};")
+  ap("  min-width: 20px;")
+  ap("  border-radius: 5px;")
+  ap("}")
+  ap("QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }")
 
-/* --- Chat Console --- */
-QScrollArea#ChatScroll {
-  border: none;
-}
-QFrame#BubbleContainer {
-  border-radius: 12px;
-}
-QFrame#BubbleContainer[msgRole="user"] {
-  background: {t.bubble_user_bg};
-}
-QFrame#BubbleContainer[msgRole="assistant"] {
-  background: {t.bubble_ai_bg};
-  border: 1px solid {t.border};
-}
-QFrame#BubbleContainer[msgRole="system"] {
-  background: {t.bubble_sys_bg};
-}
-QTextBrowser#BubbleBody {
-  background: transparent;
-  border: none;
-  color: {t.fg};
-}
-"""
+  # Chat console
+  ap("QScrollArea#ChatScroll { border: none; }")
+  ap("QFrame#BubbleContainer { border-radius: 12px; }")
+  ap(f"QFrame#BubbleContainer[msgRole='user'] {{ background: {t.bubble_user_bg}; }}")
+  ap(f"QFrame#BubbleContainer[msgRole='assistant'] {{ background: {t.bubble_ai_bg}; border: 1px solid {t.border}; }}")
+  ap(f"QFrame#BubbleContainer[msgRole='system'] {{ background: {t.bubble_sys_bg}; }}")
+  ap(f"QTextBrowser#BubbleBody {{ background: transparent; border: none; color: {t.fg}; }}")
+
+  return "\n".join(lines)
 
 def apply_theme(widget, theme: str = "dark", base_font_pt: float = 10.5):
-    qss = generate_qss(theme, base_font_pt)
-    widget.setStyleSheet(qss)
+  """Apply theme to the top-level widget and the QApplication.
+
+  Applying at the app level ensures dialogs created later also inherit styling.
+  """
+  from PySide6.QtWidgets import QApplication
+  qss = generate_qss(theme, base_font_pt)
+  app = QApplication.instance()
+  if app:
+    app.setStyle("Fusion")
+    app.setStyleSheet(qss)
+    # Debug: log confirmation
+    try:
+      import logging
+      logging.getLogger("DesignSystem").info(
+        "Applied theme '%s' (%d chars stylesheet)", theme, len(qss)
+      )
+    except Exception:
+      pass
+  # Also set on widget in case app-level fails
+  widget.setStyleSheet(qss)

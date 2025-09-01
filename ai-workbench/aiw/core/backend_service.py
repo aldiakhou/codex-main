@@ -183,7 +183,7 @@ class BackendService(QObject):
                 line = line.strip()
                 if line:
                     # Only elevate lines that look like errors
-                    lvl = logging.WARNING if ("error" in line.lower() or "failed" in line.lower()) else logging.INFO
+                    lvl = logging.WARNING if ("error" in line.lower() or "failed" in line.lower()) else logging.DEBUG
                     logger.log(lvl, f"backend: {line}")
                     # Emit error signal for significant errors
                     if "error" in line.lower() or "failed" in line.lower():
