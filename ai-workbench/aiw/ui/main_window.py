@@ -28,6 +28,7 @@ from .diff_view import DiffViewWidget
 from .components.chat_view import ChatView
 from .layout.pane_manager import PaneManager
 from .settings_dialog import SettingsDialog
+from .services.event_bus import GLOBAL_EVENT_BUS
 import patch
 
 # Set up logging for main window
@@ -70,6 +71,9 @@ class MainWindow(QMainWindow):
         self.show_raw_reasoning = True
         self.token_stats = {"input": 0, "output": 0, "total": 0}
         self.conversation_messages = []
+        # Layout mode flags (future: persist in config)
+        self.chat_as_tab = True  # if False -> use dock
+        self.diff_as_tab = True  # if False -> use dock
 
         # Window basics
         self.setWindowTitle("AI Development Workbench")
@@ -173,31 +177,114 @@ class MainWindow(QMainWindow):
         self.backend_thread.start()
 
     def _setup_ui(self):
-        """Setup the main UI with docks (focus on workspace)."""
-        # Central pane manager (tabbed workspace)
+        """Setup the main UI: central tab manager + optional docks."""
+        # Central tabbed pane manager
         self.pane_manager = PaneManager()
         self.setCentralWidget(self.pane_manager)
-        self.code_editor = self.pane_manager.ensure_tab("editor", "Editor", lambda: CodeEditorWidget())
 
-        # Docks
+        # Tab factories (some created lazily)
+        self._tab_factories = {
+            'editor': lambda: CodeEditorWidget(),
+            'diff': lambda: self._create_diff_tab_widget(),
+            'plan': lambda: self._create_plan_tab_widget(),
+        }
+        self.code_editor = self.pane_manager.ensure_tab('editor', 'Editor', self._tab_factories['editor'])
+
+        # Try restoring previous layout (tabs only for now)
+        try:
+            layout_state = self.config_manager.get_layout_state()
+            if layout_state:
+                self.pane_manager.restore(layout_state.get('panes'), self._tab_factories)
+        except Exception as e:
+            main_logger.warning(f"Could not restore pane layout: {e}")
+
+        # Event bus handlers
+        self._register_event_bus_handlers()
+
+        # Always create repository dock
         self._create_repository_dock()
-        self._create_console_dock()
-        self._create_diff_dock()
+
+        # Chat: tab or dock
+        if self.chat_as_tab:
+            self._tab_factories['chat'] = lambda: self._create_chat_tab_widget()
+            self.chat_view = self.pane_manager.ensure_tab('chat', 'Chat', self._tab_factories['chat'])
+            self.chat_console = self.chat_view  # backcompat
+        else:
+            self._create_console_dock()
+
+        # Diff: tab or dock
+        if not self.diff_as_tab:
+            self._create_diff_dock()
+
+        # Other docks
         self._create_artifacts_dock()
         self._create_exec_log_dock()
-        self._create_plan_dock()
         self._create_token_dock()
 
-        # Corner layout
+        # Corner priorities
         self.setCorner(Qt.Corner.TopLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
+    # --- Tab factory helpers (diff, plan migrated from docks) --------------
+    def _create_diff_tab_widget(self):
+        """Return a diff viewer widget suitable for a tab.
+        Reuses existing instance if a legacy dock already created it."""
+        if hasattr(self, 'diff_viewer') and self.diff_viewer is not None:
+            return self.diff_viewer
+        try:
+            self.diff_viewer = DiffViewWidget()
+        except Exception as e:
+            main_logger.error(f"Failed to create DiffViewWidget: {e}")
+            from PySide6.QtWidgets import QLabel
+            self.diff_viewer = QLabel("Diff unavailable")
+        return self.diff_viewer
+
+    def _create_plan_tab_widget(self):
+        """Return a plan list widget for the plan tab."""
+        if hasattr(self, 'plan_list') and self.plan_list is not None:
+            return self.plan_list
+        try:
+            from PySide6.QtWidgets import QListWidget
+            self.plan_list = QListWidget()
+            self.plan_list.setObjectName("planList")
+        except Exception as e:
+            main_logger.error(f"Failed to create plan list widget: {e}")
+            from PySide6.QtWidgets import QLabel
+            self.plan_list = QLabel("Plan unavailable")
+        return self.plan_list
+
         # Hide optional docks initially
         for dock in (self.console_dock, self.artifacts_dock, self.exec_log_dock, self.plan_dock):
             dock.hide()
         self.token_dock.hide()
+
+    def _register_event_bus_handlers(self):
+        """Subscribe lightweight adapters to GLOBAL_EVENT_BUS."""
+        try:
+            GLOBAL_EVENT_BUS.subscribe('chat.message', lambda m: self._add_message(m.get('role', 'assistant'), m.get('content', ''), rich=m.get('rich', False)))
+            GLOBAL_EVENT_BUS.subscribe('diff.update', lambda p: self._eventbus_diff_update(p))
+            GLOBAL_EVENT_BUS.subscribe('plan.update', lambda p: self._handle_plan_update(p))
+            GLOBAL_EVENT_BUS.subscribe('tokens.update', lambda p: self._handle_token_count(p))
+            GLOBAL_EVENT_BUS.subscribe('exec.begin', lambda p: self._handle_exec_command_begin(p))
+            GLOBAL_EVENT_BUS.subscribe('exec.output', lambda p: self._handle_exec_command_output_delta(p))
+            GLOBAL_EVENT_BUS.subscribe('exec.end', lambda p: self._handle_exec_command_end(p))
+        except Exception as e:
+            main_logger.warning(f"Event bus registration failed: {e}")
+
+    def _eventbus_diff_update(self, payload):
+        try:
+            diff_text = payload.get('diff') or payload.get('unified_diff') or ''
+            file_path = payload.get('file_path', '')
+            if diff_text:
+                self.diff_viewer.set_diff_content(diff_text, file_path)
+                self.diff_dock.raise_()
+        except Exception:
+            pass
+    # (no dock creation here; this helper only updates diff content)
+
+    # Docks were inadvertently placed here previously; restored to _setup_ui.
 
     def _create_repository_dock(self):
         """Create repository explorer dock"""
@@ -258,6 +345,36 @@ class MainWindow(QMainWindow):
             vbox.addLayout(input_layout)
             self.console_dock.setWidget(container)
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
+            # Provide a pane-manager style wrapper reference for unified usage
+            self.chat_view = self.chat_console
+
+    def _create_chat_tab_widget(self):
+        """Factory returning chat view widget for tab mode."""
+        try:
+            if hasattr(self, 'chat_view') and self.chat_view is not None:
+                return self.chat_view
+        except Exception:
+            pass
+        cv = ChatView()
+        # Minimal input controls for now: reuse existing dock input or create lightweight send bar
+        from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(4,4,4,4)
+        layout.addWidget(cv, 1)
+        input_bar = QHBoxLayout()
+        self.prompt_input = QTextEdit()
+        self.prompt_input.setMaximumHeight(60)
+        self.prompt_input.setFont(QFont("Consolas", 10))
+        self.prompt_input.setPlaceholderText("Ask the AI...")
+        input_bar.addWidget(self.prompt_input, 1)
+        send_btn = QPushButton("Send")
+        send_btn.clicked.connect(self._send_prompt)
+        input_bar.addWidget(send_btn)
+        layout.addLayout(input_bar)
+        self.chat_view = cv
+        self.chat_console = cv
+        return wrapper
 
     def _create_diff_dock(self):
         """Create diff viewer dock"""
@@ -272,17 +389,6 @@ class MainWindow(QMainWindow):
         self.diff_dock.setWidget(self.diff_viewer)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.diff_dock)
 
-    def _create_exec_log_dock(self):
-        """Create execution log dock for streaming command output"""
-        self.exec_log_dock = QDockWidget("Exec Output", self)
-        self.exec_log_dock.setObjectName("ExecOutput")
-        self.exec_log_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
-        from PySide6.QtWidgets import QTextBrowser
-        self.exec_output_view = QTextBrowser()
-        self.exec_output_view.setOpenExternalLinks(True)
-        self.exec_output_view.setStyleSheet("QTextBrowser { font-family: 'Cascadia Code', Consolas, monospace; font-size: 11px; }")
-        self.exec_log_dock.setWidget(self.exec_output_view)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.exec_log_dock)
 
     def _create_plan_dock(self):
         """Create plan/update dock"""
@@ -329,110 +435,143 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.artifacts_dock)
         self.artifacts_dock.hide()
 
+    def _create_exec_log_dock(self):
+        """Create execution log dock for streaming command output."""
+        try:
+            self.exec_log_dock = QDockWidget("Exec Output", self)
+            self.exec_log_dock.setObjectName("ExecOutput")
+            self.exec_log_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+            from PySide6.QtWidgets import QTextBrowser
+            self.exec_output_view = QTextBrowser()
+            self.exec_output_view.setOpenExternalLinks(True)
+            self.exec_output_view.setObjectName("execOutputView")
+            self.exec_output_view.setStyleSheet("QTextBrowser { font-family: 'Cascadia Code', Consolas, monospace; font-size:11px; }")
+            self.exec_log_dock.setWidget(self.exec_output_view)
+            self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.exec_log_dock)
+            self.exec_log_dock.hide()
+        except Exception as e:
+            main_logger.error(f"Failed to create exec log dock: {e}")
+
     def _setup_menus(self):
-        """Setup menu bar"""
+        """Setup menu bar (File, View, Tools)."""
         menubar = self.menuBar()
 
-        # File menu
+        # ---------------- File ----------------
         file_menu = menubar.addMenu("&File")
-
-        open_repo_action = QAction("&Open Repository...", self)
-        open_repo_action.triggered.connect(self._open_repository)
-        file_menu.addAction(open_repo_action)
-
+        act = QAction("&Open Repository...", self); act.triggered.connect(self._open_repository); file_menu.addAction(act)
         file_menu.addSeparator()
-
-        save_file_action = QAction("&Save", self)
-        save_file_action.setShortcut("Ctrl+S")
-        save_file_action.triggered.connect(self._save_current_file)
-        file_menu.addAction(save_file_action)
-
-        save_as_action = QAction("Save &As...", self)
-        save_as_action.triggered.connect(self._save_file_as)
-        file_menu.addAction(save_as_action)
-
+        act = QAction("&Save", self); act.setShortcut("Ctrl+S"); act.triggered.connect(self._save_current_file); file_menu.addAction(act)
+        act = QAction("Save &As...", self); act.triggered.connect(self._save_file_as); file_menu.addAction(act)
         file_menu.addSeparator()
-
-        settings_action = QAction("&Settings...", self)
-        settings_action.triggered.connect(self._show_settings)
-        file_menu.addAction(settings_action)
-
+        act = QAction("&Settings...", self); act.triggered.connect(self._show_settings); file_menu.addAction(act)
         file_menu.addSeparator()
+        act = QAction("E&xit", self); act.triggered.connect(self.close); file_menu.addAction(act)
 
-        exit_action = QAction("E&xit", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        # View menu
+        # ---------------- View ----------------
         view_menu = menubar.addMenu("&View")
+        # Repo dock
+        repo_toggle = self.repo_dock.toggleViewAction(); repo_toggle.setText("Repository Explorer"); view_menu.addAction(repo_toggle)
+        # Chat (dock or tab)
+        if hasattr(self, 'console_dock') and self.console_dock is not None:
+            chat_toggle = self.console_dock.toggleViewAction(); chat_toggle.setText("Assistant"); view_menu.addAction(chat_toggle)
+        else:
+            open_chat_tab = QAction("Show Chat Tab", self); open_chat_tab.triggered.connect(lambda: self.pane_manager.ensure_tab('chat','Chat', self._tab_factories.get('chat', self._create_chat_tab_widget))); view_menu.addAction(open_chat_tab)
+        # Diff (dock or tab)
+        if hasattr(self, 'diff_dock') and self.diff_dock is not None:
+            diff_toggle = self.diff_dock.toggleViewAction(); diff_toggle.setText("Diff Viewer"); view_menu.addAction(diff_toggle)
+        else:
+            open_diff_tab = QAction("Show Diff Tab", self); open_diff_tab.triggered.connect(lambda: self.pane_manager.ensure_tab('diff','Diff', self._tab_factories['diff'])); view_menu.addAction(open_diff_tab)
+        # Artifacts
+        artifacts_toggle = self.artifacts_dock.toggleViewAction(); artifacts_toggle.setText("Artifacts"); view_menu.addAction(artifacts_toggle)
+        # Token
+        token_toggle = self.token_dock.toggleViewAction(); token_toggle.setText("Token Usage"); view_menu.addAction(token_toggle)
+        # Exec output (optional)
+        if hasattr(self, 'exec_log_dock'):
+            exec_toggle = self.exec_log_dock.toggleViewAction(); exec_toggle.setText("Exec Output"); view_menu.addAction(exec_toggle)
 
-        # Dock visibility actions
-        repo_dock_action = self.repo_dock.toggleViewAction()
-        repo_dock_action.setText("Repository Explorer")
-        view_menu.addAction(repo_dock_action)
+        # Mode toggles
+        view_menu.addSeparator()
+        t_chat = QAction("Toggle Chat Tab/Dock", self); t_chat.triggered.connect(self._toggle_chat_mode); view_menu.addAction(t_chat)
+        t_diff = QAction("Toggle Diff Tab/Dock", self); t_diff.triggered.connect(self._toggle_diff_mode); view_menu.addAction(t_diff)
 
-        console_dock_action = self.console_dock.toggleViewAction()
-        console_dock_action.setText("Assistant")
-        view_menu.addAction(console_dock_action)
-
-        diff_dock_action = self.diff_dock.toggleViewAction()
-        diff_dock_action.setText("Diff Viewer")
-        view_menu.addAction(diff_dock_action)
-
-        artifacts_dock_action = self.artifacts_dock.toggleViewAction()
-        artifacts_dock_action.setText("Artifacts")
-        view_menu.addAction(artifacts_dock_action)
-
-        # Theme toggle
+        # Theme group
         view_menu.addSeparator()
         from PySide6.QtGui import QActionGroup
-        theme_group = QActionGroup(self)
-        theme_group.setExclusive(True)
+        theme_group = QActionGroup(self); theme_group.setExclusive(True)
         theme_dark = QAction("Dark Theme", self, checkable=True)
         theme_light = QAction("Light Theme", self, checkable=True)
-        theme_group.addAction(theme_dark)
-        theme_group.addAction(theme_light)
-        view_menu.addAction(theme_dark)
-        view_menu.addAction(theme_light)
-
-        # Raw reasoning toggle
-        self.raw_reasoning_action = QAction("Show Raw Reasoning", self, checkable=True)
-        self.raw_reasoning_action.setChecked(True)
-        self.raw_reasoning_action.triggered.connect(self._toggle_raw_reasoning)
-        view_menu.addAction(self.raw_reasoning_action)
-
-        # Token dock toggle
-        token_dock_action = self.token_dock.toggleViewAction()
-        token_dock_action.setText("Token Usage")
-        view_menu.addAction(token_dock_action)
-
-        view_menu.addSeparator()
-        history_action = QAction("Load Conversation History", self)
-        history_action.triggered.connect(self._request_conversation_history)
-        view_menu.addAction(history_action)
-
-        # Initialize checked state
+        theme_group.addAction(theme_dark); theme_group.addAction(theme_light)
+        view_menu.addAction(theme_dark); view_menu.addAction(theme_light)
         current_theme = getattr(self.config_manager.config.ui, 'theme', 'system')
-        if current_theme == 'light':
-            theme_light.setChecked(True)
-        else:
-            theme_dark.setChecked(True)
-
+        (theme_light if current_theme == 'light' else theme_dark).setChecked(True)
         theme_dark.triggered.connect(lambda: self._set_theme('dark'))
         theme_light.triggered.connect(lambda: self._set_theme('light'))
 
-        # Tools menu
+        # Raw reasoning toggle
+        self.raw_reasoning_action = QAction("Show Raw Reasoning", self, checkable=True)
+        self.raw_reasoning_action.setChecked(self.show_raw_reasoning)
+        self.raw_reasoning_action.triggered.connect(self._toggle_raw_reasoning)
+        view_menu.addAction(self.raw_reasoning_action)
+
+        # History
+        view_menu.addSeparator()
+        history_action = QAction("Load Conversation History", self); history_action.triggered.connect(self._request_conversation_history); view_menu.addAction(history_action)
+
+        # ---------------- Tools ----------------
         tools_menu = menubar.addMenu("&Tools")
-
-        login_action = QAction("Login with ChatGPT", self)
-        login_action.triggered.connect(self._start_login)
-        tools_menu.addAction(login_action)
-
+        login_action = QAction("Login with ChatGPT", self); login_action.triggered.connect(self._start_login); tools_menu.addAction(login_action)
         tools_menu.addSeparator()
+        edit_task_action = QAction("&Edit File with AI", self); edit_task_action.triggered.connect(self._run_edit_task); tools_menu.addAction(edit_task_action)
 
-        edit_task_action = QAction("&Edit File with AI", self)
-        edit_task_action.triggered.connect(self._run_edit_task)
-        tools_menu.addAction(edit_task_action)
+    # --- Mode toggle handlers -----------------------------------------------
+    def _toggle_chat_mode(self):
+        """Switch chat between dock and tab modes."""
+        try:
+            if self.chat_as_tab:
+                # Switch to dock mode: remove tab if present, create dock
+                self.chat_as_tab = False
+                # Close tab if exists
+                if 'chat' in self.pane_manager.list_tabs():
+                    self.pane_manager.close_tab('chat')
+                self._create_console_dock()
+            else:
+                # Switch to tab mode
+                self.chat_as_tab = True
+                if hasattr(self, 'console_dock') and self.console_dock:
+                    try:
+                        self.console_dock.hide()
+                        self.console_dock.setParent(None)
+                        self.console_dock.deleteLater()
+                    except Exception:
+                        pass
+                    self.console_dock = None
+                self._tab_factories['chat'] = lambda: self._create_chat_tab_widget()
+                self.pane_manager.ensure_tab('chat', 'Chat', self._tab_factories['chat'])
+        except Exception as e:
+            main_logger.error(f"Failed toggling chat mode: {e}")
+
+    def _toggle_diff_mode(self):
+        """Switch diff between dock and tab modes."""
+        try:
+            if self.diff_as_tab:
+                # Switch to dock mode
+                self.diff_as_tab = False
+                if 'diff' in self.pane_manager.list_tabs():
+                    self.pane_manager.close_tab('diff')
+                self._create_diff_dock()
+            else:
+                self.diff_as_tab = True
+                if hasattr(self, 'diff_dock') and self.diff_dock:
+                    try:
+                        self.diff_dock.hide()
+                        self.diff_dock.setParent(None)
+                        self.diff_dock.deleteLater()
+                    except Exception:
+                        pass
+                self._tab_factories['diff'] = lambda: self._create_diff_tab_widget()
+                self.pane_manager.ensure_tab('diff', 'Diff', self._tab_factories['diff'])
+        except Exception as e:
+            main_logger.error(f"Failed toggling diff mode: {e}")
 
     def _setup_toolbar(self):
         """Setup toolbar with project, file, AI and control actions."""
@@ -754,13 +893,19 @@ class MainWindow(QMainWindow):
             main_logger.info("Prompt is empty, returning")
             return
 
-        self._add_message("user", prompt)
+        try:
+            GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'user', 'content': prompt})
+        except Exception:
+            self._add_message("user", prompt)
         self.prompt_input.clear()
 
         try:
             if not self.backend:
                 main_logger.error("Backend is None")
-                self._add_message("system", "âŒ Backend not connected. Please check configuration.")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '❌ Backend not connected. Please check configuration.'})
+                except Exception:
+                    self._add_message("system", "❌ Backend not connected. Please check configuration.")
                 return
 
             main_logger.info("Backend is available, preparing operation")
@@ -812,23 +957,35 @@ class MainWindow(QMainWindow):
                     # Include file context in the prompt text
                     enhanced_prompt = f"Regarding the file '{Path(current_file).name}': {prompt}"
                     op = Operation.create_user_turn(enhanced_prompt, normalized_cwd)
-                    self._add_message("system", f"ðŸ“ Sending request for {Path(current_file).name}...")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"📜 Sending request for {Path(current_file).name}..."})
+                    except Exception:
+                        self._add_message("system", f"📜 Sending request for {Path(current_file).name}...")
                     main_logger.info(f"Created user turn operation with file context for: {current_file}")
                     main_logger.info(f"Working directory context: {normalized_cwd}")
                 else:
                     op = Operation.create_user_turn(prompt, normalized_cwd)
-                    self._add_message("system", "ðŸ’¬ Sending general prompt...")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '💬 Sending general prompt...'})
+                    except Exception:
+                        self._add_message("system", "💬 Sending general prompt...")
                     main_logger.info(f"Created user turn operation with working directory: {normalized_cwd}")
             else:
                 # Fallback to user_input if no repository is selected
                 if current_file:
                     enhanced_prompt = f"Regarding the file '{Path(current_file).name}': {prompt}"
                     op = Operation.create_user_input(enhanced_prompt)
-                    self._add_message("system", f"ðŸ“ Sending request for {Path(current_file).name}...")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"📜 Sending request for {Path(current_file).name}..."})
+                    except Exception:
+                        self._add_message("system", f"📜 Sending request for {Path(current_file).name}...")
                     main_logger.info(f"Created user input operation with file context for: {current_file}")
                 else:
                     op = Operation.create_user_input(prompt)
-                    self._add_message("system", "ðŸ’¬ Sending general prompt...")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '💬 Sending general prompt...'})
+                    except Exception:
+                        self._add_message("system", "💬 Sending general prompt...")
                     main_logger.info("Created user input operation")
 
             op.context = repo_context
@@ -836,23 +993,23 @@ class MainWindow(QMainWindow):
             # Log the full operation for debugging
             op_json = op.model_dump_json(indent=2)
             main_logger.info(f"Operation JSON: {op_json}")
-            self._add_message("system", f"<i>Sending op:</i> <pre>{op_json}</pre>", rich=True)
+            # Publish op preview (bus only)
+            GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"<i>Sending op:</i> <pre>{op_json}</pre>", 'rich': True})
 
             main_logger.info("Calling backend.send_op()")
             result = self.backend.send_op(op.model_dump())
             main_logger.info(f"backend.send_op() returned: {result}")
-            # Ensure clean status text (overrides any prior emoji-laden message)
             self.status_bar.showMessage("Waiting for AI response...", 0)
-
-            self.status_bar.showMessage("â³ Waiting for AI response...", 0)
-
         except Exception as e:
             main_logger.error(f"Exception in _send_prompt: {str(e)}", exc_info=True)
-            self._add_message("system", f"âŒ Error sending prompt: {str(e)}")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"❌ Error sending prompt: {str(e)}"})
+            except Exception:
+                pass
             self.status_bar.clearMessage()
 
     def _add_message(self, role: str, content: str, rich: bool = False):
-        """Add a message to the unified chat view (ChatView)."""
+        """(Internal) Final render endpoint for chat messages (event bus subscriber)."""
         norm_role = role if role in ("user", "assistant", "system") else ("assistant" if role == "agent" else "system")
         try:
             self.chat_view.add_message(norm_role, content, rich=rich)
@@ -861,6 +1018,10 @@ class MainWindow(QMainWindow):
                 self.chat_console.add_message(norm_role, content, rich=rich)  # type: ignore[attr-defined]
             except Exception:
                 pass
+
+    def _emit_chat(self, role: str, content: str, rich: bool = False):
+        """Publish a chat/system message to the event bus (preferred path)."""
+        GLOBAL_EVENT_BUS.publish('chat.message', {'role': role, 'content': content, 'rich': rich})
 
     def _apply_theme(self):
         """Apply new token-based theme; fallback to legacy system if needed."""
@@ -883,19 +1044,11 @@ class MainWindow(QMainWindow):
             pass
         self._apply_theme()
 
-    def _start_login(self):
-        """Start ChatGPT login process"""
-        if self.backend:
-            op = Operation.create_login_request()
-            self.backend.send_op(op.model_dump())
-
     def _run_test_task(self):
         """Run tests for the current project."""
         if not self.current_repository:
             QMessageBox.warning(self, "No Repository", "Please select a repository first.")
             return
-
-        # Create a test task
         task = Task(
             id=f"test_{int(time.time())}",
             name="Run Tests",
@@ -905,8 +1058,6 @@ class MainWindow(QMainWindow):
                 "repository_path": str(self.current_repository.path)
             }
         )
-
-        # Run the task
         self.task_runner.run_single_task(task)
 
     def _start_login(self):
@@ -957,6 +1108,12 @@ class MainWindow(QMainWindow):
         task_id = event.get("id", "")
         main_logger.debug(f"Event type: {event_type}, Task ID: {task_id}")
 
+        # Publish raw backend event
+        try:
+            GLOBAL_EVENT_BUS.publish('backend.raw', event)
+        except Exception:
+            pass
+
         # Handle reasoning deltas (accumulate them)
         if event_type == "agent_reasoning_delta":
             delta = event_obj.get("delta", "")
@@ -968,45 +1125,73 @@ class MainWindow(QMainWindow):
             if self.show_raw_reasoning and self.current_reasoning.strip():
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
-                    self._add_message("system", f"ðŸ¤” {clean_reasoning}")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🤔 {clean_reasoning}"})
+                    except Exception:
+                        self._add_message("system", f"🤔 {clean_reasoning}")
                 self.current_reasoning = ""
 
         # Handle message deltas (accumulate them)
         elif event_type == "agent_message_delta":
             delta = event_obj.get("delta", "")
             self.current_message += delta
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.streaming_delta', {'delta': delta})
+            except Exception:
+                pass
 
         # Handle task completion (display accumulated message)
         elif event_type == "task_complete":
             if self.current_message.strip():
-                self._add_message("assistant", self.current_message.strip())
+                final_msg = self.current_message.strip()
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'assistant', 'content': final_msg})
+                except Exception:
+                    self._add_message("assistant", final_msg)
                 self.current_message = ""
             if self.show_raw_reasoning and self.current_reasoning.strip():
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
-                    self._add_message("system", f"ðŸ¤” {clean_reasoning}")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🤔 {clean_reasoning}"})
+                    except Exception:
+                        self._add_message("system", f"🤔 {clean_reasoning}")
                 self.current_reasoning = ""
 
         # Handle unified diff for the entire turn (codex-rs EventMsg::TurnDiff)
         elif event_type == "turn_diff":
             unified_diff = event_obj.get("unified_diff", "")
             if unified_diff:
-                self._add_message("system", "Received changes for this turn.")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': 'Received changes for this turn.'})
+                    GLOBAL_EVENT_BUS.publish('diff.update', {'unified_diff': unified_diff})
+                except Exception:
+                    self._add_message("system", "Received changes for this turn.")
                 self.diff_viewer.set_diff_content(unified_diff, "")
                 self.diff_dock.raise_()
             else:
-                self._add_message("system", "No changes in this turn.")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': 'No changes in this turn.'})
+                except Exception:
+                    self._add_message("system", "No changes in this turn.")
 
         # Handle agent edit file response (the diff)
         elif event_type == "agent_edit_file_response":
             diff = event_obj.get("diff", "")
             file_path = event_obj.get("file_path", "unknown_file")
             if diff:
-                self._add_message("system", f"âœ… Received diff for {file_path}")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"✅ Received diff for {file_path}"})
+                    GLOBAL_EVENT_BUS.publish('diff.update', {'diff': diff, 'file_path': file_path})
+                except Exception:
+                    self._add_message("system", f"✅ Received diff for {file_path}")
                 self.diff_viewer.set_diff_content(diff, file_path)
                 self.diff_dock.raise_()  # Bring the diff dock to the front
             else:
-                self._add_message("system", f"âš ï¸ Received an empty diff for {file_path}")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"⚠️ Received an empty diff for {file_path}"})
+                except Exception:
+                    self._add_message("system", f"⚠️ Received an empty diff for {file_path}")
 
         # Handle login events
         elif event_type == "login_chat_gpt_response":
@@ -1014,14 +1199,23 @@ class MainWindow(QMainWindow):
             if auth_url:
                 import webbrowser
                 webbrowser.open(auth_url)
-                self._add_message("system", "ðŸ”— Please complete the login in your browser.")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '🗝️ Please complete the login in your browser.'})
+                except Exception:
+                    self._add_message("system", "🗝️ Please complete the login in your browser.")
 
         elif event_type == "login_chat_gpt_complete":
             if event_obj.get("success"):
-                self._add_message("system", "âœ… Login successful!")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '✅ Login successful!'})
+                except Exception:
+                    self._add_message("system", "✅ Login successful!")
             else:
                 error = event_obj.get("error", "Unknown error")
-                self._add_message("system", f"âŒ Login failed: {error}")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"❌ Login failed: {error}"})
+                except Exception:
+                    self._add_message("system", f"❌ Login failed: {error}")
 
         # Handle task started (clear any previous accumulations)
         elif event_type == "task_started":
@@ -1061,6 +1255,10 @@ class MainWindow(QMainWindow):
 
         # Handle token count updates
         elif event_type == "token_count":
+            try:
+                GLOBAL_EVENT_BUS.publish('tokens.update', event_obj)
+            except Exception:
+                pass
             self._handle_token_count(event_obj)
 
         # Handle session configured
@@ -1078,12 +1276,22 @@ class MainWindow(QMainWindow):
         elif event_type == "exec_command_end":
             self._handle_exec_command_end(event_obj)
         elif event_type == "plan_update":
+            try:
+                GLOBAL_EVENT_BUS.publish('plan.update', event_obj)
+            except Exception:
+                pass
             self._handle_plan_update(event_obj)
         elif event_type == "web_search_begin":
-            self._add_message("system", "🔍 Web search started")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '🔍 Web search started'})
+            except Exception:
+                self._add_message("system", "🔍 Web search started")
         elif event_type == "web_search_end":
             query = event_obj.get("query", "")
-            self._add_message("system", f"🔍 Web search finished: {query}")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🔍 Web search finished: {query}"})
+            except Exception:
+                self._add_message("system", f"🔍 Web search finished: {query}")
         elif event_type in ("agent_reasoning_raw_content", "agent_reasoning_raw_content_delta"):
             self._handle_raw_reasoning(event_type, event_obj)
         elif event_type == "stream_error":
@@ -1103,7 +1311,10 @@ class MainWindow(QMainWindow):
     # New handlers
     def _handle_patch_apply_begin(self, event_obj):
         try:
-            self._add_message("system", "📦 Applying patch...")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '📦 Applying patch...'})
+            except Exception:
+                self._add_message("system", "📦 Applying patch...")
             self.status_bar.showMessage("Applying patch...", 3000)
         except Exception as e:
             main_logger.error(f"Error in patch_apply_begin: {e}")
@@ -1114,13 +1325,25 @@ class MainWindow(QMainWindow):
             stdout = event_obj.get("stdout", "")
             stderr = event_obj.get("stderr", "")
             if success:
-                self._add_message("system", "✅ Patch applied successfully")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '✅ Patch applied successfully'})
+                except Exception:
+                    self._add_message("system", "✅ Patch applied successfully")
             else:
-                self._add_message("system", f"❌ Patch apply failed: {stderr[:200]}")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"❌ Patch apply failed: {stderr[:200]}"})
+                except Exception:
+                    self._add_message("system", f"❌ Patch apply failed: {stderr[:200]}")
             if stdout:
-                self._add_message("system", f"<details><summary>Patch output</summary><pre>{stdout[:4000]}</pre></details>", rich=True)
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"<details><summary>Patch output</summary><pre>{stdout[:4000]}</pre></details>", 'rich': True})
+                except Exception:
+                    self._add_message("system", f"<details><summary>Patch output</summary><pre>{stdout[:4000]}</pre></details>", rich=True)
             if stderr and not success:
-                self._add_message("system", f"<details><summary>Patch errors</summary><pre>{stderr[:4000]}</pre></details>", rich=True)
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"<details><summary>Patch errors</summary><pre>{stderr[:4000]}</pre></details>", 'rich': True})
+                except Exception:
+                    self._add_message("system", f"<details><summary>Patch errors</summary><pre>{stderr[:4000]}</pre></details>", rich=True)
         except Exception as e:
             main_logger.error(f"Error in patch_apply_end: {e}")
 
@@ -1129,7 +1352,10 @@ class MainWindow(QMainWindow):
             cmd = event_obj.get("command") or ' '.join(event_obj.get("argv", []))
             self.exec_output_view.clear()
             self.exec_log_dock.show()
-            self._add_message("system", f"🛠️ Exec started: <code>{cmd}</code>")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🛠️ Exec started: <code>{cmd}</code>", 'rich': True})
+            except Exception:
+                self._add_message("system", f"🛠️ Exec started: <code>{cmd}</code>", rich=True)
             self.exec_output_view.append(f"$ {cmd}\n")
         except Exception as e:
             main_logger.error(f"Error in exec_command_begin: {e}")
@@ -1150,9 +1376,15 @@ class MainWindow(QMainWindow):
             if formatted:
                 self.exec_output_view.append("\n--- formatted output ---\n" + formatted)
             if exit_code == 0:
-                self._add_message("system", "✅ Exec finished successfully")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '✅ Exec finished successfully'})
+                except Exception:
+                    self._add_message("system", "✅ Exec finished successfully")
             else:
-                self._add_message("system", f"⚠️ Exec ended with code {exit_code}")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"⚠️ Exec ended with code {exit_code}"})
+                except Exception:
+                    self._add_message("system", f"⚠️ Exec ended with code {exit_code}")
         except Exception as e:
             main_logger.error(f"Error in exec_command_end: {e}")
 
@@ -1175,21 +1407,30 @@ class MainWindow(QMainWindow):
             else:
                 text = event_obj.get('text', '')
                 if text:
-                    self._add_message('system', f"🧠 {text}")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🧠 {text}"})
+                    except Exception:
+                        self._add_message('system', f"🧠 {text}")
         except Exception as e:
             main_logger.error(f"Error in raw reasoning handler: {e}")
 
     def _handle_stream_error(self, event_obj):
         try:
             message = event_obj.get('message', 'Unknown stream error')
-            self._add_message('system', f"❌ Stream error: {message}")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"❌ Stream error: {message}"})
+            except Exception:
+                self._add_message('system', f"❌ Stream error: {message}")
         except Exception as e:
             main_logger.error(f"Error in stream_error handler: {e}")
 
     def _handle_turn_aborted(self, event_obj):
         try:
             reason = event_obj.get('reason', 'interrupted')
-            self._add_message('system', f"⛔ Turn aborted: {reason}")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"⛔ Turn aborted: {reason}"})
+            except Exception:
+                self._add_message('system', f"⛔ Turn aborted: {reason}")
         except Exception as e:
             main_logger.error(f"Error in turn_aborted handler: {e}")
 
@@ -1199,14 +1440,20 @@ class MainWindow(QMainWindow):
                 return
             op = Operation.create_interrupt()
             self.backend.send_op(op.model_dump())
-            self._add_message('system', '⛔ Interrupt sent')
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '⛔ Interrupt sent'})
+            except Exception:
+                self._add_message('system', '⛔ Interrupt sent')
         except Exception as e:
             main_logger.error(f"Error sending interrupt: {e}")
 
     @Slot(str)
     def _on_backend_error(self, error_message):
         """Handle backend errors"""
-        self._add_message("system", f"<b>Backend Error:</b> {error_message}", rich=True)
+        try:
+            GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"<b>Backend Error:</b> {error_message}", 'rich': True})
+        except Exception:
+            self._add_message("system", f"<b>Backend Error:</b> {error_message}", rich=True)
         self.backend_status_label.setText("Backend: Error")
 
     @Slot()
@@ -1269,6 +1516,22 @@ class MainWindow(QMainWindow):
             'state': self.saveState()
         }
         self.config_manager.set_window_geometry(geometry)
+
+        # Save custom layout (pane tabs + which tab active + optionally dock visibility)
+        try:
+            pane_state = self.pane_manager.serialize() if hasattr(self, 'pane_manager') else {}
+            dock_visibility = {
+                'repository': self.repo_dock.isVisible() if hasattr(self, 'repo_dock') else False,
+                'assistant': self.console_dock.isVisible() if hasattr(self, 'console_dock') else False,
+                'diff': self.diff_dock.isVisible() if hasattr(self, 'diff_dock') else False,
+                'artifacts': self.artifacts_dock.isVisible() if hasattr(self, 'artifacts_dock') else False,
+                'exec': self.exec_log_dock.isVisible() if hasattr(self, 'exec_log_dock') else False,
+                'plan': self.plan_dock.isVisible() if hasattr(self, 'plan_dock') else False,
+                'tokens': self.token_dock.isVisible() if hasattr(self, 'token_dock') else False,
+            }
+            self.config_manager.set_layout_state({'panes': pane_state, 'docks': dock_visibility})
+        except Exception as e:
+            main_logger.warning(f"Could not persist layout state: {e}")
 
         # Stop backend thread
         if self.backend_thread:
@@ -1417,17 +1680,22 @@ class MainWindow(QMainWindow):
                 main_logger.warning("No changes found in approval request")
                 return
 
-            # Display the approval request
-            self._add_message("system", "ðŸ”„ <b>AI wants to make changes:</b>")
+            # Display the approval request via event bus
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '🛠 <b>AI wants to make changes:</b>'})
+            except Exception:
+                pass
 
             # Show each file and its changes
             for file_path, change_info in changes.items():
                 if "update" in change_info:
                     update_info = change_info["update"]
                     unified_diff = update_info.get("unified_diff", "")
-
-                    self._add_message("system", f"ðŸ“ File: <code>{file_path}</code>")
-                    self._add_message("system", f"<pre>{unified_diff}</pre>")
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🗒 File: <code>{file_path}</code>"})
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"<pre>{unified_diff}</pre>", 'rich': True})
+                    except Exception:
+                        pass
 
             # Create approval dialog
             from PySide6.QtWidgets import QMessageBox, QPushButton
@@ -1449,34 +1717,34 @@ class MainWindow(QMainWindow):
             clicked_button = msg_box.clickedButton()
             if clicked_button == approve_button:
                 self._send_patch_approval_response(submission_id, True, False)
-                self._add_message("system", "Changes approved")
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': 'Changes approved'})
                 return
             if clicked_button == reject_button:
                 self._send_patch_approval_response(submission_id, False, False)
-                self._add_message("system", "Changes rejected")
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': 'Changes rejected'})
                 return
             if clicked_button == auto_approve_button:
                 self._send_patch_approval_response(submission_id, True, True)
-                self._add_message("system", "Changes approved (auto-approve enabled)")
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': 'Changes approved (auto-approve enabled)'})
                 return
 
             # Handle the response
             if result == QMessageBox.AcceptRole:
-                # User approved
                 self._send_patch_approval_response(submission_id, True, False)
-                self._add_message("system", "âœ… Changes approved")
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '✅ Changes approved'})
             elif result == QMessageBox.RejectRole:
-                # User rejected
                 self._send_patch_approval_response(submission_id, False, False)
-                self._add_message("system", "âŒ Changes rejected")
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '❌ Changes rejected'})
             elif msg_box.clickedButton() == auto_approve_button:
-                # User chose auto-approve
                 self._send_patch_approval_response(submission_id, True, True)
-                self._add_message("system", "âœ… Changes approved (auto-approve enabled)")
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '✅ Changes approved (auto-approve enabled)'})
 
         except Exception as e:
             main_logger.error(f"Error handling patch approval request: {e}", exc_info=True)
-            self._add_message("system", f"âŒ Error processing approval request: {e}")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"❌ Error processing approval request: {e}"})
+            except Exception:
+                pass
 
     def _handle_exec_approval_request(self, event_obj, submission_id):
         """Handle exec approval request from backend"""
@@ -1497,11 +1765,14 @@ class MainWindow(QMainWindow):
             # Format the command for display
             command_str = " ".join(command) if isinstance(command, list) else str(command)
 
-            # Display the approval request
-            self._add_message("system", "âš¡ <b>AI wants to run a command:</b>")
-            self._add_message("system", f"ðŸ’» Command: <code>{command_str}</code>")
-            if cwd:
-                self._add_message("system", f"ðŸ“ Directory: <code>{cwd}</code>")
+            # Display the approval request via event bus
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '⚡ <b>AI wants to run a command:</b>'})
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"💻 Command: <code>{command_str}</code>"})
+                if cwd:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"📁 Directory: <code>{cwd}</code>"})
+            except Exception:
+                pass
 
             main_logger.info("About to show exec approval dialog")
 
@@ -1533,26 +1804,35 @@ class MainWindow(QMainWindow):
             # Handle the response
             clicked_button = msg_box.clickedButton()
             if result == QMessageBox.AcceptRole or clicked_button == approve_button:
-                # User approved
                 main_logger.info("User approved the command")
                 self._send_exec_approval_response(submission_id, True, False)
-                self._add_message("system", "âœ… Command approved and executing...")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '✅ Command approved and executing...'})
+                except Exception:
+                    pass
             elif clicked_button == reject_button:
-                # User rejected
                 main_logger.info("User rejected the command")
                 self._send_exec_approval_response(submission_id, False, False)
-                self._add_message("system", "âŒ Command rejected")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '❌ Command rejected'})
+                except Exception:
+                    pass
             elif clicked_button == auto_approve_button:
-                # User chose auto-approve
                 main_logger.info("User chose auto-approve")
                 self._send_exec_approval_response(submission_id, True, True)
-                self._add_message("system", "âœ… Command approved (auto-approve enabled)")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': '✅ Command approved (auto-approve enabled)'})
+                except Exception:
+                    pass
             else:
                 main_logger.warning(f"Unknown dialog result: {result}, clicked button: {clicked_button}")
 
         except Exception as e:
             main_logger.error(f"Error handling exec approval request: {e}", exc_info=True)
-            self._add_message("system", f"âŒ Error processing command approval request: {e}")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"❌ Error processing command approval request: {e}"})
+            except Exception:
+                pass
 
     def _send_exec_approval_response(self, submission_id: str, approved: bool, auto_approve: bool = False):
         """Send exec approval response back to backend"""
@@ -1672,7 +1952,10 @@ class MainWindow(QMainWindow):
                         cmd = cmd[:57] + "..."
                     tool_info += f" ðŸ’» {cmd}"
 
-            self._add_message("system", f"ðŸ”§ AI calling: <code>{tool_info}</code>")
+            try:
+                GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🔧 AI calling: <code>{tool_info}</code>"})
+            except Exception:
+                pass
 
         except Exception as e:
             main_logger.error(f"Error handling MCP tool call begin: {e}", exc_info=True)
@@ -1743,12 +2026,21 @@ class MainWindow(QMainWindow):
                 else:
                     tool_info += f" âœ… Completed"
 
-                self._add_message("system", f"ðŸ”§ AI finished: <code>{tool_info}</code>")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🔧 AI finished: <code>{tool_info}</code>"})
+                except Exception:
+                    pass
             elif "Err" in result:
                 error = result.get("Err", "Unknown error")
-                self._add_message("system", f"âŒ Tool call failed: <code>{server}.{tool}</code> - {error}")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"❌ Tool call failed: <code>{server}.{tool}</code> - {error}"})
+                except Exception:
+                    pass
             else:
-                self._add_message("system", f"âœ… Tool call completed: <code>{server}.{tool}</code>")
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"✅ Tool call completed: <code>{server}.{tool}</code>"})
+                except Exception:
+                    pass
 
         except Exception as e:
             main_logger.error(f"Error handling MCP tool call end: {e}", exc_info=True)

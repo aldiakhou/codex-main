@@ -3,7 +3,7 @@ Future: support nested splits & tab re-parenting.
 Current: single tab bar abstraction placeholder.
 """
 from __future__ import annotations
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
 
@@ -50,6 +50,40 @@ class PaneManager(QWidget):
 
     def list_tabs(self) -> List[str]:
         return list(self._tabs.keys())
+
+    # --- Persistence --------------------------------------------------------
+    def serialize(self) -> Dict[str, Any]:
+        """Return a JSON-serializable snapshot of current tabs.
+        Only store id & title; responsibility for restoring widget type
+        belongs to caller (MainWindow) via a registry mapping.
+        """
+        return {
+            'tabs': [
+                {'id': t.id, 'title': t.title, 'active': (self._tab_widget.currentWidget() is t.widget)}
+                for t in self._tabs.values()
+            ]
+        }
+
+    def restore(self, state: Dict[str, Any], factory_registry: Dict[str, Any]):
+        """Recreate tabs from a prior serialize() result.
+        factory_registry: mapping of tab_id -> callable returning widget.
+        Silently skips unknown ids.
+        """
+        if not state:
+            return
+        tabs = state.get('tabs', [])
+        for tinfo in tabs:
+            tid = tinfo.get('id')
+            title = tinfo.get('title', tid)
+            if not tid or tid in self._tabs:
+                continue
+            factory = factory_registry.get(tid)
+            if not factory:
+                continue
+            self.ensure_tab(tid, title, factory)
+            if tinfo.get('active'):
+                w = self._tabs[tid].widget
+                self._tab_widget.setCurrentWidget(w)
 
     # --- Internals ----------------------------------------------------------
     def _index_of(self, tab_id: str) -> int:

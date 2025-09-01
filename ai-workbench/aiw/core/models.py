@@ -262,6 +262,7 @@ class UIConfig(BaseModel):
     word_wrap: bool = True
     auto_save: bool = True
     dock_positions: Dict[str, Any] = Field(default_factory=dict)
+    layout_state: Optional[Dict[str, Any]] = None  # custom pane/dock layout persistence
 
 
 class BackendConfig(BaseModel):

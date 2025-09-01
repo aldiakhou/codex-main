@@ -236,6 +236,17 @@ class ConfigManager:
         """Get recent workflows"""
         return self.config.recent_workflows.copy()
 
+    # --- Layout persistence -------------------------------------------------
+    def get_layout_state(self) -> Optional[Dict[str, Any]]:
+        return getattr(self.config.ui, 'layout_state', None)
+
+    def set_layout_state(self, state: Dict[str, Any]):
+        try:
+            self.config.ui.layout_state = state
+            self.save_config()
+        except Exception:
+            pass
+
 
 # Global config manager instance
 _config_manager: Optional[ConfigManager] = None
