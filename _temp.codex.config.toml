@@ -1,0 +1,18 @@
+
+[shell_environment_policy]
+inherit = "all"
+disable_response_storage = true
+tools.web_search = true
+
+[mcp_servers.context7]
+command = 'C:\Users\ali95\Documents\Dev\codex-main\node_modules\.bin\context7-mcp.cmd'
+args = []
+ [projects.'\\?\C:\Users\ali95\Documents\Dev\CodeJungle']
+trust_level = "trusted"
+
+
+[projects.'\\?\C:\Users\ali95\Documents\Dev\test-agents-mindrobot']
+trust_level = "trusted"
+
+[projects.'\\?\C:\Users\ali95\Documents\Dev\codex-main']
+trust_level = "trusted"

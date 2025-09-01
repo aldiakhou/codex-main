@@ -25,6 +25,7 @@ from ..core.task_runner import get_workflow_runner
 from .code_editor import CodeEditorWidget
 from .diff_view import DiffViewWidget
 from .chat_console import ChatConsole
+from .settings_dialog import SettingsDialog
 import patch
 
 # Set up logging for main window
@@ -1021,8 +1022,33 @@ class MainWindow(QMainWindow):
 
     def _show_settings(self):
         """Show settings dialog"""
-        # TODO: Implement settings dialog
-        QMessageBox.information(self, "Settings", "Settings dialog not implemented yet")
+        dlg = SettingsDialog(self)
+        if dlg.exec():
+            if dlg.apply_and_restart_requested:
+                self._restart_backend()
+            else:
+                # No restart requested; config changes will apply on next start
+                self.status_bar.showMessage("Settings saved", 3000)
+
+    def _restart_backend(self):
+        try:
+            # Stop existing backend if running
+            if self.backend_thread:
+                try:
+                    if self.backend:
+                        self.backend.stop()
+                except Exception:
+                    pass
+                self.backend_thread.quit()
+                self.backend_thread.wait()
+                self.backend_thread = None
+                self.backend = None
+
+            # Recreate backend with new settings
+            self._setup_backend()
+            self.status_bar.showMessage("Backend restarting with new settings...", 3000)
+        except Exception as e:
+            QMessageBox.critical(self, "Restart Failed", f"Could not restart backend: {e}")
 
     def closeEvent(self, event):
         """Handle application close"""
