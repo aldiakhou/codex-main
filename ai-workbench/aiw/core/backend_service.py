@@ -20,7 +20,7 @@ class UTF8StreamHandler(logging.StreamHandler):
         self.stream = codecs.getwriter('utf-8')(stream.buffer) if hasattr(stream, 'buffer') else stream
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         UTF8StreamHandler(sys.stdout),
@@ -28,6 +28,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger('BackendService')
+logger.setLevel(logging.INFO)
 
 class BackendService(QObject):
     # Signals to communicate with the GUI thread
@@ -117,12 +118,12 @@ class BackendService(QObject):
 
     def _read_stdout(self):
         """Read from stdout in a separate thread"""
-        logger.info("Starting stdout reader thread")
+        logger.info("Stdout reader started")
         try:
             while self.running and self.process:
                 line = self.process.stdout.readline()
                 if not line:
-                    logger.debug("No more lines from stdout, breaking")
+                    logger.debug("stdout closed")
                     break
                 line = line.strip()
                 if line:
@@ -135,7 +136,14 @@ class BackendService(QObject):
                         continue
                     try:
                         event = json.loads(line)
-                        logger.info(f"Parsed backend event: {event}")
+                        # Log only important event types at INFO level
+                        etype = ''
+                        if isinstance(event, dict):
+                            etype = event.get('msg', {}).get('type', '')
+                        if etype in { 'agent_message', 'apply_patch_approval_request', 'exec_approval_request', 'login_chat_gpt_response', 'login_chat_gpt_complete', 'session_configured', 'error' }:
+                            logger.info(f"Event: {etype}")
+                        else:
+                            logger.debug(f"Event: {etype or 'unknown'}")
                         # Emit signal in the main thread
                         self.new_event.emit(event)
 
@@ -166,7 +174,7 @@ class BackendService(QObject):
 
     def _read_stderr(self):
         """Read from stderr in a separate thread"""
-        logger.info("Starting stderr reader thread")
+        logger.info("Stderr reader started")
         try:
             while self.running and self.process:
                 line = self.process.stderr.readline()
@@ -174,7 +182,9 @@ class BackendService(QObject):
                     break
                 line = line.strip()
                 if line:
-                    logger.warning(f"Backend stderr: {line}")
+                    # Only elevate lines that look like errors
+                    lvl = logging.WARNING if ("error" in line.lower() or "failed" in line.lower()) else logging.INFO
+                    logger.log(lvl, f"backend: {line}")
                     # Emit error signal for significant errors
                     if "error" in line.lower() or "failed" in line.lower():
                         self.backend_error.emit(f"Backend error: {line}")
