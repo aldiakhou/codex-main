@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
     QLabel, QProgressBar
 )
 from PySide6.QtGui import QAction, QIcon, QFont
-from .design_system import apply_theme
+from .design_system import apply_theme as legacy_apply_theme
+from .theme_manager import apply_theme as tokens_apply_theme
 
 from ..core.backend_service import BackendService
 from ..core.config import get_config_manager
@@ -24,7 +25,8 @@ from ..core.models import Repository, FileItem, Operation, Task
 from ..core.task_runner import get_workflow_runner
 from .code_editor import CodeEditorWidget
 from .diff_view import DiffViewWidget
-from .chat_console import ChatConsole
+from .components.chat_view import ChatView
+from .layout.pane_manager import PaneManager
 from .settings_dialog import SettingsDialog
 import patch
 
@@ -172,9 +174,10 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup the main UI with docks (focus on workspace)."""
-        # Central editor
-        self.code_editor = CodeEditorWidget()
-        self.setCentralWidget(self.code_editor)
+        # Central pane manager (tabbed workspace)
+        self.pane_manager = PaneManager()
+        self.setCentralWidget(self.pane_manager)
+        self.code_editor = self.pane_manager.ensure_tab("editor", "Editor", lambda: CodeEditorWidget())
 
         # Docks
         self._create_repository_dock()
@@ -221,36 +224,40 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.repo_dock)
 
     def _create_console_dock(self):
-        """Create the assistant (chat) dock with compact styling"""
-        self.console_dock = QDockWidget("Assistant", self)
-        self.console_dock.setObjectName("Console")
-        self.console_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
-        self.console_dock.setMinimumWidth(340)
+            """Create the assistant (chat) dock with ChatView UI."""
+            self.console_dock = QDockWidget("Assistant", self)
+            self.console_dock.setObjectName("Console")
+            self.console_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+            self.console_dock.setMinimumWidth(340)
 
-        console_widget_container = QWidget()
-        console_layout = QVBoxLayout(console_widget_container)
+            container = QWidget()
+            vbox = QVBoxLayout(container)
+            vbox.setContentsMargins(4, 4, 4, 4)
 
-        # Chat console
-        self.chat_console = ChatConsole()
-        self.chat_console.setMinimumWidth(320)
-        console_layout.addWidget(self.chat_console)
+            # Chat view
+            self.chat_view = ChatView()
+            self.chat_view.setMinimumWidth(320)
+            vbox.addWidget(self.chat_view)
+            # Backward compatibility alias (legacy code expects chat_console)
+            self.chat_console = self.chat_view
 
-        # Input area
-        input_layout = QHBoxLayout()
-        self.prompt_input = QTextEdit()
-        self.prompt_input.setMaximumHeight(60)
-        self.prompt_input.setFont(QFont("Consolas", 10))
-        self.prompt_input.setPlaceholderText("Ask the AI...")
-        input_layout.addWidget(self.prompt_input)
+            # Input area
+            input_layout = QHBoxLayout()
+            input_layout.setContentsMargins(0, 0, 0, 0)
+            self.prompt_input = QTextEdit()
+            self.prompt_input.setMaximumHeight(60)
+            self.prompt_input.setFont(QFont("Consolas", 10))
+            self.prompt_input.setPlaceholderText("Ask the AI...")
+            input_layout.addWidget(self.prompt_input, 1)
 
-        send_button = QPushButton("Send")
-        send_button.clicked.connect(self._send_prompt)
-        input_layout.addWidget(send_button)
+            send_button = QPushButton("Send")
+            send_button.setObjectName("SendPromptButton")
+            send_button.clicked.connect(self._send_prompt)
+            input_layout.addWidget(send_button)
 
-        console_layout.addLayout(input_layout)
-        self.console_dock.setWidget(console_widget_container)
-
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
+            vbox.addLayout(input_layout)
+            self.console_dock.setWidget(container)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
 
     def _create_diff_dock(self):
         """Create diff viewer dock"""
@@ -845,20 +852,28 @@ class MainWindow(QMainWindow):
             self.status_bar.clearMessage()
 
     def _add_message(self, role: str, content: str, rich: bool = False):
-        """Add a bubble-styled message to the chat console."""
-        # Normalize roles to our three styles
-        norm_role = role
-        if role not in ("user", "assistant", "system"):
-            norm_role = "assistant" if role == "agent" else "system"
-        self.chat_console.add_message(norm_role, content, rich=rich)
+        """Add a message to the unified chat view (ChatView)."""
+        norm_role = role if role in ("user", "assistant", "system") else ("assistant" if role == "agent" else "system")
+        try:
+            self.chat_view.add_message(norm_role, content, rich=rich)
+        except Exception:
+            try:
+                self.chat_console.add_message(norm_role, content, rich=rich)  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
     def _apply_theme(self):
-        """Apply project design system theme (compact, editor-first)."""
+        """Apply new token-based theme; fallback to legacy system if needed."""
+        theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
+        theme = theme if theme in ("dark", "light") else "dark"
         try:
-            theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-            apply_theme(self, theme=theme if theme in ("dark", "light") else "dark", base_font_pt=10.0)
+            tokens_apply_theme(theme)
         except Exception as e:
-            main_logger.warning(f"Failed to apply theme: {e}")
+            main_logger.warning(f"Token theme failed: {e}; falling back to legacy theme")
+            try:
+                legacy_apply_theme(self, theme=theme, base_font_pt=10.0)
+            except Exception as e2:
+                main_logger.error(f"Legacy theme failed: {e2}")
 
     def _set_theme(self, theme: str):
         try:

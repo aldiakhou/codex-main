@@ -4,6 +4,7 @@ AI Development Workbench - Main Application Entry Point
 import sys
 from PySide6.QtWidgets import QApplication
 from aiw.ui.main_window import MainWindow
+from aiw.ui.theme_manager import apply_theme
 
 
 def main():
@@ -20,9 +21,8 @@ def main():
     # Create and show main window
     window = MainWindow()
     window.show()
-
-    # Apply the theme after the window is shown
-    window._apply_theme()
+    # Apply new token-based theme system
+    apply_theme(getattr(window.config_manager.config.ui, 'theme', 'dark'))
 
     # Start event loop
     sys.exit(app.exec())
