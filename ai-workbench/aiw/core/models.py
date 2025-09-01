@@ -111,6 +111,13 @@ class Operation(BaseModel):
         )
 
     @classmethod
+    def create_interrupt(cls, operation_id: Optional[str] = None) -> 'Operation':
+        """Create an interrupt operation to abort the current turn"""
+        if operation_id is None:
+            operation_id = f"interrupt_{int(datetime.now().timestamp())}"
+        return cls(id=operation_id, op={"type": "interrupt"})
+
+    @classmethod
     def create_file_operation(cls, operation_type: str, file_path: str,
                             content: Optional[str] = None,
                             operation_id: Optional[str] = None) -> 'Operation':

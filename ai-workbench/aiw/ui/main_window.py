@@ -48,40 +48,49 @@ class MainWindow(QMainWindow):
     file_selected = Signal(str)     # file path
 
     def __init__(self):
+        """Initialize main window and restore geometry/state."""
         main_logger.info("MainWindow.__init__() called")
         super().__init__()
+
+        # Core services
         self.config_manager = get_config_manager()
         self.current_repository: Optional[Repository] = None
         self.backend: Optional[BackendService] = None
         self.backend_thread: Optional[QThread] = None
-        self.task_runner = get_workflow_runner()  # Initialize task runner
+        self.task_runner = get_workflow_runner()
 
-        # Initialize message accumulation
+        # Streaming accumulation buffers
         self.current_reasoning = ""
         self.current_message = ""
         self.last_task_id = None
 
+        # Feature state
+        self.show_raw_reasoning = True
+        self.token_stats = {"input": 0, "output": 0, "total": 0}
+        self.conversation_messages = []
+
+        # Window basics
         self.setWindowTitle("AI Development Workbench")
         self.setGeometry(100, 100, 1400, 900)
 
         # Restore window geometry if available
-        geometry = self.config_manager.get_window_geometry()
-        if geometry:
-            try:
+        try:
+            geometry = self.config_manager.get_window_geometry()
+            if geometry:
                 geom_data = geometry.get('geometry')
                 state_data = geometry.get('state')
-
-                # Handle geometry data (could be bytes or string)
                 if isinstance(geom_data, str):
                     geom_data = geom_data.encode('latin1')
                 if isinstance(state_data, str):
                     state_data = state_data.encode('latin1')
+                if geom_data:
+                    self.restoreGeometry(geom_data)
+                if state_data:
+                    self.restoreState(state_data)
+        except Exception as e:
+            main_logger.warning(f"Could not restore window geometry: {e}")
 
-                self.restoreGeometry(geom_data)
-                self.restoreState(state_data)
-            except Exception as e:
-                print(f"Warning: Could not restore window geometry: {e}")
-
+        # Build UI
         self._setup_ui()
         self._apply_theme()
         self._setup_menus()
@@ -163,25 +172,29 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup the main UI with docks (focus on workspace)."""
-        # Set the code editor as the central widget
+        # Central editor
         self.code_editor = CodeEditorWidget()
         self.setCentralWidget(self.code_editor)
 
-        # Create docks
+        # Docks
         self._create_repository_dock()
         self._create_console_dock()
         self._create_diff_dock()
         self._create_artifacts_dock()
+        self._create_exec_log_dock()
+        self._create_plan_dock()
+        self._create_token_dock()
 
-        # Setup dock layout
+        # Corner layout
         self.setCorner(Qt.Corner.TopLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
-        # Start with auxiliary docks hidden to maximize editor space
-        self.console_dock.hide()
-        self.artifacts_dock.hide()
+        # Hide optional docks initially
+        for dock in (self.console_dock, self.artifacts_dock, self.exec_log_dock, self.plan_dock):
+            dock.hide()
+        self.token_dock.hide()
 
     def _create_repository_dock(self):
         """Create repository explorer dock"""
@@ -251,6 +264,48 @@ class MainWindow(QMainWindow):
 
         self.diff_dock.setWidget(self.diff_viewer)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.diff_dock)
+
+    def _create_exec_log_dock(self):
+        """Create execution log dock for streaming command output"""
+        self.exec_log_dock = QDockWidget("Exec Output", self)
+        self.exec_log_dock.setObjectName("ExecOutput")
+        self.exec_log_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
+        from PySide6.QtWidgets import QTextBrowser
+        self.exec_output_view = QTextBrowser()
+        self.exec_output_view.setOpenExternalLinks(True)
+        self.exec_output_view.setStyleSheet("QTextBrowser { font-family: 'Cascadia Code', Consolas, monospace; font-size: 11px; }")
+        self.exec_log_dock.setWidget(self.exec_output_view)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.exec_log_dock)
+
+    def _create_plan_dock(self):
+        """Create plan/update dock"""
+        self.plan_dock = QDockWidget("Plan", self)
+        self.plan_dock.setObjectName("Plan")
+        self.plan_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea)
+        from PySide6.QtWidgets import QListWidget
+        self.plan_list = QListWidget()
+        self.plan_list.setStyleSheet("QListWidget { font-family: 'Cascadia Code', Consolas, monospace; }")
+        self.plan_dock.setWidget(self.plan_list)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.plan_dock)
+
+    def _create_token_dock(self):
+        from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QGridLayout
+        self.token_dock = QDockWidget("Tokens", self)
+        self.token_dock.setObjectName("Tokens")
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        grid = QGridLayout()
+        self._token_value_labels = {}
+        for i, key in enumerate(["Input", "Output", "Total"]):
+            name_lbl = QLabel(key + ":")
+            val_lbl = QLabel("0")
+            grid.addWidget(name_lbl, i, 0)
+            grid.addWidget(val_lbl, i, 1)
+            self._token_value_labels[key.lower()] = val_lbl
+        layout.addLayout(grid)
+        container.setLayout(layout)
+        self.token_dock.setWidget(container)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.token_dock)
 
     def _create_artifacts_dock(self):
         """Create artifacts dock"""
@@ -333,6 +388,22 @@ class MainWindow(QMainWindow):
         view_menu.addAction(theme_dark)
         view_menu.addAction(theme_light)
 
+        # Raw reasoning toggle
+        self.raw_reasoning_action = QAction("Show Raw Reasoning", self, checkable=True)
+        self.raw_reasoning_action.setChecked(True)
+        self.raw_reasoning_action.triggered.connect(self._toggle_raw_reasoning)
+        view_menu.addAction(self.raw_reasoning_action)
+
+        # Token dock toggle
+        token_dock_action = self.token_dock.toggleViewAction()
+        token_dock_action.setText("Token Usage")
+        view_menu.addAction(token_dock_action)
+
+        view_menu.addSeparator()
+        history_action = QAction("Load Conversation History", self)
+        history_action.triggered.connect(self._request_conversation_history)
+        view_menu.addAction(history_action)
+
         # Initialize checked state
         current_theme = getattr(self.config_manager.config.ui, 'theme', 'system')
         if current_theme == 'light':
@@ -357,46 +428,46 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(edit_task_action)
 
     def _setup_toolbar(self):
-        """Setup toolbar"""
+        """Setup toolbar with project, file, AI and control actions."""
         toolbar = self.addToolBar("Main Toolbar")
-        toolbar.setObjectName("Main Toolbar")
+        toolbar.setObjectName("MainToolbar")
         toolbar.setMovable(False)
-        try:
-            toolbar.setIconSize(QSize(18, 18))
-        except Exception:
-            pass
+        toolbar.setIconSize(QSize(18, 18))
 
-        # Repository actions
-        open_repo_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open Repo", self)
-        open_repo_action.triggered.connect(self._open_repository)
-        toolbar.addAction(open_repo_action)
+        def add(action: QAction, handler):
+            action.triggered.connect(handler)
+            toolbar.addAction(action)
+            return action
 
+        # Repo
+        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open Repo", self), self._open_repository)
         toolbar.addSeparator()
 
-        # File actions
-        save_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self)
-        save_action.triggered.connect(self._save_current_file)
-        toolbar.addAction(save_action)
-
-        # Local diff view for current editor
-        view_diff_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "View Changes", self)
-        view_diff_action.setToolTip("Show unsaved changes for the current file")
-        view_diff_action.triggered.connect(self._show_local_diff)
-        toolbar.addAction(view_diff_action)
-
+        # File
+        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self), self._save_current_file)
+        view_diff = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "View Changes", self)
+        view_diff.setToolTip("Show unsaved changes for current file")
+        add(view_diff, self._show_local_diff)
         toolbar.addSeparator()
 
-        # AI actions
-        send_prompt_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Send Prompt", self)
-        send_prompt_action.triggered.connect(self._send_prompt)
-        toolbar.addAction(send_prompt_action)
-
+        # AI
+        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Send", self), self._send_prompt)
         toolbar.addSeparator()
 
-        # Task actions
-        edit_task_action = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "AI Edit", self)
-        edit_task_action.triggered.connect(self._run_edit_task)
-        toolbar.addAction(edit_task_action)
+        # Tasks
+        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "AI Edit", self), self._run_edit_task)
+
+        # Interrupt
+        interrupt = QAction("Interrupt", self)
+        interrupt.setToolTip("Interrupt current AI turn")
+        add(interrupt, self._send_interrupt)
+
+        # Quick reasoning toggle
+        rr = QAction("Reasoning", self)
+        rr.setCheckable(True)
+        rr.setChecked(True)
+        rr.triggered.connect(self._toggle_raw_reasoning)
+        toolbar.addAction(rr)
 
     def _show_local_diff(self):
         """Show unified diff of unsaved changes in the current editor file."""
@@ -442,70 +513,7 @@ class MainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.progress_bar)
 
     def _load_initial_state(self):
-        """Load initial application state"""
-        # Load recent repositories
-        recent_repos = self.config_manager.get_recent_repositories(5)
-        if recent_repos:
-            # Could show recent repos menu here
-            pass
-
-    def _open_repository(self):
-        """Open repository selection dialog"""
-        repo_path = QFileDialog.getExistingDirectory(
-            self, "Select Repository Directory"
-        )
-
-        if repo_path:
-            self._load_repository(repo_path)
-
-    def _load_repository(self, repo_path: str):
-        """Load a repository"""
-        try:
-            # Check if it's a git repository
-            git_dir = Path(repo_path) / ".git"
-            if not git_dir.exists():
-                QMessageBox.warning(
-                    self, "Not a Git Repository",
-                    f"The selected directory is not a Git repository:\n{repo_path}"
-                )
-                return
-
-            # Create repository object
-            repo_name = Path(repo_path).name
-            repo = Repository(
-                path=repo_path,
-                name=repo_name,
-                current_branch="main"  # TODO: Get actual branch
-            )
-
-            self.current_repository = repo
-            self.config_manager.add_repository(repo)
-            self.config_manager.update_repository_last_opened(repo_path)
-
-            # Update UI
-            self.repo_info_label.setText(f"Repository: {repo.display_name}")
-            self.repo_status_label.setText(f"Repo: {repo_name}")
-            self.cwd_status_label.setText(f"Dir: {repo_name}")
-
-            # Load repository files
-            self._load_repository_files(repo_path)
-
-            # Set working directory for backend operations
-            if self.backend and self.backend.running:
-                # Ensure path uses forward slashes for JSON compatibility
-                normalized_path = repo_path.replace("\\", "/")
-                main_logger.info(f"Setting backend working directory to: {normalized_path}")
-                override_op = Operation.create_override_turn_context(normalized_path)
-                self.backend.send_op(override_op.model_dump())
-
-            # Emit signal
-            self.repository_opened.emit(repo_path)
-
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Error Loading Repository",
-                f"Failed to load repository:\n{str(e)}"
-            )
+        pass  # Placeholder (initial state logic if needed later)
 
     def _load_repository_files(self, repo_path: str):
         """Load repository files into tree view"""
@@ -551,6 +559,65 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self._add_message("system", f"Error loading repository files: {str(e)}")
+
+    def _open_repository(self):
+        """Open a repository directory and initialize context.
+
+        - Prompts user to select a directory.
+        - Populates repository tree.
+        - Updates status / labels.
+        - Sends override_turn_context to backend so future turns use this cwd.
+        """
+        from PySide6.QtWidgets import QFileDialog
+        try:
+            directory = QFileDialog.getExistingDirectory(self, "Select Repository Directory", "")
+            if not directory:
+                return
+
+            repo_path = Path(directory).resolve()
+            if not repo_path.exists() or not repo_path.is_dir():
+                QMessageBox.warning(self, "Invalid Directory", "Selected path is not a directory")
+                return
+
+            # Create / store repository model
+            self.current_repository = Repository(path=str(repo_path), name=repo_path.name)
+
+            # Update UI
+            self.repo_info_label.setText(f"Repository: {repo_path.name}")
+            self.repo_status_label.setText(repo_path.name)
+            self.cwd_status_label.setText(f"Dir: {repo_path.name}")
+
+            # Populate tree
+            self._load_repository_files(str(repo_path))
+
+            # Emit signal
+            self.repository_opened.emit(str(repo_path))
+
+            # Persist to config (recent repositories list)
+            try:
+                cfg = self.config_manager.config
+                # Deduplicate existing entries
+                existing = [r for r in cfg.repositories if r.path != str(repo_path)]
+                existing.insert(0, self.current_repository)  # most recent first
+                # Keep only a handful
+                cfg.repositories = existing[:10]
+                self.config_manager.save_config()
+            except Exception:
+                pass
+
+            # Inform backend of new working directory
+            if self.backend:
+                try:
+                    op = Operation.create_override_turn_context(str(repo_path))
+                    self.backend.send_op(op.model_dump())
+                    self._add_message("system", f"📂 Working directory set to <code>{repo_path}</code>", rich=True)
+                except Exception as e:
+                    main_logger.error(f"Failed to send override_turn_context: {e}")
+
+            self.status_bar.showMessage(f"Opened repository: {repo_path}", 3000)
+        except Exception as e:
+            main_logger.error(f"_open_repository error: {e}", exc_info=True)
+            QMessageBox.critical(self, "Open Repository Failed", f"Could not open repository: {e}")
 
     def _apply_standard_icons_to_repo_tree(self, item: QTreeWidgetItem):
         """Ensure file tree items use platform icons and clean any mojibake text."""
@@ -809,7 +876,7 @@ class MainWindow(QMainWindow):
 
     def _run_test_task(self):
         """Run tests for the current project."""
-        if not self.current_repo:
+        if not self.current_repository:
             QMessageBox.warning(self, "No Repository", "Please select a repository first.")
             return
 
@@ -820,7 +887,7 @@ class MainWindow(QMainWindow):
             type="run_tests",
             parameters={
                 "command": ["pytest", "-v"],
-                "repository_path": str(self.current_repo.path)
+                "repository_path": str(self.current_repository.path)
             }
         )
 
@@ -878,12 +945,12 @@ class MainWindow(QMainWindow):
         # Handle reasoning deltas (accumulate them)
         if event_type == "agent_reasoning_delta":
             delta = event_obj.get("delta", "")
-            self.current_reasoning += delta
+            if self.show_raw_reasoning:
+                self.current_reasoning += delta
 
         # Handle reasoning section break (display accumulated reasoning)
         elif event_type == "agent_reasoning_section_break":
-            if self.current_reasoning.strip():
-                # Clean up the reasoning text (remove markdown formatting)
+            if self.show_raw_reasoning and self.current_reasoning.strip():
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
                     self._add_message("system", f"ðŸ¤” {clean_reasoning}")
@@ -899,7 +966,7 @@ class MainWindow(QMainWindow):
             if self.current_message.strip():
                 self._add_message("assistant", self.current_message.strip())
                 self.current_message = ""
-            if self.current_reasoning.strip():
+            if self.show_raw_reasoning and self.current_reasoning.strip():
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
                     self._add_message("system", f"ðŸ¤” {clean_reasoning}")
@@ -985,11 +1052,141 @@ class MainWindow(QMainWindow):
         elif event_type == "session_configured":
             self._handle_session_configured(event_obj)
 
+        elif event_type == "patch_apply_begin":
+            self._handle_patch_apply_begin(event_obj)
+        elif event_type == "patch_apply_end":
+            self._handle_patch_apply_end(event_obj)
+        elif event_type == "exec_command_begin":
+            self._handle_exec_command_begin(event_obj)
+        elif event_type == "exec_command_output_delta":
+            self._handle_exec_command_output_delta(event_obj)
+        elif event_type == "exec_command_end":
+            self._handle_exec_command_end(event_obj)
+        elif event_type == "plan_update":
+            self._handle_plan_update(event_obj)
+        elif event_type == "web_search_begin":
+            self._add_message("system", "🔍 Web search started")
+        elif event_type == "web_search_end":
+            query = event_obj.get("query", "")
+            self._add_message("system", f"🔍 Web search finished: {query}")
+        elif event_type in ("agent_reasoning_raw_content", "agent_reasoning_raw_content_delta"):
+            self._handle_raw_reasoning(event_type, event_obj)
+        elif event_type == "stream_error":
+            self._handle_stream_error(event_obj)
+        elif event_type == "turn_aborted":
+            self._handle_turn_aborted(event_obj)
+        elif event_type == "conversation_history":
+            messages = event_obj.get("messages", [])
+            self._handle_conversation_history(messages)
+
         # Show other events only if they contain useful information
         else:
             # Only show events that might be relevant to the user, but log them for debugging
             if event_type not in ["mcp_connection_manager", "agent_reasoning_delta", "agent_message_delta"]:
                 main_logger.debug(f"Unhandled Event: {event_type}")
+
+    # New handlers
+    def _handle_patch_apply_begin(self, event_obj):
+        try:
+            self._add_message("system", "📦 Applying patch...")
+            self.status_bar.showMessage("Applying patch...", 3000)
+        except Exception as e:
+            main_logger.error(f"Error in patch_apply_begin: {e}")
+
+    def _handle_patch_apply_end(self, event_obj):
+        try:
+            success = event_obj.get("success")
+            stdout = event_obj.get("stdout", "")
+            stderr = event_obj.get("stderr", "")
+            if success:
+                self._add_message("system", "✅ Patch applied successfully")
+            else:
+                self._add_message("system", f"❌ Patch apply failed: {stderr[:200]}")
+            if stdout:
+                self._add_message("system", f"<details><summary>Patch output</summary><pre>{stdout[:4000]}</pre></details>", rich=True)
+            if stderr and not success:
+                self._add_message("system", f"<details><summary>Patch errors</summary><pre>{stderr[:4000]}</pre></details>", rich=True)
+        except Exception as e:
+            main_logger.error(f"Error in patch_apply_end: {e}")
+
+    def _handle_exec_command_begin(self, event_obj):
+        try:
+            cmd = event_obj.get("command") or ' '.join(event_obj.get("argv", []))
+            self.exec_output_view.clear()
+            self.exec_log_dock.show()
+            self._add_message("system", f"🛠️ Exec started: <code>{cmd}</code>")
+            self.exec_output_view.append(f"$ {cmd}\n")
+        except Exception as e:
+            main_logger.error(f"Error in exec_command_begin: {e}")
+
+    def _handle_exec_command_output_delta(self, event_obj):
+        try:
+            delta = event_obj.get("delta", "")
+            if delta:
+                self.exec_output_view.moveCursor(self.exec_output_view.textCursor().End)
+                self.exec_output_view.insertPlainText(delta)
+        except Exception as e:
+            main_logger.error(f"Error in exec_command_output_delta: {e}")
+
+    def _handle_exec_command_end(self, event_obj):
+        try:
+            exit_code = event_obj.get("exit_code")
+            formatted = event_obj.get("formatted_output")
+            if formatted:
+                self.exec_output_view.append("\n--- formatted output ---\n" + formatted)
+            if exit_code == 0:
+                self._add_message("system", "✅ Exec finished successfully")
+            else:
+                self._add_message("system", f"⚠️ Exec ended with code {exit_code}")
+        except Exception as e:
+            main_logger.error(f"Error in exec_command_end: {e}")
+
+    def _handle_plan_update(self, event_obj):
+        try:
+            self.plan_dock.show()
+            step = event_obj.get("step") or event_obj.get("description") or event_obj
+            from datetime import datetime
+            ts = datetime.now().strftime('%H:%M:%S')
+            self.plan_list.addItem(f"[{ts}] {step}")
+        except Exception as e:
+            main_logger.error(f"Error in plan_update: {e}")
+
+    def _handle_raw_reasoning(self, event_type, event_obj):
+        try:
+            if event_type.endswith('_delta'):
+                delta = event_obj.get('delta', '')
+                if delta:
+                    self.current_reasoning += delta
+            else:
+                text = event_obj.get('text', '')
+                if text:
+                    self._add_message('system', f"🧠 {text}")
+        except Exception as e:
+            main_logger.error(f"Error in raw reasoning handler: {e}")
+
+    def _handle_stream_error(self, event_obj):
+        try:
+            message = event_obj.get('message', 'Unknown stream error')
+            self._add_message('system', f"❌ Stream error: {message}")
+        except Exception as e:
+            main_logger.error(f"Error in stream_error handler: {e}")
+
+    def _handle_turn_aborted(self, event_obj):
+        try:
+            reason = event_obj.get('reason', 'interrupted')
+            self._add_message('system', f"⛔ Turn aborted: {reason}")
+        except Exception as e:
+            main_logger.error(f"Error in turn_aborted handler: {e}")
+
+    def _send_interrupt(self):
+        try:
+            if not self.backend:
+                return
+            op = Operation.create_interrupt()
+            self.backend.send_op(op.model_dump())
+            self._add_message('system', '⛔ Interrupt sent')
+        except Exception as e:
+            main_logger.error(f"Error sending interrupt: {e}")
 
     @Slot(str)
     def _on_backend_error(self, error_message):
@@ -1548,9 +1745,21 @@ class MainWindow(QMainWindow):
             input_tokens = msg.get("input_tokens", 0)
             output_tokens = msg.get("output_tokens", 0)
             total_tokens = msg.get("total_tokens", 0)
-
-            # Update status bar with token information
-            self.status_bar.showMessage(f"Tokens: {total_tokens} (In: {input_tokens}, Out: {output_tokens})", 5000)
+            # Persist
+            self.token_stats["input"] = input_tokens
+            self.token_stats["output"] = output_tokens
+            self.token_stats["total"] = total_tokens
+            # Update token dock labels
+            try:
+                self._token_value_labels["input"].setText(str(input_tokens))
+                self._token_value_labels["output"].setText(str(output_tokens))
+                self._token_value_labels["total"].setText(str(total_tokens))
+                if not self.token_dock.isVisible():
+                    self.token_dock.show()
+            except Exception:
+                pass
+            # Update status bar with token information (short-lived)
+            self.status_bar.showMessage(f"Tokens: {total_tokens} (In: {input_tokens}, Out: {output_tokens})", 3000)
 
         except Exception as e:
             main_logger.error(f"Error handling token count: {e}", exc_info=True)
@@ -1564,5 +1773,38 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             main_logger.error(f"Error handling session configured: {e}", exc_info=True)
+
+    # --- Added feature helpers ---
+    def _toggle_raw_reasoning(self, checked: bool):
+        """Toggle display of raw reasoning tokens."""
+        self.show_raw_reasoning = checked
+        if hasattr(self, "raw_reasoning_action"):
+            self.raw_reasoning_action.setChecked(checked)
+        self.status_bar.showMessage(f"Raw reasoning {'enabled' if checked else 'hidden'}", 2000)
+
+    def _request_conversation_history(self):
+        """Request conversation history from backend (stub protocol)."""
+        try:
+            if not self.backend:
+                return
+            op = Operation(
+                id=f"history_{int(time.time())}",
+                op={"type": "conversation_history"}
+            )
+            self.backend.send_op(op.model_dump())
+            self._add_message("system", "📜 Requested conversation history (if supported)")
+        except Exception as e:
+            main_logger.error(f"Error requesting history: {e}")
+            self._add_message("system", f"❌ History request failed: {e}")
+
+    def _handle_conversation_history(self, messages):
+        """Populate chat console with prior conversation (unused unless backend supplies)."""
+        try:
+            for m in messages:
+                role = m.get("role", "assistant")
+                content = m.get("content", "")
+                self._add_message(role, content)
+        except Exception as e:
+            main_logger.error(f"Error applying conversation history: {e}")
 
 
