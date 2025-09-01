@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QTextEdit, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QWidget, QDockWidget, QSplitter, QTreeWidget, QTreeWidgetItem, QStyle,
     QStatusBar, QMenuBar, QMenu, QToolBar, QFileDialog, QMessageBox,
-    QLabel, QProgressBar
+    QLabel, QProgressBar, QTextBrowser
 )
 from PySide6.QtGui import QAction, QIcon, QFont
 from .design_system import apply_theme as legacy_apply_theme
@@ -54,7 +54,6 @@ class MainWindow(QMainWindow):
         """Initialize main window and restore geometry/state."""
         main_logger.info("MainWindow.__init__() called")
         super().__init__()
-
         # Core services
         self.config_manager = get_config_manager()
         self.current_repository: Optional[Repository] = None
@@ -68,12 +67,12 @@ class MainWindow(QMainWindow):
         self.last_task_id = None
 
         # Feature state
-        self.show_raw_reasoning = True
+        self.show_raw_reasoning = True  # legacy flag
+        self.reasoning_panel_visible = True
         self.token_stats = {"input": 0, "output": 0, "total": 0}
         self.conversation_messages = []
-        # Layout mode flags (future: persist in config)
-        self.chat_as_tab = True  # if False -> use dock
-        self.diff_as_tab = True  # if False -> use dock
+        self.chat_as_tab = True
+        self.diff_as_tab = True
 
         # Window basics
         self.setWindowTitle("AI Development Workbench")
@@ -321,6 +320,15 @@ class MainWindow(QMainWindow):
             vbox = QVBoxLayout(container)
             vbox.setContentsMargins(4, 4, 4, 4)
 
+            # Reasoning panel (live)
+            self.reasoning_view = QTextBrowser()
+            self.reasoning_view.setObjectName("ReasoningView")
+            self.reasoning_view.setStyleSheet("QTextBrowser#ReasoningView { background:#2a2f38; border:1px solid #3a4048; border-radius:4px; font-size:11px; padding:4px; }")
+            self.reasoning_view.setMaximumHeight(120)
+            self.reasoning_view.setVisible(self.reasoning_panel_visible)
+            self.reasoning_view.setHtml("<b>Reasoning</b><br><i>Waiting...</i>")
+            vbox.addWidget(self.reasoning_view)
+
             # Chat view
             self.chat_view = ChatView()
             self.chat_view.setMinimumWidth(320)
@@ -356,11 +364,18 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         cv = ChatView()
-        # Minimal input controls for now: reuse existing dock input or create lightweight send bar
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(4,4,4,4)
+        # Reasoning panel for tab mode
+        self.reasoning_view = QTextBrowser()
+        self.reasoning_view.setObjectName("ReasoningView")
+        self.reasoning_view.setStyleSheet("QTextBrowser#ReasoningView { background:#2a2f38; border:1px solid #3a4048; border-radius:4px; font-size:11px; padding:4px; }")
+        self.reasoning_view.setMaximumHeight(120)
+        self.reasoning_view.setVisible(self.reasoning_panel_visible)
+        self.reasoning_view.setHtml("<b>Reasoning</b><br><i>Waiting...</i>")
+        layout.addWidget(self.reasoning_view)
         layout.addWidget(cv, 1)
         input_bar = QHBoxLayout()
         self.prompt_input = QTextEdit()
@@ -456,7 +471,7 @@ class MainWindow(QMainWindow):
         """Setup menu bar (File, View, Tools)."""
         menubar = self.menuBar()
 
-        # ---------------- File ----------------
+        # File menu
         file_menu = menubar.addMenu("&File")
         act = QAction("&Open Repository...", self); act.triggered.connect(self._open_repository); file_menu.addAction(act)
         file_menu.addSeparator()
@@ -467,34 +482,27 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         act = QAction("E&xit", self); act.triggered.connect(self.close); file_menu.addAction(act)
 
-        # ---------------- View ----------------
+        # View menu
         view_menu = menubar.addMenu("&View")
-        # Repo dock
         repo_toggle = self.repo_dock.toggleViewAction(); repo_toggle.setText("Repository Explorer"); view_menu.addAction(repo_toggle)
-        # Chat (dock or tab)
         if hasattr(self, 'console_dock') and self.console_dock is not None:
             chat_toggle = self.console_dock.toggleViewAction(); chat_toggle.setText("Assistant"); view_menu.addAction(chat_toggle)
         else:
             open_chat_tab = QAction("Show Chat Tab", self); open_chat_tab.triggered.connect(lambda: self.pane_manager.ensure_tab('chat','Chat', self._tab_factories.get('chat', self._create_chat_tab_widget))); view_menu.addAction(open_chat_tab)
-        # Diff (dock or tab)
         if hasattr(self, 'diff_dock') and self.diff_dock is not None:
             diff_toggle = self.diff_dock.toggleViewAction(); diff_toggle.setText("Diff Viewer"); view_menu.addAction(diff_toggle)
         else:
             open_diff_tab = QAction("Show Diff Tab", self); open_diff_tab.triggered.connect(lambda: self.pane_manager.ensure_tab('diff','Diff', self._tab_factories['diff'])); view_menu.addAction(open_diff_tab)
-        # Artifacts
         artifacts_toggle = self.artifacts_dock.toggleViewAction(); artifacts_toggle.setText("Artifacts"); view_menu.addAction(artifacts_toggle)
-        # Token
         token_toggle = self.token_dock.toggleViewAction(); token_toggle.setText("Token Usage"); view_menu.addAction(token_toggle)
-        # Exec output (optional)
         if hasattr(self, 'exec_log_dock'):
             exec_toggle = self.exec_log_dock.toggleViewAction(); exec_toggle.setText("Exec Output"); view_menu.addAction(exec_toggle)
 
-        # Mode toggles
         view_menu.addSeparator()
         t_chat = QAction("Toggle Chat Tab/Dock", self); t_chat.triggered.connect(self._toggle_chat_mode); view_menu.addAction(t_chat)
         t_diff = QAction("Toggle Diff Tab/Dock", self); t_diff.triggered.connect(self._toggle_diff_mode); view_menu.addAction(t_diff)
+        toggle_reasoning = QAction("Toggle Reasoning Panel", self); toggle_reasoning.triggered.connect(self._toggle_reasoning_panel); view_menu.addAction(toggle_reasoning)
 
-        # Theme group
         view_menu.addSeparator()
         from PySide6.QtGui import QActionGroup
         theme_group = QActionGroup(self); theme_group.setExclusive(True)
@@ -507,21 +515,26 @@ class MainWindow(QMainWindow):
         theme_dark.triggered.connect(lambda: self._set_theme('dark'))
         theme_light.triggered.connect(lambda: self._set_theme('light'))
 
-        # Raw reasoning toggle
         self.raw_reasoning_action = QAction("Show Raw Reasoning", self, checkable=True)
         self.raw_reasoning_action.setChecked(self.show_raw_reasoning)
         self.raw_reasoning_action.triggered.connect(self._toggle_raw_reasoning)
         view_menu.addAction(self.raw_reasoning_action)
 
-        # History
         view_menu.addSeparator()
         history_action = QAction("Load Conversation History", self); history_action.triggered.connect(self._request_conversation_history); view_menu.addAction(history_action)
 
-        # ---------------- Tools ----------------
+        # Tools menu
         tools_menu = menubar.addMenu("&Tools")
         login_action = QAction("Login with ChatGPT", self); login_action.triggered.connect(self._start_login); tools_menu.addAction(login_action)
         tools_menu.addSeparator()
         edit_task_action = QAction("&Edit File with AI", self); edit_task_action.triggered.connect(self._run_edit_task); tools_menu.addAction(edit_task_action)
+        from .shortcuts import get_shortcut
+        palette_action = QAction("Command Palette", self)
+        sc = get_shortcut('command.palette')
+        if sc:
+            palette_action.setShortcut(sc)
+        palette_action.triggered.connect(self._open_command_palette)
+        tools_menu.addAction(palette_action)
 
     # --- Mode toggle handlers -----------------------------------------------
     def _toggle_chat_mode(self):
@@ -1404,15 +1417,39 @@ class MainWindow(QMainWindow):
                 delta = event_obj.get('delta', '')
                 if delta:
                     self.current_reasoning += delta
+                    if hasattr(self, 'reasoning_view') and self.reasoning_view.isVisible():
+                        safe = delta.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                        self.reasoning_view.moveCursor(self.reasoning_view.textCursor().End)
+                        self.reasoning_view.insertHtml(safe)
             else:
                 text = event_obj.get('text', '')
                 if text:
-                    try:
-                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🧠 {text}"})
-                    except Exception:
-                        self._add_message('system', f"🧠 {text}")
+                    self.current_reasoning += text + "\n"
+                    if hasattr(self, 'reasoning_view') and self.reasoning_view.isVisible():
+                        safe_full = self.current_reasoning.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                        self.reasoning_view.setHtml(f"<b>Reasoning</b><br><pre style='white-space:pre-wrap;margin:0;'>{safe_full}</pre>")
         except Exception as e:
             main_logger.error(f"Error in raw reasoning handler: {e}")
+
+    # UX helpers
+    def _toggle_reasoning_panel(self):
+        self.reasoning_panel_visible = not self.reasoning_panel_visible
+        if hasattr(self, 'reasoning_view'):
+            self.reasoning_view.setVisible(self.reasoning_panel_visible)
+
+    def _open_command_palette(self):
+        try:
+            from .command_palette import CommandPalette
+            from .shortcuts import get_shortcut
+            actions = [
+                ("Toggle Theme", lambda: self._set_theme('light' if getattr(self.config_manager.config.ui,'theme','dark')=='dark' else 'dark'), get_shortcut('theme.toggle')),
+                ("Focus Chat Input", lambda: (self.prompt_input.setFocus() if hasattr(self,'prompt_input') else None), get_shortcut('chat.focus')),
+                ("Toggle Reasoning Panel", self._toggle_reasoning_panel, ''),
+            ]
+            dlg = CommandPalette(actions, self)
+            dlg.exec()
+        except Exception as e:
+            main_logger.error(f"Failed to open command palette: {e}")
 
     def _handle_stream_error(self, event_obj):
         try:
