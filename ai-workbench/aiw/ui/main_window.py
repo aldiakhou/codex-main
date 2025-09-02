@@ -6,6 +6,7 @@ import os
 import time
 import logging
 import sys
+import difflib
 from pathlib import Path
 from typing import Optional
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread, QSize
@@ -1146,6 +1147,15 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._apply_theme()
+        
+        # Refresh chat view theme
+        try:
+            if hasattr(self, 'chat_view') and self.chat_view:
+                self.chat_view.refresh_theme()
+            if hasattr(self, '_actual_chat_view') and self._actual_chat_view:
+                self._actual_chat_view.refresh_theme()
+        except Exception as e:
+            main_logger.error(f"Failed to refresh chat theme: {e}")
 
     def _run_test_task(self):
         """Run tests for the current project."""

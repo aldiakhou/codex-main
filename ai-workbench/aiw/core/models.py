@@ -264,6 +264,7 @@ class UIConfig(BaseModel):
     auto_save: bool = True
     dock_positions: Dict[str, Any] = Field(default_factory=dict)
     layout_state: Optional[Dict[str, Any]] = None  # custom pane/dock layout persistence
+    recent_files: List[str] = Field(default_factory=list)  # Recent file paths
 
 
 class BackendConfig(BaseModel):
