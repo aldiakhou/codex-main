@@ -1,5 +1,5 @@
 """
-Diff viewer widget for AI Development Workbench
+Diff viewer widget for AI Development Workbench with modern design
 """
 import difflib
 from pathlib import Path
@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLabel,
     QPushButton, QSplitter, QScrollArea, QFrame, QCheckBox
 )
+
+from .design_tokens import get_tokens
 
 
 class DiffLine:
@@ -66,23 +68,75 @@ class DiffHunk:
 
 
 class DiffViewer(QTextEdit):
-    """Text widget for displaying diff content with syntax highlighting"""
+    """Text widget for displaying diff content with modern syntax highlighting"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.theme = "dark"  # Default theme
+        self.tokens = get_tokens(self.theme)
+        
         self.setReadOnly(True)
-        self.setFont(QFont("Consolas", 9))
         self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self._setup_theme_colors()
+        self._apply_styling()
 
-        # Setup colors for diff display
-        self.addition_color = QColor("#e6ffed")  # Light green
-        self.removal_color = QColor("#ffeef0")  # Light red
-        self.context_color = QColor("#f6f8fa")  # Light gray
-        self.header_color = QColor("#fafbfc")   # Very light gray
+    def _setup_theme_colors(self):
+        """Setup theme-aware colors for diff highlighting"""
+        if self.theme == "dark":
+            # Dark theme colors
+            self.addition_color = QColor("#1a472a")  # Dark green background
+            self.removal_color = QColor("#5c1e2a")   # Dark red background
+            self.context_color = QColor("#0d1117")   # Dark background
+            self.header_color = QColor("#21262d")    # Header background
+            
+            self.addition_text_color = QColor("#56d364")  # Bright green text
+            self.removal_text_color = QColor("#f85149")   # Bright red text
+            self.context_text_color = QColor("#e6edf3")   # Light gray text
+            self.header_text_color = QColor("#7d8590")    # Muted text
+        else:
+            # Light theme colors
+            self.addition_color = QColor("#dafbe1")  # Light green background
+            self.removal_color = QColor("#ffebe9")   # Light red background
+            self.context_color = QColor("#ffffff")   # White background
+            self.header_color = QColor("#f6f8fa")    # Light gray background
+            
+            self.addition_text_color = QColor("#116329")  # Dark green text
+            self.removal_text_color = QColor("#d1242f")   # Dark red text
+            self.context_text_color = QColor("#24292f")   # Dark text
+            self.header_text_color = QColor("#656d76")    # Muted text
 
-        self.addition_text_color = QColor("#22863a")  # Dark green
-        self.removal_text_color = QColor("#cb2431")  # Dark red
-        self.context_text_color = QColor("#24292e")  # Dark gray
+    def _apply_styling(self):
+        """Apply professional styling using design tokens"""
+        code_font = QFont(
+            self.tokens.typography.code_family.split(',')[0].strip().strip("'\""),
+            self.tokens.typography.sizes["sm"]
+        )
+        self.setFont(code_font)
+        
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background: {self.tokens.colors.semantic["surface"]};
+                color: {self.tokens.colors.palette["text"]};
+                border: 1px solid {self.tokens.colors.palette["border"]};
+                border-radius: {self.tokens.radii.values["md"]}px;
+                padding: {self.tokens.spacing.gutters["component"]}px;
+                font-family: {self.tokens.typography.code_family};
+                font-size: {self.tokens.typography.sizes["sm"]}pt;
+                line-height: {int(self.tokens.typography.sizes["sm"] * self.tokens.typography.line_height)}px;
+            }}
+        """)
+
+    def update_theme(self, theme: str):
+        """Update the theme (legacy method name)"""
+        self.set_theme(theme)
+        
+    def set_theme(self, theme: str):
+        """Set the theme for the diff viewer"""
+        self.theme = theme
+        self.tokens = get_tokens(theme)
+        self._setup_theme_colors()
+        self._apply_styling()
+        self.set_diff_content(self.toPlainText())  # Re-apply highlighting
 
     def set_diff_content(self, content: str):
         """Set the diff content and apply highlighting"""
@@ -90,14 +144,15 @@ class DiffViewer(QTextEdit):
         self._apply_diff_highlighting()
 
     def _apply_diff_highlighting(self):
-        """Apply syntax highlighting to diff content"""
+        """Apply modern syntax highlighting to diff content"""
         cursor = self.textCursor()
         cursor.movePosition(cursor.MoveOperation.Start)
 
         # Clear existing formatting
         cursor.select(cursor.SelectionType.Document)
         format = QTextCharFormat()
-        format.setBackground(QColor("white"))
+        format.setBackground(QColor(self.tokens.colors.semantic["surface"]))
+        format.setForeground(QColor(self.tokens.colors.palette["text"]))
         cursor.setCharFormat(format)
         cursor.clearSelection()
 
@@ -114,7 +169,7 @@ class DiffViewer(QTextEdit):
                 self._highlight_line(block, self.removal_color, self.removal_text_color)
             elif text.startswith('@@'):
                 # Hunk header
-                self._highlight_line(block, self.header_color, self.context_text_color)
+                self._highlight_line(block, self.header_color, self.header_text_color)
             elif text.startswith(' '):
                 # Context line
                 self._highlight_line(block, self.context_color, self.context_text_color)
@@ -134,7 +189,7 @@ class DiffViewer(QTextEdit):
 
 
 class DiffWidget(QWidget):
-    """Main diff widget with controls"""
+    """Main diff widget with controls and modern design"""
 
     hunk_selected = Signal(int, bool)  # hunk_index, selected
     apply_requested = Signal()
@@ -142,10 +197,19 @@ class DiffWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.theme = "dark"  # Default theme
+        self.tokens = get_tokens(self.theme)
         self.hunks: List[DiffHunk] = []
         self.current_file = ""
 
         self._setup_ui()
+
+    def set_theme(self, theme: str):
+        """Set the theme for the diff widget (public method)"""
+        self.theme = theme
+        self.tokens = get_tokens(theme)
+        if hasattr(self, 'diff_viewer'):
+            self.diff_viewer.set_theme(theme)
 
     def _setup_ui(self):
         """Setup the UI"""
@@ -366,47 +430,87 @@ class DiffWidget(QWidget):
 
 
 class DiffViewWidget(QWidget):
-    """Complete diff view widget for the main window"""
+    """Complete diff view widget with modern design"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.theme = "dark"  # Default theme
+        self.tokens = get_tokens(self.theme)
 
         self.diff_widget = DiffWidget()
         self._setup_ui()
+        self._apply_styling()
+
+    def set_theme(self, theme: str):
+        """Set the theme for the entire diff view (public method)"""
+        self.theme = theme
+        self.tokens = get_tokens(theme)
+        self.diff_widget.set_theme(theme)
+        self._apply_styling()
 
     def _setup_ui(self):
-        """Setup the UI"""
+        """Setup the UI with modern design"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(
+            self.tokens.spacing.gutters["panel"],
+            self.tokens.spacing.gutters["panel"],
+            self.tokens.spacing.gutters["panel"],
+            self.tokens.spacing.gutters["panel"]
+        )
+        layout.setSpacing(self.tokens.spacing.gutters["component"])
 
-        # Toolbar
+        # Modern toolbar
         toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(self.tokens.spacing.gutters["component"])
 
-        self.title_label = QLabel("Diff Viewer")
+        # Title with modern styling
+        self.title_label = QLabel("📊 Diff Viewer")
+        self.title_label.setObjectName("titleLabel")
         toolbar_layout.addWidget(self.title_label)
 
         toolbar_layout.addStretch()
 
+        # Action buttons with semantic styling
         self.select_all_button = QPushButton("Select All")
+        self.select_all_button.setProperty("class", "subtle")
         self.select_all_button.clicked.connect(self.diff_widget.select_all_hunks)
         toolbar_layout.addWidget(self.select_all_button)
 
-        self.select_none_button = QPushButton("Select None")
+        self.select_none_button = QPushButton("Clear Selection")
+        self.select_none_button.setProperty("class", "subtle")
         self.select_none_button.clicked.connect(self.diff_widget.select_no_hunks)
         toolbar_layout.addWidget(self.select_none_button)
 
         layout.addLayout(toolbar_layout)
 
-        # Diff widget
+        # Diff widget with professional spacing
         layout.addWidget(self.diff_widget)
+
+    def _apply_styling(self):
+        """Apply professional styling using design tokens"""
+        self.title_label.setStyleSheet(f"""
+            QLabel#titleLabel {{
+                color: {self.tokens.colors.palette["text"]};
+                font-size: {self.tokens.typography.sizes["heading"]}pt;
+                font-weight: 600;
+                padding: {self.tokens.spacing.gutters["component"]}px {self.tokens.spacing.gutters["panel"]}px;
+                background: {self.tokens.colors.semantic["surface-alt"]};
+                border: 1px solid {self.tokens.colors.palette["border"]};
+                border-radius: {self.tokens.radii.values["sm"]}px;
+            }}
+        """)
+
+    def update_theme(self, theme: str):
+        """Update the theme for the entire diff view (legacy method name)"""
+        self.set_theme(theme)
 
     def set_diff_content(self, diff_text: str, file_path: str = ""):
         """Set diff content"""
         self.diff_widget.set_diff_content(diff_text, file_path)
         if file_path:
-            self.title_label.setText(f"Diff: {Path(file_path).name}")
+            self.title_label.setText(f"📊 Diff: {Path(file_path).name}")
         else:
-            self.title_label.setText("Diff Viewer")
+            self.title_label.setText("📊 Diff Viewer")
 
     def get_selected_hunks(self) -> List[int]:
         """Get selected hunk indices"""
@@ -415,4 +519,4 @@ class DiffViewWidget(QWidget):
     def clear(self):
         """Clear the diff"""
         self.diff_widget.clear()
-        self.title_label.setText("Diff Viewer")
+        self.title_label.setText("📊 Diff Viewer")

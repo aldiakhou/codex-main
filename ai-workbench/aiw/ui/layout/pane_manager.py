@@ -12,6 +12,14 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from ..code_editor import CodeEditorWidget
+try:
+    from shiboken6 import isValid as _is_qobject_valid
+except Exception:  # pragma: no cover
+    def _is_qobject_valid(obj):  # type: ignore
+        try:
+            return obj is not None
+        except Exception:
+            return False
 
 main_logger = logging.getLogger('MainWindow.PaneManager')
 
@@ -25,24 +33,33 @@ class PaneTab:
     is_modified: bool = False
 
 class PaneManager(QWidget):
-    """Enhanced pane manager with file management and IDE features"""
-    
+    """Enhanced pane manager with file management and IDE features.
+
+    create_default controls whether a default untitled editor tab is created.
+    This allows an external owner (e.g. MainWindow) to explicitly create its
+    own primary 'editor' tab without temporarily constructing (and later
+    closing) an unused default editor which could leave stale references.
+    """
+
     # Signals
     tab_changed = Signal(int)
     file_opened = Signal(str)
     file_closed = Signal(str)
     content_changed = Signal(str)
-    
-    def __init__(self, parent=None):
+
+    def __init__(self, parent=None, create_default: bool = True):
         super().__init__(parent)
         self.main_window = parent
         self._tabs: Dict[str, PaneTab] = {}
         self._file_tabs: Dict[str, str] = {}  # file_path -> tab_id mapping
-        
+
         self._setup_ui()
+        # Only create the default editor tab if requested
+        if create_default:
+            self._create_default_tab()
         
     def _setup_ui(self):
-        """Set up the pane manager UI"""
+        """Set up the pane manager UI (no tabs are created here)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
@@ -53,10 +70,7 @@ class PaneManager(QWidget):
         self._tab_widget.tabCloseRequested.connect(self._close_index)
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self._tab_widget)
-        
-        # Create default editor tab
-        self._create_default_tab()
-        
+
         # Status area
         self._setup_status_area(layout)
         
@@ -242,7 +256,14 @@ class PaneManager(QWidget):
                 
             # Clean up
             self._tabs.pop(tab_id, None)
-            tab.widget.deleteLater()
+            # If main window holds a reference to this widget (e.g., code_editor), clear it
+            if self.main_window and getattr(self.main_window, 'code_editor', None) is tab.widget:
+                # Only clear if truly invalid or about to be deleted
+                self.main_window.code_editor = None
+
+            # Schedule deletion
+            if _is_qobject_valid(tab.widget):
+                tab.widget.deleteLater()
             
             main_logger.info(f"Closed tab: {tab_id}")
             
@@ -432,9 +453,14 @@ class PaneManager(QWidget):
             if not state or 'tabs' not in state:
                 return
                 
-            # Clear existing tabs except default
+            # Clear existing tabs while preserving the primary editor tab.
+            # Historical saves assumed a built-in 'default' tab. In the new
+            # configuration (create_default=False) we use 'editor' as the
+            # canonical base tab. If no 'default' exists, retain 'editor'.
+            has_default = 'default' in self._tabs
             for tab_id in list(self._tabs.keys()):
-                if tab_id != "default":
+                preserve = (tab_id == 'default') or (not has_default and tab_id == 'editor')
+                if not preserve:
                     self.close_tab(tab_id)
             
             # Restore tabs

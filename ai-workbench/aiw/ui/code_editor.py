@@ -2,6 +2,7 @@
 Enhanced code editor with syntax highlighting for AI Development Workbench
 """
 import re
+import logging
 from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QRegularExpression, QSize, QPoint
 from PySide6.QtGui import (
@@ -13,40 +14,67 @@ from PySide6.QtWidgets import (
     QPushButton, QMessageBox, QHBoxLayout
 )
 
+from .design_tokens import get_tokens
+try:  # shiboken6 is needed to test QObject validity after deletion
+    from shiboken6 import isValid as _is_qobject_valid
+except Exception:  # pragma: no cover - if unavailable we fallback
+    def _is_qobject_valid(obj):  # type: ignore
+        try:
+            return obj is not None
+        except Exception:
+            return False
+
+# Setup logger
+code_editor_logger = logging.getLogger('CodeEditor')
+
 
 class SyntaxHighlighter(QSyntaxHighlighter):
-    """Syntax highlighter for various programming languages"""
+    """Syntax highlighter for various programming languages with theme support"""
 
-    def __init__(self, parent=None, language="python"):
+    def __init__(self, parent=None, language="python", theme="dark"):
         super().__init__(parent)
         self.language = language
+        self.theme = theme
         self._setup_formats()
         self._setup_rules()
 
     def _setup_formats(self):
-        """Setup text formats for different syntax elements"""
+        """Setup text formats for different syntax elements using design tokens"""
+        tokens = get_tokens(self.theme)
+        
         # Keywords
         self.keyword_format = QTextCharFormat()
-        self.keyword_format.setForeground(QColor("#0000FF"))  # Blue
+        self.keyword_format.setForeground(QColor(tokens.colors.palette.get("accent", "#4f8cff")))
         self.keyword_format.setFontWeight(QFont.Weight.Bold)
 
         # Strings
         self.string_format = QTextCharFormat()
-        self.string_format.setForeground(QColor("#008000"))  # Green
+        self.string_format.setForeground(QColor(tokens.colors.palette.get("ok", "#44c27a")))
 
         # Comments
         self.comment_format = QTextCharFormat()
-        self.comment_format.setForeground(QColor("#808080"))  # Gray
+        self.comment_format.setForeground(QColor(tokens.colors.palette.get("text-dim", "#9aa1ab")))
         self.comment_format.setFontItalic(True)
 
         # Numbers
         self.number_format = QTextCharFormat()
-        self.number_format.setForeground(QColor("#FF6600"))  # Orange
+        self.number_format.setForeground(QColor(tokens.colors.palette.get("warn", "#e0a941")))
 
         # Functions
         self.function_format = QTextCharFormat()
-        self.function_format.setForeground(QColor("#800080"))  # Purple
+        self.function_format.setForeground(QColor(tokens.colors.palette.get("info", "#369bd1")))
         self.function_format.setFontWeight(QFont.Weight.Bold)
+
+        # Classes
+        self.class_format = QTextCharFormat()
+        self.class_format.setForeground(QColor(tokens.colors.palette.get("accent-alt", "#7aa5ff")))
+        self.class_format.setFontWeight(QFont.Weight.Bold)
+
+    def update_theme(self, theme: str):
+        """Update the theme and refresh formatting"""
+        self.theme = theme
+        self._setup_formats()
+        self.rehighlight()
 
         # Classes
         self.class_format = QTextCharFormat()
@@ -234,11 +262,11 @@ class CodeEditor(QTextEdit):
         self.original_content = ""
         self.has_unsaved_changes = False
         self.language = "python"
+        self.theme = "dark"  # Default theme
+        self.tokens = get_tokens(self.theme)
 
-        # Setup UI
-        self.setFont(QFont("Consolas", 10))
-        self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        self.setTabStopDistance(QFontMetrics(self.font()).horizontalAdvance(' ') * 4)
+        # Setup UI with design tokens
+        self._setup_editor_styling()
 
         # Line numbers
         self.line_number_area = LineNumberArea(self)
@@ -248,11 +276,50 @@ class CodeEditor(QTextEdit):
         )
         self.update_line_number_area_width()
 
-        # Syntax highlighting
-        self.highlighter = SyntaxHighlighter(self.document(), self.language)
+        # Syntax highlighting with theme
+        self.highlighter = SyntaxHighlighter(self.document(), self.language, self.theme)
 
         # Connect signals
         self.textChanged.connect(self._on_text_changed)
+
+    def _setup_editor_styling(self):
+        """Setup professional editor styling using design tokens"""
+        # Set code font from design tokens
+        code_font = QFont(
+            self.tokens.typography.code_family.split(',')[0].strip().strip("'\""),
+            self.tokens.typography.sizes["code"]
+        )
+        self.setFont(code_font)
+        
+        # Professional editor settings
+        self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.setTabStopDistance(QFontMetrics(self.font()).horizontalAdvance(' ') * 4)
+        
+        # Apply theme-aware styling
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background: {self.tokens.colors.semantic["surface"]};
+                color: {self.tokens.colors.palette["text"]};
+                border: 1px solid {self.tokens.colors.palette["border"]};
+                border-radius: {self.tokens.radii.values["md"]}px;
+                padding: {self.tokens.spacing.gutters["component"]}px;
+                selection-background-color: {self.tokens.colors.semantic["selection"]};
+                font-family: {self.tokens.typography.code_family};
+                font-size: {self.tokens.typography.sizes["code"]}pt;
+                line-height: {int(self.tokens.typography.sizes["code"] * self.tokens.typography.line_height)}px;
+            }}
+            QTextEdit:focus {{
+                border-color: {self.tokens.colors.semantic["focus"]};
+            }}
+        """)
+
+    def update_theme(self, theme: str):
+        """Update the editor theme"""
+        self.theme = theme
+        self.tokens = get_tokens(theme)
+        self._setup_editor_styling()
+        if hasattr(self, 'highlighter'):
+            self.highlighter.update_theme(theme)
 
     def set_language(self, language: str):
         """Set the programming language for syntax highlighting"""
@@ -298,10 +365,24 @@ class CodeEditor(QTextEdit):
         return language_map.get(ext, 'text')
 
     def load_file(self, file_path: str) -> bool:
-        """Load a file into the editor"""
+        """Load a file into the editor with safety guards.
+
+        Returns False immediately if the underlying C++ object has been deleted
+        (stale Python reference) to avoid RuntimeError cascades.
+        """
+        # Guard against stale wrapper usage
+        if not _is_qobject_valid(self):
+            code_editor_logger.warning(f"Aborting load_file on invalid (deleted) editor for {file_path}")
+            return False
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+
+            # Double check validity just before UI mutation (edge case: deleted mid‑IO)
+            if not _is_qobject_valid(self):
+                code_editor_logger.warning(f"Editor deleted during file read: {file_path}")
+                return False
 
             self.setPlainText(content)
             self.current_file_path = file_path
@@ -310,17 +391,30 @@ class CodeEditor(QTextEdit):
 
             # Detect and set language
             self.language = self.detect_language_from_file(file_path)
-            self.highlighter.language = self.language
-            self.highlighter.rehighlight()
+            if hasattr(self, 'highlighter') and self.highlighter:
+                self.highlighter.language = self.language
+                self.highlighter.rehighlight()
 
             self.file_changed.emit(False)
             return True
 
+        except RuntimeError as e:  # Likely underlying C++ object deleted
+            if 'Internal C++ object' in str(e):
+                code_editor_logger.warning(f"Ignored load on deleted editor (RuntimeError) for {file_path}")
+                return False
+            code_editor_logger.error(f"RuntimeError loading file {file_path}: {e}")
+            return False
         except Exception as e:
-            QMessageBox.warning(
-                self, "Error Loading File",
-                f"Failed to load file:\n{str(e)}"
-            )
+            code_editor_logger.error(f"Error loading file {file_path}: {e}")
+            # Avoid trying to show dialog if widget is invalid or has no parent
+            if _is_qobject_valid(self) and _is_qobject_valid(self.parent()):
+                try:
+                    QMessageBox.warning(
+                        self.parent(), "Error Loading File",
+                        f"Failed to load file:\n{str(e)}"
+                    )
+                except Exception as dialog_error:
+                    code_editor_logger.error(f"Failed to show error dialog: {dialog_error}")
             return False
 
     def save_file(self) -> bool:
@@ -459,40 +553,120 @@ class CodeEditor(QTextEdit):
 
 
 class CodeEditorWidget(QWidget):
-    """Widget containing the code editor with toolbar"""
+    """Widget containing the code editor with toolbar and modern design"""
 
     file_changed = Signal(bool)
     file_saved = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.editor = CodeEditor()
+        self.theme = "dark"  # Default theme
+        # Parent the editor so its lifetime is tied to the widget
+        self.editor = CodeEditor(self)
+        self.tokens = get_tokens(self.theme)
 
         self._setup_ui()
         self._connect_signals()
+        self._apply_styling()
+
+    # --- Internal helpers -------------------------------------------------
+    def _ensure_editor_valid(self):
+        """Ensure the inner CodeEditor is a valid QObject; recreate if needed.
+
+        This heals cases where the underlying C++ object was deleted but Python
+        code still holds a reference, preventing cascading runtime errors.
+        """
+        # If this wrapper widget itself is invalid (been deleted), do nothing
+        if not _is_qobject_valid(self):
+            return
+
+        # If the inner editor is still valid, nothing to do
+        if _is_qobject_valid(self.editor):
+            return
+        code_editor_logger.warning("Recreating internal CodeEditor after invalidation")
+        old = self.editor
+        try:
+            # Create new editor parented to self
+            self.editor = CodeEditor(self)
+            # Reapply theme + styling
+            self.editor.update_theme(self.theme)
+            # Replace widget in layout (assumes root layout exists)
+            layout = self.layout()
+            if layout:
+                # Find and replace
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    if item and item.widget() is old:
+                        layout.replaceWidget(old, self.editor)
+                        break
+            old.deleteLater()
+            # Reconnect signals
+            self._connect_signals()
+        except Exception as e:
+            code_editor_logger.error(f"Failed to recreate internal editor: {e}")
+
+    def set_theme(self, theme: str):
+        """Set the theme for the entire widget (public method)"""
+        self.theme = theme
+        self.tokens = get_tokens(theme)
+        self.editor.update_theme(theme)
+        self._apply_styling()
 
     def _setup_ui(self):
-        """Setup the UI"""
+        """Setup the UI with modern design"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(
+            self.tokens.spacing.gutters["panel"], 
+            self.tokens.spacing.gutters["panel"],
+            self.tokens.spacing.gutters["panel"], 
+            self.tokens.spacing.gutters["panel"]
+        )
+        layout.setSpacing(self.tokens.spacing.gutters["component"])
 
-        # Toolbar
+        # Modern toolbar
         toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(self.tokens.spacing.gutters["component"])
 
+        # File info section
         self.file_label = QLabel("No file selected")
+        self.file_label.setObjectName("fileLabel")
         toolbar_layout.addWidget(self.file_label)
 
         toolbar_layout.addStretch()
 
+        # Action buttons with design tokens
         self.save_button = QPushButton("Save")
+        self.save_button.setProperty("class", "accent")  # Use accent button style
         self.save_button.clicked.connect(self._save_file)
         self.save_button.setEnabled(False)
         toolbar_layout.addWidget(self.save_button)
 
         layout.addLayout(toolbar_layout)
 
-        # Editor
+        # Editor with professional spacing
         layout.addWidget(self.editor)
+
+    def _apply_styling(self):
+        """Apply professional styling using design tokens"""
+        # Modern file label styling
+        self.file_label.setStyleSheet(f"""
+            QLabel#fileLabel {{
+                color: {self.tokens.colors.palette["text"]};
+                font-size: {self.tokens.typography.sizes["sm"]}pt;
+                font-weight: 600;
+                padding: {self.tokens.spacing.gutters["component"]}px {self.tokens.spacing.gutters["panel"]}px;
+                background: {self.tokens.colors.semantic["surface-alt"]};
+                border: 1px solid {self.tokens.colors.palette["border"]};
+                border-radius: {self.tokens.radii.values["sm"]}px;
+            }}
+        """)
+
+    def update_theme(self, theme: str):
+        """Update the theme for the entire widget"""
+        self.theme = theme
+        self.tokens = get_tokens(theme)
+        self.editor.update_theme(theme)
+        self._apply_styling()
 
     def _connect_signals(self):
         """Connect signals"""
@@ -501,9 +675,16 @@ class CodeEditorWidget(QWidget):
 
     def load_file(self, file_path: str) -> bool:
         """Load a file"""
+        # If wrapper invalid, abort early
+        if not _is_qobject_valid(self):
+            code_editor_logger.warning(f"CodeEditorWidget invalid; ignoring load request for {file_path}")
+            return False
+        self._ensure_editor_valid()
+        if not _is_qobject_valid(self.editor):
+            return False
         success = self.editor.load_file(file_path)
         if success:
-            self.file_label.setText(f"File: {self.editor.get_current_file_name()}")
+            self.file_label.setText(f"📄 {self.editor.get_current_file_name()}")
         return success
 
     def save_file(self) -> bool:

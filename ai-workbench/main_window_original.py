@@ -6,7 +6,6 @@ import os
 import time
 import logging
 import sys
-import difflib
 from pathlib import Path
 from typing import Optional
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread, QSize
@@ -19,14 +18,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QIcon, QFont
 from .design_system import apply_theme as legacy_apply_theme
 from .theme_manager import apply_theme as tokens_apply_theme
-try:
-    from shiboken6 import isValid as _is_qobj_valid
-except Exception:  # fallback if shiboken import fails
-    def _is_qobj_valid(obj):  # type: ignore
-        try:
-            return obj is not None
-        except Exception:
-            return False
 
 from ..core.backend_service import BackendService
 from ..core.codex_config_manager import get_codex_config_manager  # NEW: to inspect codex config
@@ -233,17 +224,16 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup the main UI: central tab manager + optional docks."""
-        # Central tabbed pane manager (suppress internal default tab so we create a single canonical 'editor' tab)
-        self.pane_manager = PaneManager(parent=self, create_default=False)
+        # Central tabbed pane manager
+        self.pane_manager = PaneManager()
         self.setCentralWidget(self.pane_manager)
 
-        # Tab factories (some created lazily) - with theme applied post-creation
+        # Tab factories (some created lazily)
         self._tab_factories = {
-            'editor': lambda: self._create_themed_code_editor(),
+            'editor': lambda: CodeEditorWidget(),
             'diff': lambda: self._create_diff_tab_widget(),
             'plan': lambda: self._create_plan_tab_widget(),
         }
-        # Create the primary editor tab explicitly; keep a strong reference
         self.code_editor = self.pane_manager.ensure_tab('editor', 'Editor', self._tab_factories['editor'])
 
         # Try restoring previous layout (tabs only for now)
@@ -286,41 +276,13 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
     # --- Tab factory helpers (diff, plan migrated from docks) --------------
-    def _create_themed_code_editor(self):
-        """Create a code editor widget with proper theme"""
-        widget = CodeEditorWidget()
-        current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-        widget.set_theme(current_theme)
-        return widget
-
-    def _get_or_create_diff_viewer(self):
-        """Get the diff viewer, creating it if necessary"""
-        if hasattr(self, 'diff_viewer') and self.diff_viewer is not None:
-            return self.diff_viewer
-        
-        # Create diff viewer if it doesn't exist
-        try:
-            self.diff_viewer = DiffViewWidget()
-            current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-            self.diff_viewer.set_theme(current_theme)
-            self.diff_viewer.diff_widget.apply_requested.connect(self._on_apply_diff)
-            main_logger.info("Created diff viewer on demand")
-            return self.diff_viewer
-        except Exception as e:
-            main_logger.error(f"Failed to create diff viewer: {e}")
-            from PySide6.QtWidgets import QLabel
-            self.diff_viewer = QLabel("Diff unavailable")
-            return self.diff_viewer
-
     def _create_diff_tab_widget(self):
-        """Return a diff viewer widget suitable for a tab with theme support.
+        """Return a diff viewer widget suitable for a tab.
         Reuses existing instance if a legacy dock already created it."""
         if hasattr(self, 'diff_viewer') and self.diff_viewer is not None:
             return self.diff_viewer
         try:
             self.diff_viewer = DiffViewWidget()
-            current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-            self.diff_viewer.set_theme(current_theme)
         except Exception as e:
             main_logger.error(f"Failed to create DiffViewWidget: {e}")
             from PySide6.QtWidgets import QLabel
@@ -364,8 +326,8 @@ class MainWindow(QMainWindow):
             diff_text = payload.get('diff') or payload.get('unified_diff') or ''
             file_path = payload.get('file_path', '')
             if diff_text:
-                self._get_or_create_diff_viewer().set_diff_content(diff_text, file_path)
-                self._show_diff_viewer()
+                self.diff_viewer.set_diff_content(diff_text, file_path)
+                self.diff_dock.raise_()
         except Exception:
             pass
     # (no dock creation here; this helper only updates diff content)
@@ -483,43 +445,18 @@ class MainWindow(QMainWindow):
         return wrapper
 
     def _create_diff_dock(self):
-        """Create diff viewer dock with theme support"""
+        """Create diff viewer dock"""
         self.diff_dock = QDockWidget("Diff", self)
         self.diff_dock.setObjectName("Diff")
         self.diff_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
 
-        # Enhanced diff viewer widget with theme
+        # Enhanced diff viewer widget
         self.diff_viewer = DiffViewWidget()
-        current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-        self.diff_viewer.set_theme(current_theme)
         self.diff_viewer.diff_widget.apply_requested.connect(self._on_apply_diff)
 
         self.diff_dock.setWidget(self.diff_viewer)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.diff_dock)
 
-    def _show_diff_viewer(self):
-        """Safely show the diff viewer in either dock or tab mode"""
-        try:
-            if hasattr(self, 'diff_dock') and self.diff_dock:
-                # Dock mode - bring to front
-                self.diff_dock.raise_()
-                self.diff_dock.show()
-            elif self.diff_as_tab and hasattr(self, 'pane_manager'):
-                # Tab mode - switch to diff tab or create it
-                diff_viewer = self._get_or_create_diff_viewer()
-                if diff_viewer and self.pane_manager:
-                    # Try to find existing diff tab
-                    tab_count = self.pane_manager._tab_widget.count() if hasattr(self.pane_manager, '_tab_widget') else 0
-                    for i in range(tab_count):
-                        if self.pane_manager._tab_widget.tabText(i) == "Diff":
-                            self.pane_manager._tab_widget.setCurrentIndex(i)
-                            return
-                    # Create new diff tab if not found
-                    if hasattr(self.pane_manager, '_tab_widget'):
-                        self.pane_manager._tab_widget.addTab(diff_viewer, "Diff")
-                        self.pane_manager._tab_widget.setCurrentWidget(diff_viewer)
-        except Exception as e:
-            main_logger.error(f"Failed to show diff viewer: {e}")
 
     def _create_plan_dock(self):
         """Create plan/update dock"""
@@ -761,8 +698,8 @@ class MainWindow(QMainWindow):
             if not diff_text.strip():
                 QMessageBox.information(self, "No Changes", "No unsaved changes to show.")
                 return
-            self._get_or_create_diff_viewer().set_diff_content(diff_text, current_file)
-            self._show_diff_viewer()
+            self.diff_viewer.set_diff_content(diff_text, current_file)
+            self.diff_dock.raise_()
         except Exception as e:
             QMessageBox.warning(self, "Diff Error", f"Failed to compute diff: {e}")
 
@@ -926,25 +863,10 @@ class MainWindow(QMainWindow):
             self._load_file_into_editor(file_path)
 
     def _load_file_into_editor(self, file_path: str):
-        """Load a file into the code editor with safety checks"""
-        try:
-            ce = getattr(self, 'code_editor', None)
-            if not ce or not _is_qobj_valid(ce):
-                main_logger.warning(f"Editor unavailable/invalid when loading: {file_path}")
-                return
-            inner = getattr(ce, 'editor', ce)
-            if inner is not ce and not _is_qobj_valid(inner):
-                main_logger.warning(f"Inner editor invalid when loading: {file_path}")
-                return
-            success = ce.load_file(file_path)
-            if success:
-                self.file_selected.emit(file_path)
-        except Exception as e:
-            main_logger.error(f"Error loading file into editor: {e}")
-            try:
-                QMessageBox.warning(self, "Error", f"Failed to load file: {str(e)}")
-            except Exception:
-                pass
+        """Load a file into the code editor"""
+        success = self.code_editor.load_file(file_path)
+        if success:
+            self.file_selected.emit(file_path)
 
     def _on_artifact_double_clicked(self, item, column):
         """Handle artifact double-click"""
@@ -1224,36 +1146,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._apply_theme()
-        
-        # Refresh chat view theme
-        try:
-            if hasattr(self, 'chat_view') and self.chat_view:
-                self.chat_view.refresh_theme()
-            if hasattr(self, '_actual_chat_view') and self._actual_chat_view:
-                self._actual_chat_view.refresh_theme()
-        except Exception as e:
-            main_logger.error(f"Failed to refresh chat theme: {e}")
-            
-        # Update enhanced component themes
-        try:
-            # Update diff viewer theme
-            if hasattr(self, 'diff_viewer') and self.diff_viewer:
-                self.diff_viewer.set_theme(theme)
-                
-            # Update all code editor widgets in dock widgets
-            for dock in self.findChildren(QDockWidget):
-                widget = dock.widget()
-                if hasattr(widget, 'set_theme'):
-                    widget.set_theme(theme)
-                    
-            # Update components in the pane manager
-            if hasattr(self, 'pane_manager') and self.pane_manager:
-                for tab_widget in self.pane_manager.findChildren(QWidget):
-                    if hasattr(tab_widget, 'set_theme'):
-                        tab_widget.set_theme(theme)
-                        
-        except Exception as e:
-            main_logger.error(f"Failed to update enhanced component themes: {e}")
 
     def _run_test_task(self):
         """Run tests for the current project."""
@@ -1388,8 +1280,8 @@ class MainWindow(QMainWindow):
                     GLOBAL_EVENT_BUS.publish('diff.update', {'unified_diff': unified_diff})
                 except Exception:
                     self._add_message("system", "Received changes for this turn.")
-                self._get_or_create_diff_viewer().set_diff_content(unified_diff, "")
-                self._show_diff_viewer()
+                self.diff_viewer.set_diff_content(unified_diff, "")
+                self.diff_dock.raise_()
             else:
                 try:
                     GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': 'No changes in this turn.'})
@@ -1406,8 +1298,8 @@ class MainWindow(QMainWindow):
                     GLOBAL_EVENT_BUS.publish('diff.update', {'diff': diff, 'file_path': file_path})
                 except Exception:
                     self._add_message("system", f"✅ Received diff for {file_path}")
-                self._get_or_create_diff_viewer().set_diff_content(diff, file_path)
-                self._show_diff_viewer()  # Bring the diff dock to the front
+                self.diff_viewer.set_diff_content(diff, file_path)
+                self.diff_dock.raise_()  # Bring the diff dock to the front
             else:
                 try:
                     GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"⚠️ Received an empty diff for {file_path}"})
@@ -1457,8 +1349,8 @@ class MainWindow(QMainWindow):
                         if udiff:
                             combined.append(f"--- a/{file_path}\n+++ b/{file_path}\n{udiff}\n")
                 if combined:
-                    self._get_or_create_diff_viewer().set_diff_content("\n".join(combined), "")
-                    self._show_diff_viewer()
+                    self.diff_viewer.set_diff_content("\n".join(combined), "")
+                    self.diff_dock.raise_()
             except Exception:
                 pass
             self._handle_patch_approval_request(event_obj, task_id)
