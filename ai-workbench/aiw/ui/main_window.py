@@ -179,13 +179,13 @@ class MainWindow(QMainWindow):
         main_logger.info("Setting up backend thread")
         
         # Get current profile from codex config
-        current_profile = None
+        self.current_profile = None
         try:
             codex_cfg_mgr = get_codex_config_manager()
             codex_cfg = codex_cfg_mgr.load()
-            current_profile = codex_cfg.profile
-            if current_profile:
-                main_logger.info(f"Using profile: {current_profile}")
+            self.current_profile = codex_cfg.profile
+            if self.current_profile:
+                main_logger.info(f"Using profile: {self.current_profile}")
             else:
                 main_logger.info("No profile configured, using default settings")
         except Exception as e:
@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
             main_logger.info(f"Using custom environment variables: {list(custom_env.keys())}")
         
         self.backend_thread = QThread()
-        self.backend = BackendService(codex_path, profile=current_profile, custom_env=custom_env)
+        self.backend = BackendService(codex_path, profile=self.current_profile, custom_env=custom_env)
         self.backend.moveToThread(self.backend_thread)
 
         # Connect signals across threads
@@ -253,7 +253,9 @@ class MainWindow(QMainWindow):
         # Chat: tab or dock
         if self.chat_as_tab:
             self._tab_factories['chat'] = lambda: self._create_chat_tab_widget()
-            self.chat_view = self.pane_manager.ensure_tab('chat', 'Chat', self._tab_factories['chat'])
+            chat_wrapper = self.pane_manager.ensure_tab('chat', 'Chat', self._tab_factories['chat'])
+            # self.chat_view was set in _create_chat_tab_widget to the actual ChatView
+            # chat_wrapper is the container QWidget returned by the factory
             self.chat_console = self.chat_view  # backcompat
         else:
             self._create_console_dock()
@@ -406,8 +408,8 @@ class MainWindow(QMainWindow):
     def _create_chat_tab_widget(self):
         """Factory returning chat view widget for tab mode."""
         try:
-            if hasattr(self, 'chat_view') and self.chat_view is not None:
-                return self.chat_view
+            if hasattr(self, '_actual_chat_view') and self._actual_chat_view is not None:
+                return self._actual_chat_view._wrapper
         except Exception:
             pass
         cv = ChatView()
@@ -434,8 +436,12 @@ class MainWindow(QMainWindow):
         send_btn.clicked.connect(self._send_prompt)
         input_bar.addWidget(send_btn)
         layout.addLayout(input_bar)
-        self.chat_view = cv
+        # Store the actual ChatView reference in a separate variable
+        self._actual_chat_view = cv
+        self.chat_view = cv  # This will get overwritten by pane manager
         self.chat_console = cv
+        # Store reference to the wrapper on the ChatView for later retrieval
+        cv._wrapper = wrapper
         return wrapper
 
     def _create_diff_dock(self):
@@ -1050,15 +1056,30 @@ class MainWindow(QMainWindow):
 
             op.context = repo_context
 
-            # Override model in operation with user-configured model if available
+            # Override model in operation with profile-configured model if available
             try:
                 codex_cfg = get_codex_config_manager().load()
-                if codex_cfg.model:
+                profile_model = None
+                
+                # Get model from current profile if one is active
+                if self.current_profile and codex_cfg.profiles:
+                    profile_config = codex_cfg.profiles.get(self.current_profile)
+                    profile_model = profile_config.get('model') if profile_config else None
+                    if profile_model:
+                        main_logger.info(f"Found model '{profile_model}' in profile '{self.current_profile}'")
+                
+                # Fallback to general config model if no profile model
+                if not profile_model and codex_cfg.model:
+                    profile_model = codex_cfg.model
+                    main_logger.info(f"Using general config model '{profile_model}'")
+                
+                # Apply model override if we found one
+                if profile_model:
                     prev_model = op.op.get('model')
-                    op.op['model'] = codex_cfg.model
-                    if prev_model != codex_cfg.model:
+                    op.op['model'] = profile_model
+                    if prev_model != profile_model:
                         main_logger.info(
-                            f"Replaced operation model '{prev_model}' with configured model '{codex_cfg.model}'"
+                            f"Replaced operation model '{prev_model}' with configured model '{profile_model}'"
                         )
             except Exception as e:
                 main_logger.warning(f"Could not apply configured model override: {e}")
@@ -1084,6 +1105,15 @@ class MainWindow(QMainWindow):
     def _add_message(self, role: str, content: str, rich: bool = False):
         """(Internal) Final render endpoint for chat messages (event bus subscriber)."""
         norm_role = role if role in ("user", "assistant", "system") else ("assistant" if role == "agent" else "system")
+        
+        # Try the stored actual ChatView first
+        if hasattr(self, '_actual_chat_view') and self._actual_chat_view is not None:
+            try:
+                self._actual_chat_view.add_message(norm_role, content, rich=rich)
+                return
+            except Exception as e:
+                main_logger.warning(f"Failed to add message to _actual_chat_view: {e}")
+        
         try:
             self.chat_view.add_message(norm_role, content, rich=rich)
         except Exception:
@@ -1212,6 +1242,16 @@ class MainWindow(QMainWindow):
                 GLOBAL_EVENT_BUS.publish('chat.streaming_delta', {'delta': delta})
             except Exception:
                 pass
+
+        # Handle complete agent messages (direct message without deltas)
+        elif event_type == "agent_message":
+            message = event_obj.get("message", "")
+            if message.strip():
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'assistant', 'content': message})
+                except Exception as e:
+                    main_logger.error(f"Failed to publish agent_message to event bus: {e}")
+                    self._add_message("assistant", message)
 
         # Handle task completion (display accumulated message)
         elif event_type == "task_complete":
@@ -1579,11 +1619,32 @@ class MainWindow(QMainWindow):
         """Show settings dialog"""
         dlg = SettingsDialog(self)
         if dlg.exec():
+            # Refresh current profile after settings changes
+            self._refresh_current_profile()
+            
             if dlg.apply_and_restart_requested:
                 self._restart_backend()
             else:
                 # No restart requested; config changes will apply on next start
                 self.status_bar.showMessage("Settings saved", 3000)
+
+    def _refresh_current_profile(self):
+        """Refresh the current profile from codex config"""
+        try:
+            codex_cfg_mgr = get_codex_config_manager()
+            codex_cfg = codex_cfg_mgr.load()
+            old_profile = self.current_profile
+            self.current_profile = codex_cfg.profile
+            
+            if old_profile != self.current_profile:
+                if self.current_profile:
+                    main_logger.info(f"Profile changed from '{old_profile}' to '{self.current_profile}'")
+                    self.status_bar.showMessage(f"Profile changed to: {self.current_profile}", 3000)
+                else:
+                    main_logger.info(f"Profile cleared (was '{old_profile}')")
+                    self.status_bar.showMessage("Profile cleared", 3000)
+        except Exception as e:
+            main_logger.warning(f"Could not refresh profile: {e}")
 
     def _restart_backend(self):
         try:
