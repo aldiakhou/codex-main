@@ -5,10 +5,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QFormLayout,
     QLineEdit, QSpinBox, QComboBox, QCheckBox, QPushButton, QLabel,
-    QListWidget, QListWidgetItem, QPlainTextEdit, QFileDialog, QMessageBox
+    QListWidget, QListWidgetItem, QPlainTextEdit, QFileDialog, QMessageBox,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
 
 from ..core.codex_config_manager import get_codex_config_manager
+from ..core.config import get_config_manager
 from ..core.codex_settings import (
     CodexConfig,
     ModelProvider,
@@ -33,7 +35,10 @@ class SettingsDialog(QDialog):
 
         self._cfg_mgr = get_codex_config_manager()
         self._cfg: CodexConfig = self._cfg_mgr.load()
-
+        
+        # AI Workbench config for environment variables
+        self._wb_cfg_mgr = get_config_manager()
+        
         self.apply_and_restart_requested = False
 
         root = QVBoxLayout(self)
@@ -48,6 +53,7 @@ class SettingsDialog(QDialog):
         self._init_mcp_tab()
         self._init_history_tab()
         self._init_reasoning_tab()
+        self._init_environment_tab()  # New environment variables tab
         self._init_advanced_tab()
 
         # Buttons
@@ -98,7 +104,21 @@ class SettingsDialog(QDialog):
         self.spin_proj_doc.setRange(0, 100_000_000)
         self.spin_proj_doc.setValue(self._cfg.project_doc_max_bytes or 0)
 
-        self.edit_profile = QLineEdit(self._cfg.profile or "")
+        # Profile selection with auto-detection
+        self.combo_profile = QComboBox()
+        self.combo_profile.setEditable(True)  # Allow custom profiles
+        self.btn_refresh_profiles = QPushButton("🔄")
+        self.btn_refresh_profiles.setToolTip("Refresh profiles from config")
+        self.btn_refresh_profiles.setMaximumWidth(30)
+        self.btn_refresh_profiles.clicked.connect(self._populate_profiles)
+        self._populate_profiles()
+
+        # Profile row with refresh button
+        profile_layout = QHBoxLayout()
+        profile_layout.addWidget(self.combo_profile)
+        profile_layout.addWidget(self.btn_refresh_profiles)
+        profile_widget = QWidget()
+        profile_widget.setLayout(profile_layout)
 
         form.addRow("Model", self.edit_model)
         form.addRow("Provider", self.edit_provider)
@@ -107,7 +127,7 @@ class SettingsDialog(QDialog):
         form.addRow("Verbosity", self.combo_verbosity)
         form.addRow("File opener", self.combo_file_opener)
         form.addRow("AGENTS.md bytes", self.spin_proj_doc)
-        form.addRow("Active profile", self.edit_profile)
+        form.addRow("Active profile", profile_widget)
 
         self.tabs.addTab(w, "General")
 
@@ -273,6 +293,45 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(w, "Reasoning")
 
+    def _init_environment_tab(self):
+        """Environment Variables tab for API keys and other env vars"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        
+        # Instructions
+        info_label = QLabel("Set environment variables for the Codex process.\nThese will be used even if not available in your shell.")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Environment variables table
+        self.env_table = QTableWidget()
+        self.env_table.setColumnCount(2)
+        self.env_table.setHorizontalHeaderLabels(["Variable Name", "Value"])
+        self.env_table.horizontalHeader().setStretchLastSection(True)
+        self.env_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.env_table)
+        
+        # Buttons for env vars
+        env_btns = QHBoxLayout()
+        self.btn_add_env = QPushButton("Add Variable")
+        self.btn_remove_env = QPushButton("Remove Selected")
+        self.btn_add_common = QPushButton("Add Common API Keys")
+        env_btns.addWidget(self.btn_add_env)
+        env_btns.addWidget(self.btn_remove_env)
+        env_btns.addWidget(self.btn_add_common)
+        env_btns.addStretch()
+        layout.addLayout(env_btns)
+        
+        # Load current environment variables
+        self._refresh_env_table()
+        
+        # Connect signals
+        self.btn_add_env.clicked.connect(self._add_env_var)
+        self.btn_remove_env.clicked.connect(self._remove_env_var)
+        self.btn_add_common.clicked.connect(self._add_common_env_vars)
+        
+        self.tabs.addTab(w, "Environment")
+
     def _init_advanced_tab(self):
         w = QWidget()
         form = QFormLayout(w)
@@ -296,6 +355,54 @@ class SettingsDialog(QDialog):
         form.addRow("ChatGPT base URL", self.edit_chatgpt_base)
 
         self.tabs.addTab(w, "Advanced")
+
+    # ---------- Profile Detection ----------
+
+    def _populate_profiles(self):
+        """Auto-detect and populate available profiles from config"""
+        self.combo_profile.clear()
+        
+        # Add empty option for no profile
+        self.combo_profile.addItem("(No profile)", "")
+        
+        # Get available profiles from config
+        profiles_found = []
+        try:
+            if self._cfg.profiles and hasattr(self._cfg.profiles, 'root'):
+                profiles_found = sorted(self._cfg.profiles.root.keys())
+                print(f"Debug: Found profiles: {profiles_found}")
+                for profile_name in profiles_found:
+                    self.combo_profile.addItem(profile_name, profile_name)
+            else:
+                print("Debug: No profiles section found in config")
+        except Exception as e:
+            print(f"Warning: Could not load profiles: {e}")
+        
+        # Add profiles info to tooltip
+        if profiles_found:
+            self.combo_profile.setToolTip(f"Available profiles: {', '.join(profiles_found)}")
+        else:
+            self.combo_profile.setToolTip("No profiles found in config.toml")
+        
+        # Set current profile if it exists
+        current_profile = self._cfg.profile or ""
+        print(f"Debug: Current profile from config: '{current_profile}'")
+        
+        if current_profile:
+            index = self.combo_profile.findData(current_profile)
+            if index >= 0:
+                self.combo_profile.setCurrentIndex(index)
+                print(f"Debug: Set profile to index {index}")
+            else:
+                # Profile exists in config but not in profiles section
+                # Add it as custom option and select it
+                self.combo_profile.addItem(f"{current_profile} (custom)", current_profile)
+                self.combo_profile.setCurrentIndex(self.combo_profile.count() - 1)
+                print(f"Debug: Added custom profile '{current_profile}'")
+        else:
+            # No profile set, keep "(No profile)" selected
+            self.combo_profile.setCurrentIndex(0)
+            print("Debug: No profile selected")
 
     # ---------- Providers CRUD ----------
 
@@ -458,7 +565,8 @@ class SettingsDialog(QDialog):
         try:
             self._collect_to_model()
             self._cfg_mgr.save(self._cfg)
-            QMessageBox.information(self, "Settings", "Saved to ~/.codex/config.toml")
+            self._wb_cfg_mgr.save_config()  # Save AI Workbench config too
+            QMessageBox.information(self, "Settings", "Settings saved successfully!")
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", str(e))
@@ -467,6 +575,7 @@ class SettingsDialog(QDialog):
         try:
             self._collect_to_model()
             self._cfg_mgr.save(self._cfg)
+            self._wb_cfg_mgr.save_config()  # Save AI Workbench config too
             self.apply_and_restart_requested = True
             self.accept()
         except Exception as e:
@@ -483,7 +592,12 @@ class SettingsDialog(QDialog):
         self._cfg.model_verbosity = self.combo_verbosity.currentText() or None
         self._cfg.file_opener = self.combo_file_opener.currentText() or None
         self._cfg.project_doc_max_bytes = (self.spin_proj_doc.value() or None)
-        self._cfg.profile = self.edit_profile.text().strip() or None
+        
+        # Profile from combo box (using currentData for proper value)
+        profile_value = self.combo_profile.currentData()
+        if profile_value is None:  # Custom text entry
+            profile_value = self.combo_profile.currentText().strip()
+        self._cfg.profile = profile_value or None
 
         # Safety
         self._cfg.approval_policy = self.combo_approval.currentText() or None
@@ -527,6 +641,73 @@ class SettingsDialog(QDialog):
             self.edit_originator.text().strip() or None
         )
         self._cfg.chatgpt_base_url = self.edit_chatgpt_base.text().strip() or None
+
+        # Environment variables - save to AI Workbench config
+        env_vars = {}
+        for row in range(self.env_table.rowCount()):
+            name_item = self.env_table.item(row, 0)
+            value_item = self.env_table.item(row, 1)
+            if name_item and value_item and name_item.text().strip():
+                env_vars[name_item.text().strip()] = value_item.text()
+        self._wb_cfg_mgr.config.backend.environment_variables = env_vars
+
+    # ---------- Environment Variables Management ----------
+
+    def _refresh_env_table(self):
+        """Load environment variables from config and populate table"""
+        env_vars = self._wb_cfg_mgr.config.backend.environment_variables
+        self.env_table.setRowCount(len(env_vars))
+        
+        for row, (name, value) in enumerate(env_vars.items()):
+            name_item = QTableWidgetItem(name)
+            value_item = QTableWidgetItem(value)
+            self.env_table.setItem(row, 0, name_item)
+            self.env_table.setItem(row, 1, value_item)
+
+    def _add_env_var(self):
+        """Add a new environment variable row"""
+        row = self.env_table.rowCount()
+        self.env_table.insertRow(row)
+        name_item = QTableWidgetItem("")
+        value_item = QTableWidgetItem("")
+        self.env_table.setItem(row, 0, name_item)
+        self.env_table.setItem(row, 1, value_item)
+        # Focus on the new name field
+        self.env_table.editItem(name_item)
+
+    def _remove_env_var(self):
+        """Remove selected environment variable"""
+        current_row = self.env_table.currentRow()
+        if current_row >= 0:
+            self.env_table.removeRow(current_row)
+
+    def _add_common_env_vars(self):
+        """Add common API keys that might be needed"""
+        common_vars = [
+            ("OPENROUTER_API_KEY", ""),
+            ("OPENAI_API_KEY", ""),
+            ("ANTHROPIC_API_KEY", ""),
+            ("GOOGLE_API_KEY", ""),
+        ]
+        
+        # Get existing variable names
+        existing_names = set()
+        for row in range(self.env_table.rowCount()):
+            name_item = self.env_table.item(row, 0)
+            if name_item and name_item.text().strip():
+                existing_names.add(name_item.text().strip())
+        
+        # Add common variables that don't exist yet
+        for name, default_value in common_vars:
+            if name not in existing_names:
+                row = self.env_table.rowCount()
+                self.env_table.insertRow(row)
+                name_item = QTableWidgetItem(name)
+                value_item = QTableWidgetItem(default_value)
+                self.env_table.setItem(row, 0, name_item)
+                self.env_table.setItem(row, 1, value_item)
+
+    # ---------- Utils ----------
 
     def _dict_to_lines(self, d: Dict[str, Any]) -> str:
         return "\n".join(f"{k}={v}" for k, v in (d or {}).items())

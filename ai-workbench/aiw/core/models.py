@@ -37,6 +37,7 @@ class BackendConfig(BaseModel):
     timeout: int = 300  # seconds
     max_retries: int = 3
     log_level: str = "info"
+    environment_variables: Dict[str, str] = Field(default_factory=dict)  # Custom env vars for codex process
 
 
 class Operation(BaseModel):

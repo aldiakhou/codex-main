@@ -5,6 +5,7 @@ import time
 import threading
 import subprocess
 import logging
+from typing import Dict, Optional
 from PySide6.QtCore import QObject, Signal, QThread, QTimer, QElapsedTimer
 
 # Set up logging
@@ -40,9 +41,11 @@ class BackendService(QObject):
     operation_progress = Signal(str, int, str)  # operation_id, progress_percent, status_message
     operation_cleanup = Signal(str)  # operation_id to cleanup
 
-    def __init__(self, codex_executable_path: str, parent=None):
+    def __init__(self, codex_executable_path: str, profile: str = None, custom_env: Dict[str, str] = None, parent=None):
         super().__init__(parent)
         self.codex_executable_path = codex_executable_path
+        self.profile = profile
+        self.custom_env = custom_env or {}
         self.process = None
         self.stdout_thread = None
         self.stderr_thread = None
@@ -73,13 +76,31 @@ class BackendService(QObject):
             logger.info(f"Starting backend process: {self.codex_executable_path}")
             logger.info(f"Executable exists: {os.path.exists(self.codex_executable_path)}")
 
+            # Build command with optional profile
+            cmd = [self.codex_executable_path]
+            if self.profile:
+                cmd.extend(["-p", self.profile])
+                logger.info(f"Using profile: {self.profile}")
+            cmd.append("proto")
+            
+            logger.info(f"Full command: {' '.join(cmd)}")
+
+            # Build environment with custom variables
+            process_env = dict(os.environ)
+            process_env["RUST_BACKTRACE"] = "1"
+            
+            # Add custom environment variables
+            if self.custom_env:
+                process_env.update(self.custom_env)
+                logger.info(f"Added custom environment variables: {list(self.custom_env.keys())}")
+            
             # Start the process with pipes
             self.process = subprocess.Popen(
-                [self.codex_executable_path, "proto"],
+                cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=dict(os.environ, RUST_BACKTRACE="1"),
+                env=process_env,
                 text=True,
                 encoding='utf-8',
                 bufsize=1,

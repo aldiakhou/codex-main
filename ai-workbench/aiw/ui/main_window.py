@@ -20,6 +20,7 @@ from .design_system import apply_theme as legacy_apply_theme
 from .theme_manager import apply_theme as tokens_apply_theme
 
 from ..core.backend_service import BackendService
+from ..core.codex_config_manager import get_codex_config_manager  # NEW: to inspect codex config
 from ..core.config import get_config_manager
 from ..core.models import Repository, FileItem, Operation, Task
 from ..core.task_runner import get_workflow_runner
@@ -110,6 +111,33 @@ class MainWindow(QMainWindow):
         codex_path = self.config_manager.get_codex_path()
         main_logger.info(f"Codex path from config: {codex_path}")
 
+        # --- Extra diagnostics for model/provider configuration ---
+        try:
+            codex_cfg_mgr = get_codex_config_manager()
+            codex_cfg = codex_cfg_mgr.load()
+            main_logger.info(
+                "Codex config loaded from %s (model=%s, provider=%s, provider_ids=%s)",
+                codex_cfg_mgr.config_path,
+                codex_cfg.model,
+                codex_cfg.model_provider,
+                list(sorted(codex_cfg.model_providers.keys())),
+            )
+            if codex_cfg.model_provider and codex_cfg.model_provider not in codex_cfg.model_providers:
+                main_logger.warning(
+                    "Configured model_provider '%s' not present in model_providers map; backend will error.",
+                    codex_cfg.model_provider,
+                )
+                # Surface a UI message so user sees immediately
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {
+                        'role': 'system',
+                        'content': f"⚠️ Provider '{codex_cfg.model_provider}' not found in config. Open Settings → Providers to add it.",
+                    })
+                except Exception:
+                    self._add_message('system', f"⚠️ Provider '{codex_cfg.model_provider}' not found in config.")
+        except Exception as e:
+            main_logger.warning(f"Could not load Codex config for diagnostics: {e}")
+
         if not codex_path:
             # Try auto-detection one more time
             main_logger.info("No codex path configured, trying auto-detection")
@@ -149,8 +177,27 @@ class MainWindow(QMainWindow):
 
         # Move backend to a new thread
         main_logger.info("Setting up backend thread")
+        
+        # Get current profile from codex config
+        current_profile = None
+        try:
+            codex_cfg_mgr = get_codex_config_manager()
+            codex_cfg = codex_cfg_mgr.load()
+            current_profile = codex_cfg.profile
+            if current_profile:
+                main_logger.info(f"Using profile: {current_profile}")
+            else:
+                main_logger.info("No profile configured, using default settings")
+        except Exception as e:
+            main_logger.warning(f"Could not load profile from config: {e}")
+        
+        # Get custom environment variables from AI Workbench config
+        custom_env = self.config_manager.config.backend.environment_variables
+        if custom_env:
+            main_logger.info(f"Using custom environment variables: {list(custom_env.keys())}")
+        
         self.backend_thread = QThread()
-        self.backend = BackendService(codex_path)
+        self.backend = BackendService(codex_path, profile=current_profile, custom_env=custom_env)
         self.backend.moveToThread(self.backend_thread)
 
         # Connect signals across threads
@@ -1002,6 +1049,19 @@ class MainWindow(QMainWindow):
                     main_logger.info("Created user input operation")
 
             op.context = repo_context
+
+            # Override model in operation with user-configured model if available
+            try:
+                codex_cfg = get_codex_config_manager().load()
+                if codex_cfg.model:
+                    prev_model = op.op.get('model')
+                    op.op['model'] = codex_cfg.model
+                    if prev_model != codex_cfg.model:
+                        main_logger.info(
+                            f"Replaced operation model '{prev_model}' with configured model '{codex_cfg.model}'"
+                        )
+            except Exception as e:
+                main_logger.warning(f"Could not apply configured model override: {e}")
 
             # Log the full operation for debugging
             op_json = op.model_dump_json(indent=2)
