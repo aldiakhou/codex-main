@@ -248,7 +248,7 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup the main UI: central tab manager + optional docks."""
-        # Central tabbed pane manager (suppress internal default tab so we create a single canonical 'editor' tab)
+        # Central split-pane manager (no default tab; create editor explicitly)
         self.pane_manager = PaneManager(parent=self, create_default=False)
         self.setCentralWidget(self.pane_manager)
 
@@ -261,7 +261,7 @@ class MainWindow(QMainWindow):
         # Create the primary editor tab explicitly; keep a strong reference
         self.code_editor = self.pane_manager.ensure_tab('editor', 'Editor', self._tab_factories['editor'])
 
-        # Try restoring previous layout (tabs only for now)
+        # Try restoring previous layout (split tree + tabs)
         try:
             layout_state = self.config_manager.get_layout_state()
             if layout_state:
@@ -548,19 +548,8 @@ class MainWindow(QMainWindow):
                 self.diff_dock.raise_()
                 self.diff_dock.show()
             elif self.diff_as_tab and hasattr(self, 'pane_manager'):
-                # Tab mode - switch to diff tab or create it
-                diff_viewer = self._get_or_create_diff_viewer()
-                if diff_viewer and self.pane_manager:
-                    # Try to find existing diff tab
-                    tab_count = self.pane_manager._tab_widget.count() if hasattr(self.pane_manager, '_tab_widget') else 0
-                    for i in range(tab_count):
-                        if self.pane_manager._tab_widget.tabText(i) == "Diff":
-                            self.pane_manager._tab_widget.setCurrentIndex(i)
-                            return
-                    # Create new diff tab if not found
-                    if hasattr(self.pane_manager, '_tab_widget'):
-                        self.pane_manager._tab_widget.addTab(diff_viewer, "Diff")
-                        self.pane_manager._tab_widget.setCurrentWidget(diff_viewer)
+                # Tab mode - ensure via pane manager
+                self.pane_manager.ensure_tab('diff', 'Diff', self._tab_factories['diff'])
         except Exception as e:
             main_logger.error(f"Failed to show diff viewer: {e}")
 
@@ -707,6 +696,20 @@ class MainWindow(QMainWindow):
         toggle_reasoning = QAction("Toggle Reasoning Panel", self); toggle_reasoning.triggered.connect(self._toggle_reasoning_panel); view_menu.addAction(toggle_reasoning)
 
         view_menu.addSeparator()
+        # Split/Reset layout actions
+        split_h = QAction("Split Horizontally", self)
+        split_h.triggered.connect(lambda: self.pane_manager.split_current(Qt.Orientation.Horizontal))
+        view_menu.addAction(split_h)
+
+        split_v = QAction("Split Vertically", self)
+        split_v.triggered.connect(lambda: self.pane_manager.split_current(Qt.Orientation.Vertical))
+        view_menu.addAction(split_v)
+
+        reset_layout = QAction("Reset Layout", self)
+        reset_layout.triggered.connect(self._reset_layout)
+        view_menu.addAction(reset_layout)
+
+        view_menu.addSeparator()
         from PySide6.QtGui import QActionGroup
         theme_group = QActionGroup(self); theme_group.setExclusive(True)
         theme_dark = QAction("Dark Theme", self, checkable=True)
@@ -794,6 +797,36 @@ class MainWindow(QMainWindow):
                 self.pane_manager.ensure_tab('diff', 'Diff', self._tab_factories['diff'])
         except Exception as e:
             main_logger.error(f"Failed toggling diff mode: {e}")
+
+    def _reset_layout(self):
+        """Reset pane layout to a single stack and reopen base tabs."""
+        try:
+            # Reset panes to a single empty stack
+            self.pane_manager.restore({'type': 'stack', 'tabs': []}, self._tab_factories)
+            # Ensure primary tabs
+            self.code_editor = self.pane_manager.ensure_tab('editor', 'Editor', self._tab_factories['editor'])
+            if self.chat_as_tab:
+                self.pane_manager.ensure_tab('chat', 'Chat', self._tab_factories.get('chat', self._create_chat_tab_widget))
+            if self.diff_as_tab:
+                self.pane_manager.ensure_tab('diff', 'Diff', self._tab_factories['diff'])
+            # Persist immediately
+            try:
+                pane_state = self.pane_manager.serialize()
+                dock_visibility = {
+                    'repository': self.repo_dock.isVisible() if hasattr(self, 'repo_dock') else False,
+                    'assistant': self.console_dock.isVisible() if hasattr(self, 'console_dock') else False,
+                    'diff': self.diff_dock.isVisible() if hasattr(self, 'diff_dock') else False,
+                    'artifacts': self.artifacts_dock.isVisible() if hasattr(self, 'artifacts_dock') else False,
+                    'exec': self.exec_log_dock.isVisible() if hasattr(self, 'exec_log_dock') else False,
+                    'plan': self.plan_dock.isVisible() if hasattr(self, 'plan_dock') else False,
+                    'tokens': self.token_dock.isVisible() if hasattr(self, 'token_dock') else False,
+                }
+                self.config_manager.set_layout_state({'panes': pane_state, 'docks': dock_visibility})
+            except Exception:
+                pass
+            self.status_bar.showMessage("Layout reset", 2000)
+        except Exception as e:
+            main_logger.error(f"Failed to reset layout: {e}")
 
     def _setup_toolbar(self):
         """Setup toolbar with project, file, AI and control actions."""
@@ -1032,16 +1065,14 @@ class MainWindow(QMainWindow):
     def _load_file_into_editor(self, file_path: str):
         """Load a file into the code editor with safety checks"""
         try:
-            ce = getattr(self, 'code_editor', None)
-            if not ce or not _is_qobj_valid(ce):
-                main_logger.warning(f"Editor unavailable/invalid when loading: {file_path}")
+            pm = getattr(self, 'pane_manager', None)
+            if not pm:
+                main_logger.warning("PaneManager not initialized; cannot open file tab")
                 return
-            inner = getattr(ce, 'editor', ce)
-            if inner is not ce and not _is_qobj_valid(inner):
-                main_logger.warning(f"Inner editor invalid when loading: {file_path}")
-                return
-            success = ce.load_file(file_path)
-            if success:
+            widget = pm.open_file_tab(file_path)
+            if widget and _is_qobj_valid(widget):
+                # Track as current editor for legacy flows
+                self.code_editor = widget
                 self.file_selected.emit(file_path)
         except Exception as e:
             main_logger.error(f"Error loading file into editor: {e}")
