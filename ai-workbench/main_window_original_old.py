@@ -6,7 +6,6 @@ import os
 import time
 import logging
 import sys
-import difflib
 from pathlib import Path
 from typing import Optional
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread, QSize
@@ -14,19 +13,11 @@ from PySide6.QtWidgets import (
     QMainWindow, QTextEdit, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QWidget, QDockWidget, QSplitter, QTreeWidget, QTreeWidgetItem, QStyle,
     QStatusBar, QMenuBar, QMenu, QToolBar, QFileDialog, QMessageBox,
-    QLabel, QProgressBar, QTextBrowser, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox, QInputDialog
+    QLabel, QProgressBar, QTextBrowser
 )
 from PySide6.QtGui import QAction, QIcon, QFont
 from .design_system import apply_theme as legacy_apply_theme
 from .theme_manager import apply_theme as tokens_apply_theme
-try:
-    from shiboken6 import isValid as _is_qobj_valid
-except Exception:  # fallback if shiboken import fails
-    def _is_qobj_valid(obj):  # type: ignore
-        try:
-            return obj is not None
-        except Exception:
-            return False
 
 from ..core.backend_service import BackendService
 from ..core.codex_config_manager import get_codex_config_manager  # NEW: to inspect codex config
@@ -39,8 +30,6 @@ from .components.chat_view import ChatView
 from .layout.pane_manager import PaneManager
 from .settings_dialog import SettingsDialog
 from .services.event_bus import GLOBAL_EVENT_BUS
-from ..core.conversation_store import ConversationStore, StoredMessage
-from .motion.anim import fade_in_widget, animate_height_toggle
 import patch
 
 # Set up logging for main window
@@ -86,13 +75,9 @@ class MainWindow(QMainWindow):
         self.chat_as_tab = True
         self.diff_as_tab = True
 
-        # Initialize conversation store first
-        self._init_conversation_store()
-
         # Window basics
         self.setWindowTitle("AI Development Workbench")
         self.setGeometry(100, 100, 1400, 900)
-        self._update_window_title()
 
         # Restore window geometry if available
         try:
@@ -119,15 +104,6 @@ class MainWindow(QMainWindow):
         self._setup_status_bar()
         self._setup_backend()
         self._load_initial_state()
-
-    def _update_window_title(self):
-        """Update window title to show active session"""
-        base_title = "AI Development Workbench"
-        if self.conversation_store and self.conversation_store.session:
-            session_id = self.conversation_store.session.session_id
-            self.setWindowTitle(f"{base_title} - Session: {session_id}")
-        else:
-            self.setWindowTitle(base_title)
 
     def _setup_backend(self):
         """Initialize the backend service with improved error handling"""
@@ -248,17 +224,16 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Setup the main UI: central tab manager + optional docks."""
-        # Central tabbed pane manager (suppress internal default tab so we create a single canonical 'editor' tab)
-        self.pane_manager = PaneManager(parent=self, create_default=False)
+        # Central tabbed pane manager
+        self.pane_manager = PaneManager()
         self.setCentralWidget(self.pane_manager)
 
-        # Tab factories (some created lazily) - with theme applied post-creation
+        # Tab factories (some created lazily)
         self._tab_factories = {
-            'editor': lambda: self._create_themed_code_editor(),
+            'editor': lambda: CodeEditorWidget(),
             'diff': lambda: self._create_diff_tab_widget(),
             'plan': lambda: self._create_plan_tab_widget(),
         }
-        # Create the primary editor tab explicitly; keep a strong reference
         self.code_editor = self.pane_manager.ensure_tab('editor', 'Editor', self._tab_factories['editor'])
 
         # Try restoring previous layout (tabs only for now)
@@ -301,41 +276,13 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
     # --- Tab factory helpers (diff, plan migrated from docks) --------------
-    def _create_themed_code_editor(self):
-        """Create a code editor widget with proper theme"""
-        widget = CodeEditorWidget()
-        current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-        widget.set_theme(current_theme)
-        return widget
-
-    def _get_or_create_diff_viewer(self):
-        """Get the diff viewer, creating it if necessary"""
-        if hasattr(self, 'diff_viewer') and self.diff_viewer is not None:
-            return self.diff_viewer
-        
-        # Create diff viewer if it doesn't exist
-        try:
-            self.diff_viewer = DiffViewWidget()
-            current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-            self.diff_viewer.set_theme(current_theme)
-            self.diff_viewer.diff_widget.apply_requested.connect(self._on_apply_diff)
-            main_logger.info("Created diff viewer on demand")
-            return self.diff_viewer
-        except Exception as e:
-            main_logger.error(f"Failed to create diff viewer: {e}")
-            from PySide6.QtWidgets import QLabel
-            self.diff_viewer = QLabel("Diff unavailable")
-            return self.diff_viewer
-
     def _create_diff_tab_widget(self):
-        """Return a diff viewer widget suitable for a tab with theme support.
+        """Return a diff viewer widget suitable for a tab.
         Reuses existing instance if a legacy dock already created it."""
         if hasattr(self, 'diff_viewer') and self.diff_viewer is not None:
             return self.diff_viewer
         try:
             self.diff_viewer = DiffViewWidget()
-            current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-            self.diff_viewer.set_theme(current_theme)
         except Exception as e:
             main_logger.error(f"Failed to create DiffViewWidget: {e}")
             from PySide6.QtWidgets import QLabel
@@ -379,8 +326,8 @@ class MainWindow(QMainWindow):
             diff_text = payload.get('diff') or payload.get('unified_diff') or ''
             file_path = payload.get('file_path', '')
             if diff_text:
-                self._get_or_create_diff_viewer().set_diff_content(diff_text, file_path)
-                self._show_diff_viewer()
+                self.diff_viewer.set_diff_content(diff_text, file_path)
+                self.diff_dock.raise_()
         except Exception:
             pass
     # (no dock creation here; this helper only updates diff content)
@@ -457,18 +404,6 @@ class MainWindow(QMainWindow):
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
             # Provide a pane-manager style wrapper reference for unified usage
             self.chat_view = self.chat_console
-            # Optional motion fade-in for dock
-            try:
-                if getattr(self.config_manager.config.ui, 'animations_enabled', True):
-                    fade_in_widget(self.console_dock)
-                    try:
-                        self.console_dock.visibilityChanged.connect(
-                            lambda vis: fade_in_widget(self.console_dock) if vis else None
-                        )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
 
     def _create_chat_tab_widget(self):
         """Factory returning chat view widget for tab mode."""
@@ -510,54 +445,18 @@ class MainWindow(QMainWindow):
         return wrapper
 
     def _create_diff_dock(self):
-        """Create diff viewer dock with theme support"""
+        """Create diff viewer dock"""
         self.diff_dock = QDockWidget("Diff", self)
         self.diff_dock.setObjectName("Diff")
         self.diff_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
 
-        # Enhanced diff viewer widget with theme
+        # Enhanced diff viewer widget
         self.diff_viewer = DiffViewWidget()
-        current_theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
-        self.diff_viewer.set_theme(current_theme)
         self.diff_viewer.diff_widget.apply_requested.connect(self._on_apply_diff)
 
         self.diff_dock.setWidget(self.diff_viewer)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.diff_dock)
-        try:
-            if getattr(self.config_manager.config.ui, 'animations_enabled', True):
-                fade_in_widget(self.diff_dock)
-                try:
-                    self.diff_dock.visibilityChanged.connect(
-                        lambda vis: fade_in_widget(self.diff_dock) if vis else None
-                    )
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
-    def _show_diff_viewer(self):
-        """Safely show the diff viewer in either dock or tab mode"""
-        try:
-            if hasattr(self, 'diff_dock') and self.diff_dock:
-                # Dock mode - bring to front
-                self.diff_dock.raise_()
-                self.diff_dock.show()
-            elif self.diff_as_tab and hasattr(self, 'pane_manager'):
-                # Tab mode - switch to diff tab or create it
-                diff_viewer = self._get_or_create_diff_viewer()
-                if diff_viewer and self.pane_manager:
-                    # Try to find existing diff tab
-                    tab_count = self.pane_manager._tab_widget.count() if hasattr(self.pane_manager, '_tab_widget') else 0
-                    for i in range(tab_count):
-                        if self.pane_manager._tab_widget.tabText(i) == "Diff":
-                            self.pane_manager._tab_widget.setCurrentIndex(i)
-                            return
-                    # Create new diff tab if not found
-                    if hasattr(self.pane_manager, '_tab_widget'):
-                        self.pane_manager._tab_widget.addTab(diff_viewer, "Diff")
-                        self.pane_manager._tab_widget.setCurrentWidget(diff_viewer)
-        except Exception as e:
-            main_logger.error(f"Failed to show diff viewer: {e}")
 
     def _create_plan_dock(self):
         """Create plan/update dock"""
@@ -621,45 +520,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             main_logger.error(f"Failed to create exec log dock: {e}")
 
-    def _init_conversation_store(self):
-        try:
-            base = self.config_manager.config_dir
-            self.conversation_store = ConversationStore(base)
-            loaded = self.conversation_store.load_last_session()
-            if loaded:
-                # UI hydration will happen in _load_initial_state once chat_view is ready
-                pass
-            else:
-                # New session: add marker after session start
-                self.conversation_store.start_new_session()
-                try:
-                    self._add_message('system', f"Session started: {self.conversation_store.session.session_id}")
-                except Exception:
-                    pass
-        except Exception as e:
-            main_logger.warning(f"Conversation store init failed: {e}")
-
-        # Setup debounce timer
-        self._conversation_flush_timer = QTimer(self)
-        self._conversation_flush_timer.setInterval(1500)
-        self._conversation_flush_timer.setSingleShot(True)
-        self._conversation_flush_timer.timeout.connect(self._flush_conversation_store)
-        self._update_window_title()  # Update title with session info
-
-    def _schedule_conversation_flush(self):
-        try:
-            if self._conversation_flush_timer:
-                self._conversation_flush_timer.start()
-        except Exception:
-            pass
-
-    def _flush_conversation_store(self):
-        try:
-            if self.conversation_store:
-                self.conversation_store.flush()
-        except Exception:
-            pass
-
     def _setup_menus(self):
         """Setup menu bar (File, View, Tools)."""
         menubar = self.menuBar()
@@ -673,11 +533,6 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         act = QAction("&Settings...", self); act.triggered.connect(self._show_settings); file_menu.addAction(act)
         file_menu.addSeparator()
-        export_md = QAction("Export Transcript (Markdown)...", self)
-        export_md.triggered.connect(self._export_transcript_markdown)
-        file_menu.addAction(export_md)
-        file_menu.addSeparator()
-        switch_sessions = QAction("Switch Session...", self); switch_sessions.triggered.connect(self._show_session_switcher); file_menu.addAction(switch_sessions)
         act = QAction("E&xit", self); act.triggered.connect(self.close); file_menu.addAction(act)
 
         # View menu
@@ -843,8 +698,8 @@ class MainWindow(QMainWindow):
             if not diff_text.strip():
                 QMessageBox.information(self, "No Changes", "No unsaved changes to show.")
                 return
-            self._get_or_create_diff_viewer().set_diff_content(diff_text, current_file)
-            self._show_diff_viewer()
+            self.diff_viewer.set_diff_content(diff_text, current_file)
+            self.diff_dock.raise_()
         except Exception as e:
             QMessageBox.warning(self, "Diff Error", f"Failed to compute diff: {e}")
 
@@ -870,18 +725,7 @@ class MainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.progress_bar)
 
     def _load_initial_state(self):
-        """Hydrate UI with any persisted session data after widgets exist."""
-        try:
-            if getattr(self, 'conversation_store', None) and getattr(self.conversation_store, 'session', None):
-                loaded_msgs = self.conversation_store.get_messages()
-                if hasattr(self, 'chat_view') and self.chat_view:
-                    from .components.chat_view import ChatMessage
-                    self.chat_view.set_messages([
-                        ChatMessage(role=m.role, content=m.content, timestamp=m.timestamp, rich=m.rich)
-                        for m in loaded_msgs
-                    ])
-        except Exception as e:
-            main_logger.warning(f"Initial hydration failed: {e}")
+        pass  # Placeholder (initial state logic if needed later)
 
     def _load_repository_files(self, repo_path: str):
         """Load repository files into tree view"""
@@ -1019,25 +863,10 @@ class MainWindow(QMainWindow):
             self._load_file_into_editor(file_path)
 
     def _load_file_into_editor(self, file_path: str):
-        """Load a file into the code editor with safety checks"""
-        try:
-            ce = getattr(self, 'code_editor', None)
-            if not ce or not _is_qobj_valid(ce):
-                main_logger.warning(f"Editor unavailable/invalid when loading: {file_path}")
-                return
-            inner = getattr(ce, 'editor', ce)
-            if inner is not ce and not _is_qobj_valid(inner):
-                main_logger.warning(f"Inner editor invalid when loading: {file_path}")
-                return
-            success = ce.load_file(file_path)
-            if success:
-                self.file_selected.emit(file_path)
-        except Exception as e:
-            main_logger.error(f"Error loading file into editor: {e}")
-            try:
-                QMessageBox.warning(self, "Error", f"Failed to load file: {str(e)}")
-            except Exception:
-                pass
+        """Load a file into the code editor"""
+        success = self.code_editor.load_file(file_path)
+        if success:
+            self.file_selected.emit(file_path)
 
     def _on_artifact_double_clicked(self, item, column):
         """Handle artifact double-click"""
@@ -1292,12 +1121,6 @@ class MainWindow(QMainWindow):
                 self.chat_console.add_message(norm_role, content, rich=rich)  # type: ignore[attr-defined]
             except Exception:
                 pass
-        try:
-            if self.conversation_store:
-                self.conversation_store.add_message(role, content, rich=rich)
-                self._schedule_conversation_flush()
-        except Exception:
-            pass
 
     def _emit_chat(self, role: str, content: str, rich: bool = False):
         """Publish a chat/system message to the event bus (preferred path)."""
@@ -1323,36 +1146,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._apply_theme()
-        
-        # Refresh chat view theme
-        try:
-            if hasattr(self, 'chat_view') and self.chat_view:
-                self.chat_view.refresh_theme()
-            if hasattr(self, '_actual_chat_view') and self._actual_chat_view:
-                self._actual_chat_view.refresh_theme()
-        except Exception as e:
-            main_logger.error(f"Failed to refresh chat theme: {e}")
-            
-        # Update enhanced component themes
-        try:
-            # Update diff viewer theme
-            if hasattr(self, 'diff_viewer') and self.diff_viewer:
-                self.diff_viewer.set_theme(theme)
-                
-            # Update all code editor widgets in dock widgets
-            for dock in self.findChildren(QDockWidget):
-                widget = dock.widget()
-                if hasattr(widget, 'set_theme'):
-                    widget.set_theme(theme)
-                    
-            # Update components in the pane manager
-            if hasattr(self, 'pane_manager') and self.pane_manager:
-                for tab_widget in self.pane_manager.findChildren(QWidget):
-                    if hasattr(tab_widget, 'set_theme'):
-                        tab_widget.set_theme(theme)
-                        
-        except Exception as e:
-            main_logger.error(f"Failed to update enhanced component themes: {e}")
 
     def _run_test_task(self):
         """Run tests for the current project."""
@@ -1430,35 +1223,21 @@ class MainWindow(QMainWindow):
             if self.show_raw_reasoning:
                 self.current_reasoning += delta
 
-        # Handle reasoning section break (merge into assistant message)
+        # Handle reasoning section break (display accumulated reasoning)
         elif event_type == "agent_reasoning_section_break":
             if self.show_raw_reasoning and self.current_reasoning.strip():
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
-                    # Add reasoning as part of the current assistant message stream
-                    reasoning_text = f"\n\n*Thinking: {clean_reasoning}*\n\n"
                     try:
-                        if hasattr(self, 'chat_view'):
-                            self.chat_view.append_assistant_delta(reasoning_text)
-                        if self.conversation_store:
-                            self.conversation_store.update_last_assistant_partial(reasoning_text)
-                        self._schedule_conversation_flush()
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🤔 {clean_reasoning}"})
                     except Exception:
-                        pass
+                        self._add_message("system", f"🤔 {clean_reasoning}")
                 self.current_reasoning = ""
 
         # Handle message deltas (accumulate them)
         elif event_type == "agent_message_delta":
             delta = event_obj.get("delta", "")
             self.current_message += delta
-            try:
-                if hasattr(self, 'chat_view'):
-                    self.chat_view.append_assistant_delta(delta)
-                if self.conversation_store:
-                    self.conversation_store.update_last_assistant_partial(delta)
-                self._schedule_conversation_flush()
-            except Exception:
-                pass
             try:
                 GLOBAL_EVENT_BUS.publish('chat.streaming_delta', {'delta': delta})
             except Exception:
@@ -1476,27 +1255,21 @@ class MainWindow(QMainWindow):
 
         # Handle task completion (display accumulated message)
         elif event_type == "task_complete":
-            # Include any final reasoning in the assistant message
-            final_content = ""
             if self.current_message.strip():
-                final_content = self.current_message.strip()
+                final_msg = self.current_message.strip()
+                try:
+                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'assistant', 'content': final_msg})
+                except Exception:
+                    self._add_message("assistant", final_msg)
+                self.current_message = ""
             if self.show_raw_reasoning and self.current_reasoning.strip():
                 clean_reasoning = self.current_reasoning.replace("**", "").strip()
                 if clean_reasoning:
-                    if final_content:
-                        final_content += f"\n\n*Final thinking: {clean_reasoning}*"
-                    else:
-                        final_content = f"*Thinking: {clean_reasoning}*"
-            
-            if final_content:
-                try:
-                    GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'assistant', 'content': final_content})
-                except Exception:
-                    self._add_message("assistant", final_content)
-            
-            # Reset accumulators
-            self.current_message = ""
-            self.current_reasoning = ""
+                    try:
+                        GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"🤔 {clean_reasoning}"})
+                    except Exception:
+                        self._add_message("system", f"🤔 {clean_reasoning}")
+                self.current_reasoning = ""
 
         # Handle unified diff for the entire turn (codex-rs EventMsg::TurnDiff)
         elif event_type == "turn_diff":
@@ -1507,8 +1280,8 @@ class MainWindow(QMainWindow):
                     GLOBAL_EVENT_BUS.publish('diff.update', {'unified_diff': unified_diff})
                 except Exception:
                     self._add_message("system", "Received changes for this turn.")
-                self._get_or_create_diff_viewer().set_diff_content(unified_diff, "")
-                self._show_diff_viewer()
+                self.diff_viewer.set_diff_content(unified_diff, "")
+                self.diff_dock.raise_()
             else:
                 try:
                     GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': 'No changes in this turn.'})
@@ -1525,8 +1298,8 @@ class MainWindow(QMainWindow):
                     GLOBAL_EVENT_BUS.publish('diff.update', {'diff': diff, 'file_path': file_path})
                 except Exception:
                     self._add_message("system", f"✅ Received diff for {file_path}")
-                self._get_or_create_diff_viewer().set_diff_content(diff, file_path)
-                self._show_diff_viewer()  # Bring the diff dock to the front
+                self.diff_viewer.set_diff_content(diff, file_path)
+                self.diff_dock.raise_()  # Bring the diff dock to the front
             else:
                 try:
                     GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"⚠️ Received an empty diff for {file_path}"})
@@ -1576,8 +1349,8 @@ class MainWindow(QMainWindow):
                         if udiff:
                             combined.append(f"--- a/{file_path}\n+++ b/{file_path}\n{udiff}\n")
                 if combined:
-                    self._get_or_create_diff_viewer().set_diff_content("\n".join(combined), "")
-                    self._show_diff_viewer()
+                    self.diff_viewer.set_diff_content("\n".join(combined), "")
+                    self.diff_dock.raise_()
             except Exception:
                 pass
             self._handle_patch_approval_request(event_obj, task_id)
@@ -1754,7 +1527,6 @@ class MainWindow(QMainWindow):
                     self.current_reasoning += text + "\n"
                     if hasattr(self, 'reasoning_view') and self.reasoning_view.isVisible():
                         safe_full = self.current_reasoning.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-                       
                         self.reasoning_view.setHtml(f"<b>Reasoning</b><br><pre style='white-space:pre-wrap;margin:0;'>{safe_full}</pre>")
         except Exception as e:
             main_logger.error(f"Error in raw reasoning handler: {e}")
@@ -1763,13 +1535,7 @@ class MainWindow(QMainWindow):
     def _toggle_reasoning_panel(self):
         self.reasoning_panel_visible = not self.reasoning_panel_visible
         if hasattr(self, 'reasoning_view'):
-            try:
-                if getattr(self.config_manager.config.ui, 'animations_enabled', True):
-                    animate_height_toggle(self.reasoning_view, self.reasoning_panel_visible)
-                else:
-                    self.reasoning_view.setVisible(self.reasoning_panel_visible)
-            except Exception:
-                self.reasoning_view.setVisible(self.reasoning_panel_visible)
+            self.reasoning_view.setVisible(self.reasoning_panel_visible)
 
     def _open_command_palette(self):
         try:
@@ -1931,12 +1697,7 @@ class MainWindow(QMainWindow):
             self.backend_thread.quit()
             self.backend_thread.wait()
 
-        try:
-            if self.conversation_store:
-                self.conversation_store.flush()
-        except Exception:
-            pass
-        super().closeEvent(event)
+        event.accept()
 
     # Backend Signal Handlers
     @Slot(str)
@@ -2504,247 +2265,11 @@ class MainWindow(QMainWindow):
     def _handle_conversation_history(self, messages):
         """Populate chat console with prior conversation (unused unless backend supplies)."""
         try:
-            # Persist messages in the store
-            if self.conversation_store:
-                self.conversation_store.set_messages(messages)
-            # Hydrate chat view directly without re-adding to store
-            if hasattr(self, 'chat_view') and self.chat_view:
-                from .components.chat_view import ChatMessage
-                self.chat_view.set_messages([
-                    ChatMessage(role=m.get('role', 'assistant'), content=m.get('content', ''),
-                                timestamp=m.get('timestamp'), rich=bool(m.get('rich', False)))
-                    for m in messages if m.get('content')
-                ])
+            for m in messages:
+                role = m.get("role", "assistant")
+                content = m.get("content", "")
+                self._add_message(role, content)
         except Exception as e:
             main_logger.error(f"Error applying conversation history: {e}")
-
-    def _export_transcript_markdown(self):
-        try:
-            from PySide6.QtWidgets import QFileDialog, QDialog, QVBoxLayout, QCheckBox, QDialogButtonBox, QLabel
-            if not self.conversation_store or not self.conversation_store.session:
-                return
-            # Export options dialog
-            dlg = QDialog(self)
-            dlg.setWindowTitle("Export Options")
-            v = QVBoxLayout(dlg)
-            v.addWidget(QLabel("Select roles to include:"))
-            cb_user = QCheckBox("User"); cb_user.setChecked(True)
-            cb_assistant = QCheckBox("Assistant"); cb_assistant.setChecked(True)
-            cb_system = QCheckBox("System"); cb_system.setChecked(True)
-            v.addWidget(cb_user); v.addWidget(cb_assistant); v.addWidget(cb_system)
-            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-            v.addWidget(btns)
-            btns.accepted.connect(dlg.accept)
-            btns.rejected.connect(dlg.reject)
-            if not dlg.exec() or not cb_user.isChecked() and not cb_assistant.isChecked() and not cb_system.isChecked():
-                return
-            allowed = set()
-            if cb_user.isChecked(): allowed.add('user')
-            if cb_assistant.isChecked(): allowed.add('assistant')
-            if cb_system.isChecked(): allowed.add('system')
-            default = f"transcript_{self.conversation_store.session.session_id}.md"
-            path, _ = QFileDialog.getSaveFileName(self, "Save Transcript", default, "Markdown Files (*.md)")
-            if not path:
-                return
-            import re
-            def html_to_md(text: str) -> str:
-                t = text
-                # Lists (convert simple <li>)
-                t = re.sub(r'<ul>\s*', '', t)
-                t = re.sub(r'</ul>', '', t)
-                t = re.sub(r'<li>\s*(.*?)\s*</li>', r'* \1\n', t)
-                # Links <a href="url">text</a>
-                t = re.sub(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', r'[\2](\1)', t)
-                # Code blocks
-                t = re.sub(r'<pre>(.*?)</pre>', lambda m: '\n```\n' + m.group(1).strip() + '\n```\n', t, flags=re.DOTALL)
-                # Inline code
-                t = re.sub(r'<code>(.*?)</code>', r'`\1`', t)
-                # Bold / italic
-                t = re.sub(r'<b>(.*?)</b>', r'**\1**', t)
-                t = re.sub(r'<strong>(.*?)</strong>', r'**\1**', t)
-                t = re.sub(r'<i>(.*?)</i>', r'*\1*', t)
-                t = re.sub(r'<em>(.*?)</em>', r'*\1*', t)
-                # Paragraphs / breaks
-                t = t.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
-                t = re.sub(r'</p>', '\n\n', t)
-                t = re.sub(r'<p[^>]*>', '', t)
-                # Strip residual tags
-                t = re.sub(r'<[^>]+>', '', t)
-                # Unescape HTML
-                t = (t.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&').replace('&quot;', '"').replace('&#39;', "'"))
-                # Collapse extra newlines
-                t = re.sub(r'\n{3,}', '\n\n', t).strip()
-                return t
-            lines = [f"# Session Transcript {self.conversation_store.session.session_id}", "", f"Started: {self.conversation_store.session.created}", ""]
-            for msg in self.conversation_store.get_messages():
-                if msg.role not in allowed:
-                    continue
-                role_title = msg.role.title()
-                content = msg.content if not msg.rich else html_to_md(msg.content)
-                lines.append(f"## [{msg.timestamp}] {role_title}")
-                lines.append("")
-                lines.append(content)
-                lines.append("")
-            from pathlib import Path as _P
-            _P(path).write_text("\n".join(lines), encoding='utf-8')
-            self.status_bar.showMessage(f"Transcript exported to {path}", 4000)
-        except Exception as e:
-            main_logger.error(f"Transcript export failed: {e}")
-            self.status_bar.showMessage(f"Transcript export failed: {e}", 8000)
-
-    def _show_session_switcher(self):
-        if not self.conversation_store:
-            return
-        try:
-            sessions_root = self.conversation_store.sessions_dir
-            if not sessions_root.exists():
-                return
-            dlg = QDialog(self)
-            dlg.setWindowTitle("Session Manager")
-            dlg.resize(400, 300)
-            v = QVBoxLayout(dlg)
-            
-            # Session list
-            listw = QListWidget()
-            items = []
-            for p in sorted(sessions_root.iterdir(), reverse=True):
-                if p.is_dir() and (p / 'chat.json').exists():
-                    items.append(p)
-            for path in items:
-                display_name = path.name
-                if self.conversation_store.session and path.name == self.conversation_store.session.session_id:
-                    display_name += " (Active)"
-                item = QListWidgetItem(display_name)
-                item.setData(Qt.UserRole, path.name)  # Store actual session ID
-                listw.addItem(item)
-            v.addWidget(QLabel("Sessions:"))
-            v.addWidget(listw)
-            
-            # Action buttons
-            btn_layout = QHBoxLayout()
-            switch_btn = QPushButton("Switch To")
-            rename_btn = QPushButton("Rename")
-            delete_btn = QPushButton("Delete")
-            btn_layout.addWidget(switch_btn)
-            btn_layout.addWidget(rename_btn)
-            btn_layout.addWidget(delete_btn)
-            v.addLayout(btn_layout)
-            
-            # Dialog buttons
-            dialog_btns = QDialogButtonBox(QDialogButtonBox.Cancel)
-            v.addWidget(dialog_btns)
-            dialog_btns.rejected.connect(dlg.reject)
-            
-            def switch_session():
-                if not listw.currentItem():
-                    return
-                chosen = listw.currentItem().data(Qt.UserRole)
-                self._switch_to_session(chosen)
-                dlg.accept()
-                
-            def rename_session():
-                if not listw.currentItem():
-                    return
-                old_id = listw.currentItem().data(Qt.UserRole)
-                new_name, ok = QInputDialog.getText(dlg, "Rename Session", "New session name:", text=old_id)
-                if not ok or not new_name.strip():
-                    return
-                if self._rename_session(old_id, new_name.strip()):
-                    # Refresh list
-                    listw.clear()
-                    for p in sorted(sessions_root.iterdir(), reverse=True):
-                        if p.is_dir() and (p / 'chat.json').exists():
-                            display_name = p.name
-                            if self.conversation_store.session and p.name == self.conversation_store.session.session_id:
-                                display_name += " (Active)"
-                            item = QListWidgetItem(display_name)
-                            item.setData(Qt.UserRole, p.name)
-                            listw.addItem(item)
-                            
-            def delete_session():
-                if not listw.currentItem():
-                    return
-                session_id = listw.currentItem().data(Qt.UserRole)
-                if session_id == getattr(self.conversation_store.session, 'session_id', None):
-                    QMessageBox.warning(dlg, "Cannot Delete", "Cannot delete the active session.")
-                    return
-                reply = QMessageBox.question(dlg, "Delete Session", 
-                    f"Are you sure you want to delete session '{session_id}'?")
-                if reply == QMessageBox.Yes:
-                    if self._delete_session(session_id):
-                        listw.takeItem(listw.currentRow())
-            
-            switch_btn.clicked.connect(switch_session)
-            rename_btn.clicked.connect(rename_session)
-            delete_btn.clicked.connect(delete_session)
-            
-            dlg.exec()
-        except Exception as e:
-            main_logger.error(f"Failed showing session switcher: {e}")
-            
-    def _switch_to_session(self, session_id: str):
-        try:
-            sessions_root = self.conversation_store.sessions_dir
-            target = sessions_root / session_id / 'chat.json'
-            import json
-            data = json.loads(target.read_text(encoding='utf-8'))
-            messages = data.get('messages', [])
-            # Replace store session reference
-            from ..core.conversation_store import StoredMessage
-            self.conversation_store.session.session_id = data.get('session_id', session_id)
-            self.conversation_store.session.created = data.get('created', '')
-            self.conversation_store.session.messages = [StoredMessage(**m) for m in messages]
-            # Hydrate chat view
-            from .components.chat_view import ChatMessage
-            self.chat_view.set_messages([
-                ChatMessage(role=m['role'], content=m['content'], timestamp=m.get('timestamp'), rich=m.get('rich', False))
-                for m in messages
-            ])
-            # Update pointer file
-            self.conversation_store._write_pointer()
-            self._update_window_title()
-            self.status_bar.showMessage(f"Switched to session {session_id}", 4000)
-        except Exception as e:
-            main_logger.error(f"Failed switching to session {session_id}: {e}")
-            
-    def _rename_session(self, old_id: str, new_id: str) -> bool:
-        try:
-            sessions_root = self.conversation_store.sessions_dir
-            old_path = sessions_root / old_id
-            new_path = sessions_root / new_id
-            if new_path.exists():
-                QMessageBox.warning(self, "Rename Failed", f"Session '{new_id}' already exists.")
-                return False
-            old_path.rename(new_path)
-            # Update chat.json session_id field
-            chat_file = new_path / 'chat.json'
-            import json
-            data = json.loads(chat_file.read_text(encoding='utf-8'))
-            data['session_id'] = new_id
-            chat_file.write_text(json.dumps(data, indent=2), encoding='utf-8')
-            # Update active session if it's the one being renamed
-            if self.conversation_store.session and self.conversation_store.session.session_id == old_id:
-                self.conversation_store.session.session_id = new_id
-                self.conversation_store._write_pointer()
-                self._update_window_title()
-            self.status_bar.showMessage(f"Session renamed to {new_id}", 3000)
-            return True
-        except Exception as e:
-            main_logger.error(f"Failed renaming session {old_id} to {new_id}: {e}")
-            QMessageBox.critical(self, "Rename Failed", f"Failed to rename session: {e}")
-            return False
-            
-    def _delete_session(self, session_id: str) -> bool:
-        try:
-            sessions_root = self.conversation_store.sessions_dir
-            session_path = sessions_root / session_id
-            import shutil
-            shutil.rmtree(session_path)
-            self.status_bar.showMessage(f"Session {session_id} deleted", 3000)
-            return True
-        except Exception as e:
-            main_logger.error(f"Failed deleting session {session_id}: {e}")
-            QMessageBox.critical(self, "Delete Failed", f"Failed to delete session: {e}")
-            return False
 
 
