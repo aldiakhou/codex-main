@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QTextEdit, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QWidget, QDockWidget, QSplitter, QTreeWidget, QTreeWidgetItem, QStyle,
     QStatusBar, QMenuBar, QMenu, QToolBar, QFileDialog, QMessageBox,
-    QLabel, QProgressBar, QTextBrowser
+    QLabel, QProgressBar, QTextBrowser, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox
 )
 from PySide6.QtGui import QAction, QIcon, QFont
 from .design_system import apply_theme as legacy_apply_theme
@@ -39,6 +39,7 @@ from .components.chat_view import ChatView
 from .layout.pane_manager import PaneManager
 from .settings_dialog import SettingsDialog
 from .services.event_bus import GLOBAL_EVENT_BUS
+from ..core.conversation_store import ConversationStore, StoredMessage
 import patch
 
 # Set up logging for main window
@@ -113,6 +114,7 @@ class MainWindow(QMainWindow):
         self._setup_status_bar()
         self._setup_backend()
         self._load_initial_state()
+        self._init_conversation_store()
 
     def _setup_backend(self):
         """Initialize the backend service with improved error handling"""
@@ -583,6 +585,44 @@ class MainWindow(QMainWindow):
         except Exception as e:
             main_logger.error(f"Failed to create exec log dock: {e}")
 
+    def _init_conversation_store(self):
+        try:
+            base = self.config_manager.config_dir
+            self.conversation_store = ConversationStore(base)
+            loaded = self.conversation_store.load_last_session()
+            if loaded and hasattr(self, 'chat_view'):
+                from .components.chat_view import ChatMessage
+                self.chat_view.set_messages([
+                    ChatMessage(role=m.role, content=m.content, timestamp=m.timestamp, rich=m.rich)
+                    for m in loaded.messages
+                ])
+            else:
+                # New session: add marker after session start
+                self.conversation_store.start_new_session()
+                self._add_message('system', f"Session started: {self.conversation_store.session.session_id}")
+        except Exception as e:
+            main_logger.warning(f"Conversation store init failed: {e}")
+
+        # Setup debounce timer
+        self._conversation_flush_timer = QTimer(self)
+        self._conversation_flush_timer.setInterval(1500)
+        self._conversation_flush_timer.setSingleShot(True)
+        self._conversation_flush_timer.timeout.connect(self._flush_conversation_store)
+
+    def _schedule_conversation_flush(self):
+        try:
+            if self._conversation_flush_timer:
+                self._conversation_flush_timer.start()
+        except Exception:
+            pass
+
+    def _flush_conversation_store(self):
+        try:
+            if self.conversation_store:
+                self.conversation_store.flush()
+        except Exception:
+            pass
+
     def _setup_menus(self):
         """Setup menu bar (File, View, Tools)."""
         menubar = self.menuBar()
@@ -596,6 +636,11 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         act = QAction("&Settings...", self); act.triggered.connect(self._show_settings); file_menu.addAction(act)
         file_menu.addSeparator()
+        export_md = QAction("Export Transcript (Markdown)...", self)
+        export_md.triggered.connect(self._export_transcript_markdown)
+        file_menu.addAction(export_md)
+        file_menu.addSeparator()
+        switch_sessions = QAction("Switch Session...", self); switch_sessions.triggered.connect(self._show_session_switcher); file_menu.addAction(switch_sessions)
         act = QAction("E&xit", self); act.triggered.connect(self.close); file_menu.addAction(act)
 
         # View menu
@@ -1199,6 +1244,12 @@ class MainWindow(QMainWindow):
                 self.chat_console.add_message(norm_role, content, rich=rich)  # type: ignore[attr-defined]
             except Exception:
                 pass
+        try:
+            if self.conversation_store:
+                self.conversation_store.add_message(role, content, rich=rich)
+                self._schedule_conversation_flush()
+        except Exception:
+            pass
 
     def _emit_chat(self, role: str, content: str, rich: bool = False):
         """Publish a chat/system message to the event bus (preferred path)."""
@@ -1346,6 +1397,14 @@ class MainWindow(QMainWindow):
         elif event_type == "agent_message_delta":
             delta = event_obj.get("delta", "")
             self.current_message += delta
+            try:
+                if hasattr(self, 'chat_view'):
+                    self.chat_view.append_assistant_delta(delta)
+                if self.conversation_store:
+                    self.conversation_store.update_last_assistant_partial(delta)
+                self._schedule_conversation_flush()
+            except Exception:
+                pass
             try:
                 GLOBAL_EVENT_BUS.publish('chat.streaming_delta', {'delta': delta})
             except Exception:
@@ -1635,6 +1694,7 @@ class MainWindow(QMainWindow):
                     self.current_reasoning += text + "\n"
                     if hasattr(self, 'reasoning_view') and self.reasoning_view.isVisible():
                         safe_full = self.current_reasoning.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                       
                         self.reasoning_view.setHtml(f"<b>Reasoning</b><br><pre style='white-space:pre-wrap;margin:0;'>{safe_full}</pre>")
         except Exception as e:
             main_logger.error(f"Error in raw reasoning handler: {e}")
@@ -1805,7 +1865,12 @@ class MainWindow(QMainWindow):
             self.backend_thread.quit()
             self.backend_thread.wait()
 
-        event.accept()
+        try:
+            if self.conversation_store:
+                self.conversation_store.flush()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     # Backend Signal Handlers
     @Slot(str)
@@ -2373,11 +2438,139 @@ class MainWindow(QMainWindow):
     def _handle_conversation_history(self, messages):
         """Populate chat console with prior conversation (unused unless backend supplies)."""
         try:
+            if self.conversation_store:
+                self.conversation_store.set_messages(messages)
+        except Exception:
+            pass
+        try:
             for m in messages:
                 role = m.get("role", "assistant")
                 content = m.get("content", "")
                 self._add_message(role, content)
         except Exception as e:
             main_logger.error(f"Error applying conversation history: {e}")
+
+    def _export_transcript_markdown(self):
+        try:
+            from PySide6.QtWidgets import QFileDialog, QDialog, QVBoxLayout, QCheckBox, QDialogButtonBox, QLabel
+            if not self.conversation_store or not self.conversation_store.session:
+                return
+            # Export options dialog
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Export Options")
+            v = QVBoxLayout(dlg)
+            v.addWidget(QLabel("Select roles to include:"))
+            cb_user = QCheckBox("User"); cb_user.setChecked(True)
+            cb_assistant = QCheckBox("Assistant"); cb_assistant.setChecked(True)
+            cb_system = QCheckBox("System"); cb_system.setChecked(True)
+            v.addWidget(cb_user); v.addWidget(cb_assistant); v.addWidget(cb_system)
+            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            v.addWidget(btns)
+            btns.accepted.connect(dlg.accept)
+            btns.rejected.connect(dlg.reject)
+            if not dlg.exec() or not cb_user.isChecked() and not cb_assistant.isChecked() and not cb_system.isChecked():
+                return
+            allowed = set()
+            if cb_user.isChecked(): allowed.add('user')
+            if cb_assistant.isChecked(): allowed.add('assistant')
+            if cb_system.isChecked(): allowed.add('system')
+            default = f"transcript_{self.conversation_store.session.session_id}.md"
+            path, _ = QFileDialog.getSaveFileName(self, "Save Transcript", default, "Markdown Files (*.md)")
+            if not path:
+                return
+            import re
+            def html_to_md(text: str) -> str:
+                t = text
+                # Lists (convert simple <li>)
+                t = re.sub(r'<ul>\s*', '', t)
+                t = re.sub(r'</ul>', '', t)
+                t = re.sub(r'<li>\s*(.*?)\s*</li>', r'* \1\n', t)
+                # Links <a href="url">text</a>
+                t = re.sub(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', r'[\2](\1)', t)
+                # Code blocks
+                t = re.sub(r'<pre>(.*?)</pre>', lambda m: '\n```\n' + m.group(1).strip() + '\n```\n', t, flags=re.DOTALL)
+                # Inline code
+                t = re.sub(r'<code>(.*?)</code>', r'`\1`', t)
+                # Bold / italic
+                t = re.sub(r'<b>(.*?)</b>', r'**\1**', t)
+                t = re.sub(r'<strong>(.*?)</strong>', r'**\1**', t)
+                t = re.sub(r'<i>(.*?)</i>', r'*\1*', t)
+                t = re.sub(r'<em>(.*?)</em>', r'*\1*', t)
+                # Paragraphs / breaks
+                t = t.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
+                t = re.sub(r'</p>', '\n\n', t)
+                t = re.sub(r'<p[^>]*>', '', t)
+                # Strip residual tags
+                t = re.sub(r'<[^>]+>', '', t)
+                # Unescape HTML
+                t = (t.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&').replace('&quot;', '"').replace('&#39;', "'"))
+                # Collapse extra newlines
+                t = re.sub(r'\n{3,}', '\n\n', t).strip()
+                return t
+            lines = [f"# Session Transcript {self.conversation_store.session.session_id}", "", f"Started: {self.conversation_store.session.created}", ""]
+            for msg in self.conversation_store.get_messages():
+                if msg.role not in allowed:
+                    continue
+                role_title = msg.role.title()
+                content = msg.content if not msg.rich else html_to_md(msg.content)
+                lines.append(f"## [{msg.timestamp}] {role_title}")
+                lines.append("")
+                lines.append(content)
+                lines.append("")
+            from pathlib import Path as _P
+            _P(path).write_text("\n".join(lines), encoding='utf-8')
+            self.status_bar.showMessage(f"Transcript exported to {path}", 4000)
+        except Exception as e:
+            main_logger.error(f"Transcript export failed: {e}")
+            self.status_bar.showMessage(f"Transcript export failed: {e}", 8000)
+
+    def _show_session_switcher(self):
+        if not self.conversation_store:
+            return
+        try:
+            sessions_root = self.conversation_store.sessions_dir
+            if not sessions_root.exists():
+                return
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Switch Session")
+            v = QVBoxLayout(dlg)
+            listw = QListWidget()
+            # Gather sessions (directories with chat.json)
+            items = []
+            for p in sorted(sessions_root.iterdir(), reverse=True):
+                if p.is_dir() and (p / 'chat.json').exists():
+                    items.append(p)
+            for path in items:
+                item = QListWidgetItem(path.name)
+                listw.addItem(item)
+            v.addWidget(listw)
+            btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            v.addWidget(btns)
+            btns.accepted.connect(dlg.accept)
+            btns.rejected.connect(dlg.reject)
+            if not dlg.exec() or not listw.currentItem():
+                return
+            chosen = listw.currentItem().text()
+            # Load chosen session
+            target = sessions_root / chosen / 'chat.json'
+            import json
+            data = json.loads(target.read_text(encoding='utf-8'))
+            messages = data.get('messages', [])
+            # Replace store session reference
+            self.conversation_store.session.session_id = data.get('session_id', chosen)
+            self.conversation_store.session.created = data.get('created', '')
+            self.conversation_store.session.messages = [StoredMessage(**m) for m in messages]
+            # Hydrate chat view
+            from .components.chat_view import ChatMessage
+            self.chat_view.set_messages([
+                ChatMessage(role=m['role'], content=m['content'], timestamp=m.get('timestamp'), rich=m.get('rich', False))
+                for m in messages
+            ])
+            # Update pointer file
+            self.conversation_store._write_pointer()
+            self.status_bar.showMessage(f"Switched to session {chosen}", 4000)
+        except Exception as e:
+            main_logger.error(f"Failed switching session: {e}")
+            self._add_message("system", f"Failed switching session: {e}")
 
 

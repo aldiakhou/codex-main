@@ -6,7 +6,7 @@ from typing import List, Literal, Optional
 from dataclasses import dataclass
 from datetime import datetime
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QTextBrowser, QPushButton, 
-                               QHBoxLayout, QLabel, QFrame, QApplication)
+                               QHBoxLayout, QLabel, QFrame, QApplication, QCheckBox)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QTextCursor, QPalette
 from ..theme_manager import get_current_theme
@@ -56,6 +56,14 @@ class ChatView(QWidget):
         # Control buttons
         control_layout = QHBoxLayout()
         control_layout.setContentsMargins(5, 5, 5, 5)
+        # Role filter checkboxes
+        self._user_filter = QCheckBox("User")
+        self._assistant_filter = QCheckBox("Assistant")
+        self._system_filter = QCheckBox("System")
+        for cb in (self._user_filter, self._assistant_filter, self._system_filter):
+            cb.setChecked(True)
+            cb.stateChanged.connect(self._apply_filters)
+            control_layout.addWidget(cb)
         
         # Clear chat button
         self.clear_button = QPushButton("Clear Chat")
@@ -323,5 +331,64 @@ class ChatView(QWidget):
     def get_messages(self) -> List[ChatMessage]:
         """Get all messages"""
         return self._messages.copy()
+
+    def set_messages(self, messages: List[ChatMessage]):
+        """Replace all messages (hydration)."""
+        self._messages = messages
+        self._rebuild_all()
+        self._update_count()
+
+    def _apply_filters(self):
+        roles = set()
+        if self._user_filter.isChecked():
+            roles.add('user')
+        if self._assistant_filter.isChecked():
+            roles.add('assistant')
+        if self._system_filter.isChecked():
+            roles.add('system')
+        self._rebuild_all(roles)
+
+    def _rebuild_all(self, allowed_roles: Optional[set] = None):
+        try:
+            colors = self._get_theme_colors()
+            html_parts = ['<!DOCTYPE html>','<html><head><meta charset="utf-8">','<style>',
+                          'body { margin:0; padding:8px; font-family: "Segoe UI", Arial, sans-serif; }',
+                          f'.chat-msg {{ margin:8px 6px 12px 6px; padding:8px; border-radius:6px; font-size:12px; line-height:1.4; }}',
+                          f'.user-msg {{ background:{colors["user_bg"]}; border-left:3px solid {colors["user_border"]}; }}',
+                          f'.assistant-msg {{ background:{colors["assistant_bg"]}; border-left:3px solid {colors["assistant_border"]}; }}',
+                          f'.system-msg {{ background:{colors["system_bg"]}; border-left:3px solid {colors["system_border"]}; }}',
+                          f'.role-label {{ font-weight:bold; margin-bottom:4px; }}',
+                          f'.timestamp {{ color:{colors["timestamp_color"]}; font-size:10px; float:right; }}',
+                          f'.content {{ clear:both; color:{colors["text_color"]}; }}',
+                          f'code {{ background:{colors["code_bg"]}; color:{colors["code_color"]}; padding:2px 4px; border-radius:3px; font-family:"Consolas", monospace; }}',
+                          f'pre {{ background:{colors["pre_bg"]}; color:{colors["pre_color"]}; padding:8px; border-radius:4px; overflow-x:auto; font-family:"Consolas", monospace; margin:8px 0; }}',
+                          '</style></head><body>']
+            count_added = 0
+            for msg in self._messages:
+                if allowed_roles and msg.role not in allowed_roles:
+                    continue
+                html_parts.append(self._build_message_html(msg, colors))
+                count_added += 1
+            if count_added == 0:
+                html_parts.append('<div style="color:#777; font-size:12px;">(No messages with current filter)</div>')
+            html_parts.append('</body></html>')
+            self._browser.setHtml('\n'.join(html_parts))
+            sb = self._browser.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except Exception as e:
+            main_logger.error(f"Failed to rebuild chat: {e}")
+
+    def append_assistant_delta(self, delta: str):
+        """Append streaming delta to the last assistant message, creating one if absent."""
+        if not delta:
+            return
+        # Find last assistant message
+        for msg in reversed(self._messages):
+            if msg.role == 'assistant':
+                msg.content += delta
+                self._rebuild_all()  # re-render with updated content
+                return
+        # No assistant message yet, start a new one
+        self.add_ai_message(delta)
 
 __all__ = ["ChatView", "ChatMessage"]
