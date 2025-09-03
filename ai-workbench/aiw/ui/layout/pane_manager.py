@@ -118,6 +118,10 @@ class TabStack(QWidget):
         self.tab_widget.setMovable(True)
         self._tab_bar = DraggableTabBar(lambda: self)
         self.tab_widget.setTabBar(self._tab_bar)
+        try:
+            self._tab_bar.setTabsClosable(True)
+        except Exception:
+            pass
         self.tab_widget.tabCloseRequested.connect(self._on_close_index)
         self.tab_widget.currentChanged.connect(self._on_current_changed)
         self.layout.addWidget(self.tab_widget)
@@ -206,6 +210,11 @@ class PaneManager(QWidget):
         # Ensure each stack expands to occupy available space
         stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         stack.tab_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Ensure close buttons visible
+        try:
+            stack.tab_widget.setTabsClosable(True)
+        except Exception:
+            pass
         self._stacks.append(stack)
         return stack
 

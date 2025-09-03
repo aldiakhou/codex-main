@@ -278,6 +278,12 @@ class MainWindow(QMainWindow):
         # Always create repository dock
         self._create_repository_dock()
 
+        # Restore last opened repository (session persistence)
+        try:
+            self._restore_last_repository()
+        except Exception as e:
+            main_logger.warning(f"Could not restore last repository: {e}")
+
         # Chat: tab or dock
         if self.chat_as_tab:
             self._tab_factories['chat'] = lambda: self._create_chat_tab_widget()
@@ -1075,17 +1081,12 @@ class MainWindow(QMainWindow):
             # Emit signal
             self.repository_opened.emit(str(repo_path))
 
-            # Persist to config (recent repositories list)
+            # Persist to config (recent repositories list + last opened time)
             try:
-                cfg = self.config_manager.config
-                # Deduplicate existing entries
-                existing = [r for r in cfg.repositories if r.path != str(repo_path)]
-                existing.insert(0, self.current_repository)  # most recent first
-                # Keep only a handful
-                cfg.repositories = existing[:10]
-                self.config_manager.save_config()
-            except Exception:
-                pass
+                self.config_manager.add_repository(self.current_repository)
+                self.config_manager.update_repository_last_opened(str(repo_path))
+            except Exception as e:
+                main_logger.warning(f"Failed to persist repository: {e}")
 
             # Inform backend of new working directory
             if self.backend:
@@ -1100,6 +1101,42 @@ class MainWindow(QMainWindow):
         except Exception as e:
             main_logger.error(f"_open_repository error: {e}", exc_info=True)
             QMessageBox.critical(self, "Open Repository Failed", f"Could not open repository: {e}")
+
+    def _restore_last_repository(self):
+        """Restore the most recently opened repository into the FileTree and status."""
+        try:
+            recents = self.config_manager.get_recent_repositories(limit=1)
+            if not recents:
+                return
+            repo = recents[0]
+            if not repo.path:
+                return
+            repo_path = Path(repo.path)
+            if not repo_path.exists() or not repo_path.is_dir():
+                return
+            # Set current repository and update UI + FileTree
+            self.current_repository = Repository(path=str(repo_path), name=repo_path.name, last_opened=repo.last_opened)
+            if hasattr(self, 'repo_info_label') and self.repo_info_label:
+                self.repo_info_label.setText(f"Repository: {repo_path.name}")
+            if hasattr(self, 'repo_status_label') and self.repo_status_label:
+                self.repo_status_label.setText(repo_path.name)
+            if hasattr(self, 'cwd_status_label') and self.cwd_status_label:
+                self.cwd_status_label.setText(f"Dir: {repo_path.name}")
+            if hasattr(self, 'file_tree') and self.file_tree:
+                self.file_tree.set_root(str(repo_path))
+            # Emit and inform backend context
+            try:
+                self.repository_opened.emit(str(repo_path))
+            except Exception:
+                pass
+            try:
+                if self.backend:
+                    op = Operation.create_override_turn_context(str(repo_path))
+                    self.backend.send_op(op.model_dump())
+            except Exception:
+                pass
+        except Exception as e:
+            main_logger.warning(f"_restore_last_repository failed: {e}")
 
     def _apply_standard_icons_to_repo_tree(self, item: QTreeWidgetItem):
         """Ensure file tree items use platform icons and clean any mojibake text."""

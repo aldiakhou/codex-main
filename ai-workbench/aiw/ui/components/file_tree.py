@@ -12,7 +12,7 @@ from typing import Optional, List
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QMenu,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QAbstractItemView
 )
 
 from ..services.file_ops import FileOpsService
@@ -44,7 +44,11 @@ class FileTree(QWidget):
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        # Prevent double-click from editing; keep F2 for rename
+        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.EditKeyPressed)
+        # Open on double-click/activate
         self.tree.itemActivated.connect(self._on_item_activated)
+        self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
         self.tree.itemChanged.connect(self._on_item_changed)
@@ -107,6 +111,10 @@ class FileTree(QWidget):
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if path and Path(path).is_file():
             self.file_open_requested.emit(path)
+
+    def _on_item_double_clicked(self, item: QTreeWidgetItem, _col: int):
+        # Explicitly open files on double-click
+        self._on_item_activated(item, _col)
 
     def _on_item_changed(self, item: QTreeWidgetItem, _col: int):
         # Inline rename handling
@@ -187,4 +195,3 @@ class FileTree(QWidget):
 
 
 __all__ = ["FileTree"]
-
