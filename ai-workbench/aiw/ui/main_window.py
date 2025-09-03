@@ -474,7 +474,12 @@ class MainWindow(QMainWindow):
         """Factory returning chat view widget for tab mode."""
         try:
             if hasattr(self, '_actual_chat_view') and self._actual_chat_view is not None:
-                return self._actual_chat_view._wrapper
+                # Ensure the stored ChatView and its wrapper are still valid; otherwise rebuild
+                wrapper = getattr(self._actual_chat_view, '_wrapper', None)
+                if _is_qobj_valid(self._actual_chat_view) and _is_qobj_valid(wrapper):
+                    return wrapper
+                else:
+                    self._actual_chat_view = None
         except Exception:
             pass
         cv = ChatView()
@@ -744,6 +749,12 @@ class MainWindow(QMainWindow):
                 # Close tab if exists
                 if 'chat' in self.pane_manager.list_tabs():
                     self.pane_manager.close_tab('chat')
+                # Clear any cached ChatView from tab mode to avoid using a deleted QObject
+                try:
+                    if hasattr(self, '_actual_chat_view'):
+                        self._actual_chat_view = None
+                except Exception:
+                    pass
                 self._create_console_dock()
             else:
                 # Switch to tab mode
@@ -1280,24 +1291,24 @@ class MainWindow(QMainWindow):
         # Try the stored actual ChatView first
         if hasattr(self, '_actual_chat_view') and self._actual_chat_view is not None:
             try:
-                self._actual_chat_view.add_message(norm_role, content, rich=rich)
-                return
+                if _is_qobj_valid(self._actual_chat_view):
+                    self._actual_chat_view.add_message(norm_role, content, rich=rich)
+                    return
+                else:
+                    self._actual_chat_view = None
             except Exception as e:
                 main_logger.warning(f"Failed to add message to _actual_chat_view: {e}")
         
         try:
-            self.chat_view.add_message(norm_role, content, rich=rich)
+            if _is_qobj_valid(getattr(self, 'chat_view', None)):
+                self.chat_view.add_message(norm_role, content, rich=rich)
+            elif _is_qobj_valid(getattr(self, 'chat_console', None)):
+                self.chat_console.add_message(norm_role, content, rich=rich)  # type: ignore[attr-defined]
         except Exception:
             try:
                 self.chat_console.add_message(norm_role, content, rich=rich)  # type: ignore[attr-defined]
             except Exception:
                 pass
-        try:
-            if self.conversation_store:
-                self.conversation_store.add_message(role, content, rich=rich)
-                self._schedule_conversation_flush()
-        except Exception:
-            pass
 
     def _emit_chat(self, role: str, content: str, rich: bool = False):
         """Publish a chat/system message to the event bus (preferred path)."""
