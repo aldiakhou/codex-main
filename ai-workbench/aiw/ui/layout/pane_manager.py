@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt, Signal, QPoint, QMimeData
 from PySide6.QtGui import QFont, QDrag
 
 from ..code_editor import CodeEditorWidget
+from ..components.search_panel import SearchPanel
 try:
     from shiboken6 import isValid as _is_qobject_valid
 except Exception:  # pragma: no cover
@@ -154,6 +155,7 @@ class PaneManager(QWidget):
         self._stacks: list[TabStack] = []
         self._active_stack: Optional[TabStack] = None
         self._root_container: QWidget
+        self._status_area: QWidget | None = None
 
         self._setup_ui()
         if create_default:
@@ -197,6 +199,7 @@ class PaneManager(QWidget):
         status_layout.addWidget(self.language_label)
 
         layout.addWidget(status_frame)
+        self._status_area = status_frame
 
     def _create_stack(self) -> TabStack:
         stack = TabStack(self)
@@ -232,6 +235,15 @@ class PaneManager(QWidget):
         index = self._active_stack.tab_widget.addTab(widget, title)
         self._active_stack.tab_widget.setCurrentIndex(index)
         return widget
+
+    # Convenience to open search panel
+    def ensure_search(self, root: str) -> QWidget:
+        def _factory():
+            sp = SearchPanel(root)
+            if hasattr(sp, 'open_requested'):
+                sp.open_requested.connect(lambda p, _ln: self.main_window._load_file_into_editor(p))
+            return sp
+        return self.ensure_tab('search', 'Search', _factory)
 
     def open_file_tab(self, file_path: str, content: str = "") -> Optional[QWidget]:
         try:
@@ -279,7 +291,7 @@ class PaneManager(QWidget):
     def save_current_tab(self, file_path: str = None) -> bool:
         try:
             current_widget = self._active_stack.tab_widget.currentWidget()
-            if not current_widget or not hasattr(current_widget, 'toPlainText'):
+            if not current_widget:
                 return False
 
             tab_id = self._get_tab_id_for_widget(current_widget)
@@ -287,6 +299,16 @@ class PaneManager(QWidget):
                 return False
 
             tab = self._tabs[tab_id]
+            # If widget has a save_file method (CodeEditorWidget), delegate
+            if hasattr(current_widget, 'save_file'):
+                ok = current_widget.save_file()
+                if ok:
+                    tab.is_modified = False
+                    filename = Path(tab.file_path or 'Untitled').name
+                    current_index = self._active_stack.tab_widget.currentIndex()
+                    self._active_stack.tab_widget.setTabText(current_index, filename)
+                return ok
+
             if not file_path:
                 file_path = tab.file_path
                 if not file_path:

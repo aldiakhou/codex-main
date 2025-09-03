@@ -261,6 +261,7 @@ class CodeEditor(QTextEdit):
         self.current_file_path = None
         self.original_content = ""
         self.has_unsaved_changes = False
+        self._modified_lines: set[int] = set()
         self.language = "python"
         self.theme = "dark"  # Default theme
         self.tokens = get_tokens(self.theme)
@@ -388,6 +389,7 @@ class CodeEditor(QTextEdit):
             self.current_file_path = file_path
             self.original_content = content
             self.has_unsaved_changes = False
+            self._modified_lines.clear()
 
             # Detect and set language
             self.language = self.detect_language_from_file(file_path)
@@ -429,6 +431,7 @@ class CodeEditor(QTextEdit):
 
             self.original_content = content
             self.has_unsaved_changes = False
+            self._modified_lines.clear()
             self.file_changed.emit(False)
             self.file_saved.emit(self.current_file_path)
             return True
@@ -450,6 +453,7 @@ class CodeEditor(QTextEdit):
             self.current_file_path = file_path
             self.original_content = content
             self.has_unsaved_changes = False
+            self._modified_lines.clear()
 
             # Detect and set language
             self.language = self.detect_language_from_file(file_path)
@@ -489,6 +493,23 @@ class CodeEditor(QTextEdit):
         if has_changes != self.has_unsaved_changes:
             self.has_unsaved_changes = has_changes
             self.file_changed.emit(has_changes)
+
+        # Update modified line gutter markers using a diff
+        try:
+            import difflib
+            old_lines = self.original_content.splitlines()
+            new_lines = current_content.splitlines()
+            sm = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+            modified: set[int] = set()
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag != 'equal':
+                    for ln in range(j1 + 1, j2 + 1):
+                        modified.add(ln)
+            self._modified_lines = modified
+        except Exception:
+            # Fallback: mark all lines if changed
+            self._modified_lines = set(range(1, self.document().blockCount() + 1)) if self.has_unsaved_changes else set()
+        self.update_line_number_area()
 
     def line_number_area_width(self):
         """Calculate width needed for line number area"""
@@ -544,6 +565,12 @@ class CodeEditor(QTextEdit):
                     block_height,
                     Qt.AlignmentFlag.AlignRight, number
                 )
+                # Draw unsaved change marker in gutter
+                try:
+                    if (block_number + 1) in getattr(self, '_modified_lines', set()):
+                        painter.fillRect(0, int(top), 4, block_height, QColor(224, 169, 65))
+                except Exception:
+                    pass
 
             block = block.next()
             top += block_height

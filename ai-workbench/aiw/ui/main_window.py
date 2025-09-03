@@ -36,6 +36,9 @@ from ..core.task_runner import get_workflow_runner
 from .code_editor import CodeEditorWidget
 from .diff_view import DiffViewWidget
 from .components.chat_view import ChatView
+from .components.file_tree import FileTree
+from .components.quick_switcher import QuickSwitcher
+from .components.search_panel import SearchPanel
 from .layout.pane_manager import PaneManager
 from .settings_dialog import SettingsDialog
 from .services.event_bus import GLOBAL_EVENT_BUS
@@ -393,11 +396,6 @@ class MainWindow(QMainWindow):
         self.repo_dock.setObjectName("Repository")
         self.repo_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
 
-        # Repository tree widget
-        self.repo_tree = QTreeWidget()
-        self.repo_tree.setHeaderLabel("Files")
-        self.repo_tree.itemClicked.connect(self._on_file_clicked) # Changed to single click
-
         # Repository actions
         repo_widget = QWidget()
         repo_layout = QVBoxLayout(repo_widget)
@@ -406,7 +404,16 @@ class MainWindow(QMainWindow):
         self.repo_info_label = QLabel("No repository opened")
         repo_layout.addWidget(self.repo_info_label)
 
-        repo_layout.addWidget(self.repo_tree)
+        # File tree component
+        default_root = str(Path.cwd())
+        try:
+            if getattr(self, 'current_repository', None) and self.current_repository:
+                default_root = self.current_repository.path
+        except Exception:
+            pass
+        self.file_tree = FileTree(root=default_root)
+        self.file_tree.file_open_requested.connect(lambda p: self._load_file_into_editor(p))
+        repo_layout.addWidget(self.file_tree)
         self.repo_dock.setWidget(repo_widget)
 
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.repo_dock)
@@ -661,6 +668,7 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("&File")
         act = QAction("&Open Repository...", self); act.triggered.connect(self._open_repository); file_menu.addAction(act)
+        act = QAction("Open &File...", self); act.triggered.connect(self._open_file_dialog); file_menu.addAction(act)
         file_menu.addSeparator()
         act = QAction("&Save", self); act.setShortcut("Ctrl+S"); act.triggered.connect(self._save_current_file); file_menu.addAction(act)
         act = QAction("Save &As...", self); act.triggered.connect(self._save_file_as); file_menu.addAction(act)
@@ -677,6 +685,8 @@ class MainWindow(QMainWindow):
         # View menu
         view_menu = menubar.addMenu("&View")
         repo_toggle = self.repo_dock.toggleViewAction(); repo_toggle.setText("Repository Explorer"); view_menu.addAction(repo_toggle)
+        # Search panel tab
+        open_search_tab = QAction("Show Search Panel", self); open_search_tab.triggered.connect(lambda: self.pane_manager.ensure_search(str(Path.cwd()))); view_menu.addAction(open_search_tab)
         if hasattr(self, 'console_dock') and self.console_dock is not None:
             chat_toggle = self.console_dock.toggleViewAction(); chat_toggle.setText("Assistant"); view_menu.addAction(chat_toggle)
         else:
@@ -741,6 +751,51 @@ class MainWindow(QMainWindow):
             palette_action.setShortcut(sc)
         palette_action.triggered.connect(self._open_command_palette)
         tools_menu.addAction(palette_action)
+        # Quick Switcher
+        quick_action = QAction("Quick Switch (Ctrl+P)", self)
+        quick_action.setShortcut("Ctrl+P")
+        quick_action.triggered.connect(self._open_quick_switcher)
+        tools_menu.addAction(quick_action)
+
+    def _open_quick_switcher(self):
+        try:
+            recent = []
+            try:
+                recent = [p for p in self.pane_manager.get_open_files()]
+            except Exception:
+                pass
+            qs = QuickSwitcher(str(Path.cwd()), recent=recent, parent=self)
+            qs.open_requested.connect(lambda p: self._load_file_into_editor(p))
+            qs.exec()
+        except Exception as e:
+            main_logger.error(f"Quick Switcher failed: {e}")
+
+    def _open_file_dialog(self):
+        """Open a file from disk and display it in an editor tab."""
+        try:
+            start_dir = None
+            try:
+                if self.current_repository and self.current_repository.path:
+                    start_dir = self.current_repository.path
+            except Exception:
+                pass
+            if not start_dir:
+                start_dir = str(Path.cwd())
+            file_path, _ = QFileDialog.getOpenFileName(self, "Open File", str(start_dir))
+            if file_path:
+                self._load_file_into_editor(file_path)
+        except Exception as e:
+            main_logger.error(f"File open failed: {e}")
+
+    def _load_repository_files(self, repo_path: str):
+        """Set FileTree root and update repository label."""
+        try:
+            if hasattr(self, 'file_tree') and self.file_tree:
+                self.file_tree.set_root(repo_path)
+            if hasattr(self, 'repo_info_label') and self.repo_info_label:
+                self.repo_info_label.setText(f"Repository: {Path(repo_path).name}")
+        except Exception as e:
+            self._add_message("system", f"Error loading repository files: {str(e)}")
 
     # --- Mode toggle handlers -----------------------------------------------
     def _toggle_chat_mode(self):
@@ -929,6 +984,17 @@ class MainWindow(QMainWindow):
 
     def _load_repository_files(self, repo_path: str):
         """Load repository files into tree view"""
+        # FileTree integration: if new FileTree is present, delegate and return
+        try:
+            if hasattr(self, 'file_tree') and self.file_tree:
+                self.file_tree.set_root(repo_path)
+                if hasattr(self, 'repo_info_label') and self.repo_info_label:
+                    self.repo_info_label.setText(f"Repository: {Path(repo_path).name}")
+                return
+        except Exception:
+            pass
+
+        # Fallback to legacy repo_tree (kept for backward compatibility)
         self.repo_tree.clear()
 
         try:
@@ -999,8 +1065,12 @@ class MainWindow(QMainWindow):
             self.repo_status_label.setText(repo_path.name)
             self.cwd_status_label.setText(f"Dir: {repo_path.name}")
 
-            # Populate tree
-            self._load_repository_files(str(repo_path))
+            # Populate tree (use FileTree component)
+            try:
+                if hasattr(self, 'file_tree') and self.file_tree:
+                    self.file_tree.set_root(str(repo_path))
+            except Exception as e2:
+                main_logger.warning(f"Could not update FileTree root: {e2}")
 
             # Emit signal
             self.repository_opened.emit(str(repo_path))
