@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel, QProgressBar, QTextBrowser, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox, QInputDialog
 )
 from PySide6.QtGui import QAction, QIcon, QFont, QPixmap, QPainter, QColor, QLinearGradient
+from .icons import make_icon
 from .design_system import apply_theme as legacy_apply_theme
 from .theme_manager import apply_theme as tokens_apply_theme
 try:
@@ -1051,11 +1052,16 @@ class MainWindow(QMainWindow):
             main_logger.error(f"Failed to reset layout: {e}")
 
     def _setup_toolbar(self):
-        """Setup toolbar with project, file, AI and control actions."""
+        """Setup toolbar with project, file, AI and control actions.
+
+        Uses custom theme-aware vector icons for a tailored look.
+        """
+        theme = getattr(self.config_manager.config.ui, 'theme', 'dark')
         toolbar = self.addToolBar("Main Toolbar")
         toolbar.setObjectName("MainToolbar")
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(18, 18))
+        self.toolbar_main = toolbar
 
         def add(action: QAction, handler):
             action.triggered.connect(handler)
@@ -1063,34 +1069,58 @@ class MainWindow(QMainWindow):
             return action
 
         # Repo
-        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open Repo", self), self._open_repository)
+        self.action_open_repo = QAction(make_icon('folder-open', theme), "Open Repo", self)
+        add(self.action_open_repo, self._open_repository)
         toolbar.addSeparator()
 
         # File
-        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self), self._save_current_file)
-        view_diff = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "View Changes", self)
-        view_diff.setToolTip("Show unsaved changes for current file")
-        add(view_diff, self._show_local_diff)
+        self.action_save = QAction(make_icon('save', theme), "Save", self)
+        add(self.action_save, self._save_current_file)
+        self.action_view_diff = QAction(make_icon('diff', theme), "View Changes", self)
+        self.action_view_diff.setToolTip("Show unsaved changes for current file")
+        add(self.action_view_diff, self._show_local_diff)
         toolbar.addSeparator()
 
         # AI
-        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Send", self), self._send_prompt)
+        self.action_send = QAction(make_icon('send', theme), "Send", self)
+        add(self.action_send, self._send_prompt)
         toolbar.addSeparator()
 
-        # Tasks
-        add(QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView), "AI Edit", self), self._run_edit_task)
+        # Tasks (placeholder uses 'diff' icon for now)
+        self.action_ai_edit = QAction(make_icon('diff', theme), "AI Edit", self)
+        add(self.action_ai_edit, self._run_edit_task)
 
         # Interrupt
-        interrupt = QAction("Interrupt", self)
-        interrupt.setToolTip("Interrupt current AI turn")
-        add(interrupt, self._send_interrupt)
+        self.action_interrupt = QAction(make_icon('stop', theme), "Interrupt", self)
+        self.action_interrupt.setToolTip("Interrupt current AI turn")
+        add(self.action_interrupt, self._send_interrupt)
 
         # Quick reasoning toggle
-        rr = QAction("Reasoning", self)
-        rr.setCheckable(True)
-        rr.setChecked(True)
-        rr.triggered.connect(self._toggle_raw_reasoning)
-        toolbar.addAction(rr)
+        self.action_reasoning = QAction(make_icon('bulb', theme), "Reasoning", self)
+        self.action_reasoning.setCheckable(True)
+        self.action_reasoning.setChecked(True)
+        self.action_reasoning.triggered.connect(self._toggle_raw_reasoning)
+        toolbar.addAction(self.action_reasoning)
+
+    def _apply_toolbar_icons(self, theme: str):
+        """Refresh toolbar icons when the theme changes."""
+        try:
+            if hasattr(self, 'action_open_repo'):
+                self.action_open_repo.setIcon(make_icon('folder-open', theme))
+            if hasattr(self, 'action_save'):
+                self.action_save.setIcon(make_icon('save', theme))
+            if hasattr(self, 'action_view_diff'):
+                self.action_view_diff.setIcon(make_icon('diff', theme))
+            if hasattr(self, 'action_send'):
+                self.action_send.setIcon(make_icon('send', theme))
+            if hasattr(self, 'action_ai_edit'):
+                self.action_ai_edit.setIcon(make_icon('diff', theme))
+            if hasattr(self, 'action_interrupt'):
+                self.action_interrupt.setIcon(make_icon('stop', theme))
+            if hasattr(self, 'action_reasoning'):
+                self.action_reasoning.setIcon(make_icon('bulb', theme))
+        except Exception:
+            pass
 
     def _show_local_diff(self):
         """Show unified diff of unsaved changes in the current editor file."""
@@ -1651,6 +1681,8 @@ class MainWindow(QMainWindow):
                 legacy_apply_theme(self, theme=theme, base_font_pt=10.0)
             except Exception as e2:
                 main_logger.error(f"Legacy theme failed: {e2}")
+        # Refresh toolbar glyphs under the current theme
+        self._apply_toolbar_icons(theme)
 
     def _set_theme(self, theme: str):
         try:
@@ -1666,6 +1698,8 @@ class MainWindow(QMainWindow):
                 self.chat_view.refresh_theme()
             if hasattr(self, '_actual_chat_view') and self._actual_chat_view:
                 self._actual_chat_view.refresh_theme()
+            # Toolbar icons too
+            self._apply_toolbar_icons(theme)
         except Exception as e:
             main_logger.error(f"Failed to refresh chat theme: {e}")
             

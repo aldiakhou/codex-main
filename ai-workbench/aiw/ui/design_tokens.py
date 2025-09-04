@@ -60,21 +60,6 @@ class ColorScheme:
 
 
 @dataclass(frozen=True)
-class Typography:
-    font_family: str = "Cascadia Code, Consolas, 'Courier New', monospace"
-    sizes: Dict[str, int] = field(default_factory=lambda: {
-        "xs": 10,
-        "sm": 11,
-        "base": 12,
-        "md": 13,
-        "lg": 15,
-        "xl": 18,
-        "code": 12,
-    })
-    line_height: float = 1.35
-
-
-@dataclass(frozen=True)
 class Spacing:
     scale: Dict[str, int] = field(default_factory=lambda: {
         "0": 0,
