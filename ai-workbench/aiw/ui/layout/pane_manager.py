@@ -195,7 +195,7 @@ class PaneManager(QWidget):
     def _setup_status_area(self, layout):
         status_frame = QFrame()
         status_frame.setMaximumHeight(25)
-        status_frame.setStyleSheet("background: #f5f5f5; border-top: 1px solid #ddd;")
+        status_frame.setObjectName("PaneStatus")
 
         status_layout = QHBoxLayout(status_frame)
         status_layout.setContentsMargins(10, 2, 10, 2)

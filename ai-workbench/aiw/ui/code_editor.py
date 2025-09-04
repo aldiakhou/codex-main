@@ -256,6 +256,7 @@ class CodeEditor(QTextEdit):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("CodeEditor")
 
         # Editor state
         self.current_file_path = None
@@ -296,23 +297,7 @@ class CodeEditor(QTextEdit):
         self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         self.setTabStopDistance(QFontMetrics(self.font()).horizontalAdvance(' ') * 4)
         
-        # Apply theme-aware styling
-        self.setStyleSheet(f"""
-            QTextEdit {{
-                background: {self.tokens.colors.semantic["surface"]};
-                color: {self.tokens.colors.palette["text"]};
-                border: 1px solid {self.tokens.colors.palette["border"]};
-                border-radius: {self.tokens.radii.values["md"]}px;
-                padding: {self.tokens.spacing.gutters["component"]}px;
-                selection-background-color: {self.tokens.colors.semantic["selection"]};
-                font-family: {self.tokens.typography.code_family};
-                font-size: {self.tokens.typography.sizes["code"]}pt;
-                line-height: {int(self.tokens.typography.sizes["code"] * self.tokens.typography.line_height)}px;
-            }}
-            QTextEdit:focus {{
-                border-color: {self.tokens.colors.semantic["focus"]};
-            }}
-        """)
+        # Base styling provided via QSS (QTextEdit#CodeEditor)
 
     def update_theme(self, theme: str):
         """Update the editor theme"""
@@ -675,18 +660,7 @@ class CodeEditorWidget(QWidget):
 
     def _apply_styling(self):
         """Apply professional styling using design tokens"""
-        # Modern file label styling
-        self.file_label.setStyleSheet(f"""
-            QLabel#fileLabel {{
-                color: {self.tokens.colors.palette["text"]};
-                font-size: {self.tokens.typography.sizes["sm"]}pt;
-                font-weight: 600;
-                padding: {self.tokens.spacing.gutters["component"]}px {self.tokens.spacing.gutters["panel"]}px;
-                background: {self.tokens.colors.semantic["surface-alt"]};
-                border: 1px solid {self.tokens.colors.palette["border"]};
-                border-radius: {self.tokens.radii.values["sm"]}px;
-            }}
-        """)
+        # Styled via QSS (QLabel#fileLabel)
 
     def update_theme(self, theme: str):
         """Update the theme for the entire widget"""

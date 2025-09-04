@@ -99,8 +99,8 @@ class ChatView(QWidget):
         # Streaming indicator + token label
         pace_bar = QHBoxLayout(); pace_bar.setContentsMargins(6, 2, 6, 4)
         # Slightly brighter labels for better readability in dark mode
-        self.typing_label = QLabel(""); self.typing_label.setStyleSheet("color:#ffcdc4;font-size:11px;")
-        self.token_label = QLabel(""); self.token_label.setStyleSheet("color:#ffcdcf;font-size:11px;")
+        self.typing_label = QLabel(""); self.typing_label.setObjectName("TypingLabel")
+        self.token_label = QLabel(""); self.token_label.setObjectName("TokenLabel")
         pace_bar.addWidget(self.typing_label); pace_bar.addStretch(1); pace_bar.addWidget(self.token_label)
         layout.addLayout(pace_bar)
 
@@ -117,7 +117,7 @@ class ChatView(QWidget):
         self.clear_button = QPushButton("Clear Chat"); self.clear_button.clicked.connect(self.clear_chat); ctrl.addWidget(self.clear_button)
         self.export_button = QPushButton("Export"); self.export_button.clicked.connect(self._export_chat); ctrl.addWidget(self.export_button)
         ctrl.addStretch(1)
-        self.count_label = QLabel("0 messages"); self.count_label.setStyleSheet("color:#666;font-size:10px;"); ctrl.addWidget(self.count_label)
+        self.count_label = QLabel("0 messages"); self.count_label.setObjectName("ChatCountLabel"); ctrl.addWidget(self.count_label)
         layout.addLayout(ctrl)
 
     # --- API used by MainWindow -------------------------------------------

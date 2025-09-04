@@ -525,7 +525,7 @@ class MainWindow(QMainWindow):
         # Reasoning panel (live)
         self.reasoning_view = QTextBrowser()
         self.reasoning_view.setObjectName("ReasoningView")
-        self.reasoning_view.setStyleSheet("QTextBrowser#ReasoningView { background:#2a2f38; border:1px solid #3a4048; border-radius:4px; font-size:11px; padding:4px; }")
+        # Styled via QSS (#ReasoningView)
         self.reasoning_view.setMaximumHeight(120)
         self.reasoning_view.setVisible(self.reasoning_panel_visible)
         self.reasoning_view.setHtml("<b>Reasoning</b><br><i>Waiting...</i>")
@@ -606,7 +606,7 @@ class MainWindow(QMainWindow):
         # Reasoning panel for tab mode
         self.reasoning_view = QTextBrowser()
         self.reasoning_view.setObjectName("ReasoningView")
-        self.reasoning_view.setStyleSheet("QTextBrowser#ReasoningView { background:#2a2f38; border:1px solid #3a4048; border-radius:4px; font-size:11px; padding:4px; }")
+        # Styled via QSS (#ReasoningView)
         self.reasoning_view.setMaximumHeight(120)
         self.reasoning_view.setVisible(self.reasoning_panel_visible)
         self.reasoning_view.setHtml("<b>Reasoning</b><br><i>Waiting...</i>")
@@ -676,7 +676,7 @@ class MainWindow(QMainWindow):
         self.plan_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea)
         from PySide6.QtWidgets import QListWidget
         self.plan_list = QListWidget()
-        self.plan_list.setStyleSheet("QListWidget { font-family: 'Cascadia Code', Consolas, monospace; }")
+        # Styled via QSS (#planList)
         self.plan_dock.setWidget(self.plan_list)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.plan_dock)
 
@@ -724,7 +724,7 @@ class MainWindow(QMainWindow):
             self.exec_output_view = QTextBrowser()
             self.exec_output_view.setOpenExternalLinks(True)
             self.exec_output_view.setObjectName("execOutputView")
-            self.exec_output_view.setStyleSheet("QTextBrowser { font-family: 'Cascadia Code', Consolas, monospace; font-size:11px; }")
+            # Styled via QSS (#execOutputView)
             self.exec_log_dock.setWidget(self.exec_output_view)
             self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.exec_log_dock)
             self.exec_log_dock.hide()

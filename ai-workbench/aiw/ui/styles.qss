@@ -1,7 +1,7 @@
 /* Global Dark Theme */
 QMainWindow, QWidget {
   background-color: #0f131a;
-  color: #1769e4ff;
+  color: #e6e8eb;
   font-family: "Cascadia Code", "Cascadia Mono", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
   font-size: 11pt;
 }
@@ -35,6 +35,28 @@ QTextEdit, QLineEdit, QTextBrowser {
   border-radius: 10px;
   padding: 6px 10px;
   selection-background-color: #2b84ff;
+}
+
+/* Editors and diff viewers */
+QTextEdit#CodeEditor, QTextEdit#DiffViewer {
+  background: #0f131a;
+  color: #e6e8eb;
+  border: 1px solid #1c2533;
+  border-radius: 8px;
+  padding: 8px;
+  selection-background-color: #2b84ff;
+  font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  font-size: 11pt;
+}
+QTextEdit#CodeEditor:focus, QTextEdit#DiffViewer:focus { border-color: #2b84ff; }
+
+/* Reasoning panel */
+QTextBrowser#ReasoningView {
+  background: #1b2230;
+  border: 1px solid #2a3446;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 6px;
 }
 
 QPushButton {
@@ -97,6 +119,12 @@ QStatusBar {
   color: #aeb3bb;
 }
 
+/* PaneManager status footer */
+QFrame#PaneStatus {
+  background: #0f131a;
+  border-top: 1px solid #1c2533;
+}
+
 QFrame#BubbleContainer[msgRole="user"] {
   background: #1f3a5a;
   border: 1px solid #2a4a74;
@@ -135,4 +163,48 @@ QTextBrowser#BubbleBody[msgRole="system"] { color: #ffd1c7; }
 QTextBrowser { font-size: 10.5pt; }
 QTextBrowser pre, QTextBrowser code {
   font-family: "Cascadia Code", "Consolas", "Fira Code", monospace;
+}
+
+/* Diff view title label */
+QLabel#titleLabel {
+  color: #e6e8eb;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 6px 12px;
+  background: #141a24;
+  border: 1px solid #1c2533;
+  border-radius: 6px;
+}
+
+/* Code editor file label */
+QLabel#fileLabel {
+  color: #e6e8eb;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  background: #141a24;
+  border: 1px solid #1c2533;
+  border-radius: 6px;
+}
+
+/* Plan tab */
+QListWidget#planList {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+/* Exec output */
+QTextBrowser#execOutputView {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+/* Chat toolbar labels */
+QLabel#TypingLabel, QLabel#TokenLabel {
+  color: #a1a1aa;
+  font-size: 11px;
+}
+QLabel#ChatCountLabel {
+  color: #777;
+  font-size: 10px;
 }

@@ -79,7 +79,7 @@ class ChatView(QWidget):
         
         # Message count label
         self.count_label = QLabel("0 messages")
-        self.count_label.setStyleSheet("color: #666; font-size: 10px;")
+        self.count_label.setObjectName("ChatCountLabel")
         control_layout.addWidget(self.count_label)
         
         layout.addLayout(control_layout)

@@ -267,6 +267,7 @@ class UIConfig(BaseModel):
     recent_files: List[str] = Field(default_factory=list)  # Recent file paths
     animations_enabled: bool = True  # Optional motion layer
     prefers_reduced_motion: bool = False  # Global reduce motion toggle
+    custom_qss_path: Optional[str] = None  # External QSS override (dev)
 
 
 class BackendConfig(BaseModel):

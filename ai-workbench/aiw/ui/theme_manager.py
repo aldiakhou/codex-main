@@ -16,17 +16,32 @@ def apply_theme(theme: str = "dark"):
     _current_theme = theme
     qss = generate_qss(theme)
 
-    # Optional: append developer override QSS if present
+    # Optional: append repository QSS override if present
     try:
         base_dir = Path(__file__).parent
         override = base_dir / ("styles_light.qss" if theme == "light" else "styles.qss")
         if override.exists():
             extra = override.read_text(encoding="utf-8")
             if extra.strip():
-                qss = qss + "\n\n/* --- Developer override appended --- */\n" + extra
-                logging.getLogger('ThemeManager').info("Appended override QSS: %s (%d bytes)", override.name, len(extra))
+                qss = qss + "\n\n/* --- Repo override appended --- */\n" + extra
+                logging.getLogger('ThemeManager').info("Appended repo override QSS: %s (%d bytes)", override.name, len(extra))
     except Exception as e:
-        logging.getLogger('ThemeManager').warning("Failed to append override QSS: %s", e)
+        logging.getLogger('ThemeManager').warning("Failed to append repo override QSS: %s", e)
+
+    # Optional: append external developer override from config
+    try:
+        from ..core.config import get_config_manager
+        cfg = get_config_manager().config
+        custom_path = getattr(cfg.ui, 'custom_qss_path', None)
+        if custom_path:
+            p = Path(custom_path).expanduser()
+            if p.exists():
+                extra = p.read_text(encoding='utf-8')
+                if extra.strip():
+                    qss = qss + f"\n\n/* --- External override appended ({p}) --- */\n" + extra
+                    logging.getLogger('ThemeManager').info("Appended external override QSS: %s (%d bytes)", str(p), len(extra))
+    except Exception as e:
+        logging.getLogger('ThemeManager').warning("Failed to append external override QSS: %s", e)
     app = QApplication.instance()
     if app:
         app.setStyleSheet(qss)

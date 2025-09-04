@@ -62,14 +62,19 @@ def fade_in(widget: QWidget, duration_ms: int = 180, start: float = 0.0, end: fl
         eff = _ensure_opacity_effect(widget)
         eff.setOpacity(start)
         from PySide6.QtCore import QPropertyAnimation
-        anim = QPropertyAnimation(eff, b"opacity", widget)
-        anim.setDuration(min(duration_ms, 300))
-        anim.setStartValue(start)
-        anim.setEndValue(end)
-        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        # Keep anim alive on the widget
-        _attach_anim(widget, anim)
-        anim.start(anim.DeletionPolicy.DeleteWhenStopped)
+        def _start():
+            try:
+                anim = QPropertyAnimation(eff, b"opacity", widget)
+                anim.setDuration(min(duration_ms, 300))
+                anim.setStartValue(start)
+                anim.setEndValue(end)
+                anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+                _attach_anim(widget, anim)
+                anim.start(anim.DeletionPolicy.DeleteWhenStopped)
+            except Exception:
+                pass
+        # Defer to next event loop tick to avoid painting re-entrancy
+        QTimer.singleShot(0, _start)
     except Exception:
         try:
             widget.show()
@@ -89,18 +94,27 @@ def fade_out(widget: QWidget, duration_ms: int = 180, start: float = 1.0, end: f
             return
         eff = _ensure_opacity_effect(widget)
         from PySide6.QtCore import QPropertyAnimation
-        anim = QPropertyAnimation(eff, b"opacity", widget)
-        anim.setDuration(min(duration_ms, 300))
-        anim.setStartValue(start)
-        anim.setEndValue(end)
-        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        if on_finished:
+        def _start():
             try:
-                anim.finished.connect(on_finished)  # type: ignore[attr-defined]
+                anim = QPropertyAnimation(eff, b"opacity", widget)
+                anim.setDuration(min(duration_ms, 300))
+                anim.setStartValue(start)
+                anim.setEndValue(end)
+                anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+                if on_finished:
+                    try:
+                        anim.finished.connect(on_finished)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                _attach_anim(widget, anim)
+                anim.start(anim.DeletionPolicy.DeleteWhenStopped)
             except Exception:
-                pass
-        _attach_anim(widget, anim)
-        anim.start(anim.DeletionPolicy.DeleteWhenStopped)
+                if on_finished:
+                    try:
+                        on_finished()
+                    except Exception:
+                        pass
+        QTimer.singleShot(0, _start)
     except Exception:
         if on_finished:
             try:
@@ -117,13 +131,18 @@ def pulse_opacity(widget: QWidget, from_opacity: float = 0.6, to_opacity: float 
         eff = _ensure_opacity_effect(widget)
         eff.setOpacity(from_opacity)
         from PySide6.QtCore import QPropertyAnimation
-        anim = QPropertyAnimation(eff, b"opacity", widget)
-        anim.setDuration(min(duration_ms, 300))
-        anim.setStartValue(from_opacity)
-        anim.setEndValue(to_opacity)
-        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        _attach_anim(widget, anim)
-        anim.start(anim.DeletionPolicy.DeleteWhenStopped)
+        def _start():
+            try:
+                anim = QPropertyAnimation(eff, b"opacity", widget)
+                anim.setDuration(min(duration_ms, 300))
+                anim.setStartValue(from_opacity)
+                anim.setEndValue(to_opacity)
+                anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+                _attach_anim(widget, anim)
+                anim.start(anim.DeletionPolicy.DeleteWhenStopped)
+            except Exception:
+                pass
+        QTimer.singleShot(0, _start)
     except Exception:
         pass
 
@@ -256,4 +275,3 @@ __all__ = [
     "animate_splitter_open",
     "pulse_item_background",
 ]
-

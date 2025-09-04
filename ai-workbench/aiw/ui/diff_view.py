@@ -72,6 +72,7 @@ class DiffViewer(QTextEdit):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("DiffViewer")
         self.theme = "dark"  # Default theme
         self.tokens = get_tokens(self.theme)
         
@@ -113,18 +114,7 @@ class DiffViewer(QTextEdit):
         )
         self.setFont(code_font)
         
-        self.setStyleSheet(f"""
-            QTextEdit {{
-                background: {self.tokens.colors.semantic["surface"]};
-                color: {self.tokens.colors.palette["text"]};
-                border: 1px solid {self.tokens.colors.palette["border"]};
-                border-radius: {self.tokens.radii.values["md"]}px;
-                padding: {self.tokens.spacing.gutters["component"]}px;
-                font-family: {self.tokens.typography.code_family};
-                font-size: {self.tokens.typography.sizes["sm"]}pt;
-                line-height: {int(self.tokens.typography.sizes["sm"] * self.tokens.typography.line_height)}px;
-            }}
-        """)
+        # Base styling via QSS; font and read-only set in code
 
     def update_theme(self, theme: str):
         """Update the theme (legacy method name)"""
@@ -488,17 +478,7 @@ class DiffViewWidget(QWidget):
 
     def _apply_styling(self):
         """Apply professional styling using design tokens"""
-        self.title_label.setStyleSheet(f"""
-            QLabel#titleLabel {{
-                color: {self.tokens.colors.palette["text"]};
-                font-size: {self.tokens.typography.sizes["heading"]}pt;
-                font-weight: 600;
-                padding: {self.tokens.spacing.gutters["component"]}px {self.tokens.spacing.gutters["panel"]}px;
-                background: {self.tokens.colors.semantic["surface-alt"]};
-                border: 1px solid {self.tokens.colors.palette["border"]};
-                border-radius: {self.tokens.radii.values["sm"]}px;
-            }}
-        """)
+        # Styled via QSS (QLabel#titleLabel)
 
     def update_theme(self, theme: str):
         """Update the theme for the entire diff view (legacy method name)"""

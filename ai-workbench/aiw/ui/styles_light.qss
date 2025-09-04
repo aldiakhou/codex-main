@@ -1,6 +1,6 @@
 /* Global Light Theme */
 QMainWindow, QWidget {
-  background-color: #22f5e3ff;
+  background-color: #ffffff;
   color: #1f2430;
   font-family: "Cascadia Code", "Cascadia Mono", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
   font-size: 11pt;
@@ -32,6 +32,19 @@ QTextEdit, QLineEdit, QTextBrowser {
   selection-background-color: #2b84ff;
 }
 
+/* Editors and diff viewers */
+QTextEdit#CodeEditor, QTextEdit#DiffViewer {
+  background: #ffffff;
+  color: #1f2430;
+  border: 1px solid #d7dde6;
+  border-radius: 8px;
+  padding: 8px;
+  selection-background-color: #2b84ff;
+  font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+  font-size: 11pt;
+}
+QTextEdit#CodeEditor:focus, QTextEdit#DiffViewer:focus { border-color: #2b84ff; }
+
 QPushButton {
   background-color: #ffffff;
   color: #1f2430;
@@ -39,12 +52,12 @@ QPushButton {
   padding: 6px 12px;
   border-radius: 10px;
 }
-QPushButton:hover { background-color: #115dc0ff; }
+QPushButton:hover { background-color: #f1f4f8; }
 QPushButton:pressed { background-color: #e8edf4; }
 
 QTabWidget::pane { border-top: 1px solid #d7dde6; }
 QTabBar::tab {
-  background: #e612e6ff;
+  background: #eef1f5;
   color: #3a4354;
   padding: 6px 14px;
   border-top-left-radius: 10px;
@@ -61,8 +74,8 @@ QSplitter::handle:vertical { height: 6px; }
 QScrollArea#ChatScroll { border: none; }
 
 QFrame#BubbleContainer[msgRole="user"] {
-  background: #e4f0ff;
-  border: 1px solid #c3dcff;
+  background: #e917d8ff;
+  border: 1px solid #092f64ff;
   border-radius: 14px;
 }
 QLabel#BubbleHeader[msgRole="user"] { color: #1a4e8a; font-weight: 600; }
@@ -87,7 +100,65 @@ QTextBrowser#BubbleBody[msgRole="system"] { color: #5f1a1e; }
 QStatusBar {
   background: #f7f8fa;
   border-top: 1px solid #d7dde6;
-  color: #db27ccff;
+  color: #3a4354;
 }
 
 QTextBrowser { font-size: 10.5pt; }
+
+/* Diff view title label */
+QLabel#titleLabel {
+  color: #1f2430;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 6px 12px;
+  background: #f7f8fa;
+  border: 1px solid #d7dde6;
+  border-radius: 6px;
+}
+
+/* Code editor file label */
+QLabel#fileLabel {
+  color: #1f2430;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  background: #f7f8fa;
+  border: 1px solid #d7dde6;
+  border-radius: 6px;
+}
+/* Reasoning panel */
+QTextBrowser#ReasoningView {
+  background: #f7f8fa;
+  border: 1px solid #d7dde6;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 6px;
+}
+
+/* PaneManager status footer */
+QFrame#PaneStatus {
+  background: #ffffff;
+  border-top: 1px solid #d7dde6;
+}
+
+/* Plan tab */
+QListWidget#planList {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+/* Exec output */
+QTextBrowser#execOutputView {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+/* Chat toolbar labels */
+QLabel#TypingLabel, QLabel#TokenLabel {
+  color: #6b7280;
+  font-size: 11px;
+}
+QLabel#ChatCountLabel {
+  color: #6b7280;
+  font-size: 10px;
+}

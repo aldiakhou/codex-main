@@ -371,6 +371,22 @@ class SettingsDialog(QDialog):
         self.chk_reduced_motion.setChecked(current)
         form.addRow(self.chk_reduced_motion)
 
+        # Custom QSS path (developer override)
+        from PySide6.QtWidgets import QLineEdit, QPushButton, QFileDialog, QHBoxLayout
+        self.edit_custom_qss = QLineEdit()
+        try:
+            self.edit_custom_qss.setText(getattr(self._wb_cfg_mgr.config.ui, 'custom_qss_path', '') or '')
+        except Exception:
+            self.edit_custom_qss.setText('')
+        btn_browse_qss = QPushButton("Browse…")
+        def _browse_qss():
+            path, _ = QFileDialog.getOpenFileName(self, "Select QSS file", "", "QSS Files (*.qss);;All Files (*.*)")
+            if path:
+                self.edit_custom_qss.setText(path)
+        btn_browse_qss.clicked.connect(_browse_qss)
+        row = QHBoxLayout(); row.addWidget(self.edit_custom_qss); row.addWidget(btn_browse_qss)
+        form.addRow("Custom QSS override", row)
+
         self.tabs.addTab(w, "UI")
 
     # ---------- Profile Detection ----------
@@ -671,6 +687,12 @@ class SettingsDialog(QDialog):
         # UI prefs (reduced motion)
         try:
             self._wb_cfg_mgr.config.ui.prefers_reduced_motion = self.chk_reduced_motion.isChecked()
+        except Exception:
+            pass
+
+        # Save custom QSS path
+        try:
+            self._wb_cfg_mgr.config.ui.custom_qss_path = (self.edit_custom_qss.text().strip() or None)
         except Exception:
             pass
 
