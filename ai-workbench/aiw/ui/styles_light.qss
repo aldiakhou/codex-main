@@ -39,12 +39,12 @@ QPushButton {
   padding: 6px 12px;
   border-radius: 10px;
 }
-QPushButton:hover { background-color: #f1f4f8; }
+QPushButton:hover { background-color: #115dc0ff; }
 QPushButton:pressed { background-color: #e8edf4; }
 
 QTabWidget::pane { border-top: 1px solid #d7dde6; }
 QTabBar::tab {
-  background: #eef1f5;
+  background: #e612e6ff;
   color: #3a4354;
   padding: 6px 14px;
   border-top-left-radius: 10px;

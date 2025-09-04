@@ -130,7 +130,8 @@ class ChatView(QWidget):
         # Subtle fade hint for new content (reduced-motion aware)
         try:
             if motion_enabled():
-                pulse_opacity(self._browser, from_opacity=0.6, to_opacity=1.0, duration_ms=200)
+                # Slightly stronger pulse for visibility
+                pulse_opacity(self._browser, from_opacity=0.4, to_opacity=1.0, duration_ms=220)
         except Exception:
             pass
         self._update_count()

@@ -33,7 +33,15 @@ def fade_in_widget(w: QWidget, duration_ms: int = 180, start: float = 0.0, end: 
     Works for both QWidget and QDockWidget instances.
     """
     try:
-        target: QWidget = w if not isinstance(w, QDockWidget) else w
+        # For QDockWidget, apply effect to its content widget, not the frame
+        target: QWidget = w
+        if isinstance(w, QDockWidget):
+            try:
+                cw = w.widget()
+                if isinstance(cw, QWidget):
+                    target = cw
+            except Exception:
+                target = w
         # Ensure visible before fading
         target.show()
         eff: Optional[QGraphicsOpacityEffect] = getattr(target, "_aiw_opacity_effect", None)
