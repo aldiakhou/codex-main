@@ -2,7 +2,7 @@
 QMainWindow, QWidget {
   background-color: #0f131a;
   color: #e6e8eb;
-  font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  font-family: "Cascadia Code", "Cascadia Mono", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
   font-size: 11pt;
 }
 
@@ -134,5 +134,5 @@ QTextBrowser#BubbleBody[msgRole="system"] { color: #ffd1c7; }
 /* Monospace blocks inside messages */
 QTextBrowser { font-size: 10.5pt; }
 QTextBrowser pre, QTextBrowser code {
-  font-family: "Consolas", "Fira Code", monospace;
+  font-family: "Cascadia Code", "Consolas", "Fira Code", monospace;
 }

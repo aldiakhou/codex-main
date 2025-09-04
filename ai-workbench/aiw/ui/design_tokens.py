@@ -122,8 +122,10 @@ class Elevation:
 
 @dataclass(frozen=True)
 class Typography:
-    font_family: str = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
-    code_family: str = "'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace"
+    # Use Cascadia across the app for a cohesive, editor-like feel.
+    # Falls back gracefully if the font isn't installed.
+    font_family: str = "'Cascadia Code', 'Cascadia Mono', 'Segoe UI', system-ui, -apple-system, sans-serif"
+    code_family: str = "'Cascadia Code', 'Cascadia Mono', Consolas, 'Fira Code', 'Courier New', monospace"
     
     sizes: Dict[str, int] = field(default_factory=lambda: {
         "xs": 10,

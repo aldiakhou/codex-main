@@ -124,7 +124,7 @@ def generate_qss(theme: str = "dark", base_font_pt: float = 10.5) -> str:
   ap("}")
   ap("QTextBrowser {")
   ap(f"  font-size: {code_pt}pt;")
-  ap("  font-family: 'Consolas', 'Fira Code', 'Courier New', monospace;")
+  ap("  font-family: 'Cascadia Code', 'Cascadia Mono', 'Fira Code', 'Consolas', 'Courier New', monospace;")
   ap("}")
 
   # Buttons

@@ -149,37 +149,54 @@ class MessageRenderer:
         )
 
     def base_css(self) -> str:
+        """Return base CSS for chat content, tuned for readability.
+
+        Dark theme targets a Tailwind-like palette for better contrast.
+        """
         if self.theme == 'dark':
-            text = '#e6e6e6'; subtle = '#9e9e9e'
-            usr_bg = '#1e2a38'; usr_border = '#3a7bd5'
-            ai_bg = '#21262d'; ai_border = '#238636'
-            sys_bg = '#2b2f36'; sys_border = '#6e7681'
-            code_bg = '#1e1e1e'; code = '#d4d4d4'
-            meta = '#8892a0'
+            # Tailwind-inspired slate/blue accents for dark mode
+            text = '#e5e7eb'      # slate-200
+            subtle = '#a1a1aa'    # zinc-400
+            usr_bg = '#0f172a'    # slate-900
+            usr_border = '#3b82f6'  # blue-500
+            ai_bg = '#111827'     # gray-900
+            ai_border = '#22c55e' # green-500
+            sys_bg = '#1f2937'    # gray-800
+            sys_border = '#818cf8' # indigo-400
+            code_bg = '#0b1220'   # very dark blue-gray
+            code = '#e2e8f0'      # slate-200
+            meta = '#94a3b8'      # slate-400
         else:
-            text = '#222'; subtle = '#666'
-            usr_bg = '#eef6ff'; usr_border = '#4ea1ff'
-            ai_bg = '#f5f7fa'; ai_border = '#2da44e'
-            sys_bg = '#f1f3f5'; sys_border = '#8b949e'
-            code_bg = '#f6f8fa'; code = '#24292f'
-            meta = '#6a737d'
+            text = '#1f2937'      # gray-800
+            subtle = '#6b7280'    # gray-500
+            usr_bg = '#eaf2ff'
+            usr_border = '#3b82f6'
+            ai_bg = '#f8fafc'
+            ai_border = '#16a34a'
+            sys_bg = '#eef2ff'
+            sys_border = '#6366f1'
+            code_bg = '#f1f5f9'   # slate-100
+            code = '#0f172a'      # slate-900
+            meta = '#6b7280'
+
         return "\n".join([
-            f"body {{ margin:0; padding:8px; font-family: 'Segoe UI', Arial, sans-serif; color:{text}; }}",
-            ".chat-msg { display:flex; gap:8px; margin:10px 8px; }",
+            # Cascadia everywhere for consistency with the app
+            f"body {{ margin:0; padding:10px; font-family:'Cascadia Code','Cascadia Mono','Segoe UI',Arial,sans-serif; color:{text}; }}",
+            ".chat-msg { display:flex; gap:10px; margin:12px 8px; }",
             ".chat-msg .avatar { width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:16px; }",
             ".chat-msg .bubble { flex:1; }",
-            f".user-msg .bubble {{ background:{usr_bg}; border-left:3px solid {usr_border}; border-radius:8px; padding:8px; }}",
-            f".assistant-msg .bubble {{ background:{ai_bg}; border-left:3px solid {ai_border}; border-radius:8px; padding:8px; }}",
-            f".system-msg .bubble {{ background:{sys_bg}; border-left:3px solid {sys_border}; border-radius:8px; padding:8px; }}",
+            f".user-msg .bubble {{ background:{usr_bg}; border-left:3px solid {usr_border}; border-radius:10px; padding:10px; }}",
+            f".assistant-msg .bubble {{ background:{ai_bg}; border-left:3px solid {ai_border}; border-radius:10px; padding:10px; }}",
+            f".system-msg .bubble {{ background:{sys_bg}; border-left:3px solid {sys_border}; border-radius:10px; padding:10px; }}",
             f".meta {{ font-size:11px; color:{subtle}; margin-bottom:6px; display:flex; justify-content:space-between; }}",
-            f".content {{ font-size:13px; line-height:1.45; color:{text}; }}",
+            f".content {{ font-size:13px; line-height:1.5; color:{text}; }}",
             f"code {{ background:{code_bg}; color:{code}; padding:2px 4px; border-radius:4px; font-family:'Cascadia Code','Consolas',monospace; }}",
-            f"pre.code {{ background:{code_bg}; color:{code}; padding:8px; border-radius:6px; overflow-x:auto; font-family:'Cascadia Code','Consolas',monospace; }}",
-            ".code-block .toolbar { display:flex; gap:8px; margin:4px 0; }",
-            ".code-block .btn { font-size:11px; text-decoration:none; padding:2px 6px; border:1px solid rgba(127,127,127,.25); border-radius:4px; }",
-            ".diff .add { color:#00c853; }",
-            ".diff .del { color:#ff5252; }",
+            f"pre.code {{ background:{code_bg}; color:{code}; padding:10px; border-radius:8px; overflow-x:auto; font-family:'Cascadia Code','Consolas',monospace; }}",
+            ".code-block .toolbar { display:flex; gap:8px; margin:6px 0; }",
+            ".code-block .btn { font-size:11px; text-decoration:none; padding:2px 6px; border:1px solid rgba(127,127,127,.25); border-radius:6px; }",
+            ".diff .add { color:#22c55e; }",
+            ".diff .del { color:#ef4444; }",
             f".diff .meta {{ color:{meta}; }}",
             ".md-table { border-collapse: collapse; font-size:12px; }",
-            ".md-table th, .md-table td { border:1px solid rgba(127,127,127,.25); padding:4px 6px; }",
+            ".md-table th, .md-table td { border:1px solid rgba(127,127,127,.25); padding:6px 8px; }",
         ])

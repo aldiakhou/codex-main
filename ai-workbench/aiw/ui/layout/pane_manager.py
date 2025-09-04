@@ -200,17 +200,17 @@ class PaneManager(QWidget):
         status_layout.setContentsMargins(10, 2, 10, 2)
 
         self.file_info_label = QLabel("Ready")
-        self.file_info_label.setFont(QFont("Segoe UI", 9))
+        self.file_info_label.setFont(QFont("Cascadia Code", 9))
         status_layout.addWidget(self.file_info_label)
 
         status_layout.addStretch()
 
         self.cursor_info_label = QLabel("Ln 1, Col 1")
-        self.cursor_info_label.setFont(QFont("Segoe UI", 9))
+        self.cursor_info_label.setFont(QFont("Cascadia Code", 9))
         status_layout.addWidget(self.cursor_info_label)
 
         self.language_label = QLabel("Python")
-        self.language_label.setFont(QFont("Segoe UI", 9))
+        self.language_label.setFont(QFont("Cascadia Code", 9))
         status_layout.addWidget(self.language_label)
 
         layout.addWidget(status_frame)

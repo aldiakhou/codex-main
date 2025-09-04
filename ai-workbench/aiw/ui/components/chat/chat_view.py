@@ -85,7 +85,8 @@ class ChatView(QWidget):
         self._browser = QTextBrowser()
         self._browser.setOpenExternalLinks(False)
         self._browser.setObjectName("ChatBrowser")
-        self._browser.setFont(QFont("Segoe UI", 10))
+        # Use Cascadia everywhere for a cohesive, editor-like feel
+        self._browser.setFont(QFont("Cascadia Code", 11))
         self._browser.setAcceptRichText(True)
         self._browser.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse |
@@ -96,8 +97,9 @@ class ChatView(QWidget):
 
         # Streaming indicator + token label
         pace_bar = QHBoxLayout(); pace_bar.setContentsMargins(6, 2, 6, 4)
-        self.typing_label = QLabel(""); self.typing_label.setStyleSheet("color:#999;font-size:11px;")
-        self.token_label = QLabel(""); self.token_label.setStyleSheet("color:#999;font-size:11px;")
+        # Slightly brighter labels for better readability in dark mode
+        self.typing_label = QLabel(""); self.typing_label.setStyleSheet("color:#a1a1aa;font-size:11px;")
+        self.token_label = QLabel(""); self.token_label.setStyleSheet("color:#a1a1aa;font-size:11px;")
         pace_bar.addWidget(self.typing_label); pace_bar.addStretch(1); pace_bar.addWidget(self.token_label)
         layout.addLayout(pace_bar)
 

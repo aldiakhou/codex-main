@@ -42,7 +42,7 @@ class ChatView(QWidget):
         self._browser = QTextBrowser()
         self._browser.setOpenExternalLinks(True)
         self._browser.setObjectName("ChatBrowser")
-        self._browser.setFont(QFont("Segoe UI", 10))
+        self._browser.setFont(QFont("Cascadia Code", 11))
         
         # Enable proper HTML rendering
         self._browser.setAcceptRichText(True)
@@ -144,7 +144,7 @@ class ChatView(QWidget):
             '<html><head>',
             '<meta charset="utf-8">',
             '<style>',
-            'body { margin: 0; padding: 8px; font-family: "Segoe UI", Arial, sans-serif; }',
+            'body { margin: 0; padding: 8px; font-family: "Cascadia Code", "Cascadia Mono", Arial, sans-serif; }',
             f'.chat-msg {{ margin: 8px 6px 12px 6px; padding: 8px; border-radius: 6px; font-size: 12px; line-height: 1.4; }}',
             f'.user-msg {{ background: {colors["user_bg"]}; border-left: 3px solid {colors["user_border"]}; }}',
             f'.assistant-msg {{ background: {colors["assistant_bg"]}; border-left: 3px solid {colors["assistant_border"]}; }}',
@@ -152,8 +152,8 @@ class ChatView(QWidget):
             f'.role-label {{ font-weight: bold; margin-bottom: 4px; }}',
             f'.timestamp {{ color: {colors["timestamp_color"]}; font-size: 10px; float: right; }}',
             f'.content {{ clear: both; color: {colors["text_color"]}; }}',
-            f'code {{ background: {colors["code_bg"]}; color: {colors["code_color"]}; padding: 2px 4px; border-radius: 3px; font-family: "Consolas", monospace; }}',
-            f'pre {{ background: {colors["pre_bg"]}; color: {colors["pre_color"]}; padding: 8px; border-radius: 4px; overflow-x: auto; font-family: "Consolas", monospace; margin: 8px 0; }}',
+            f'code {{ background: {colors["code_bg"]}; color: {colors["code_color"]}; padding: 2px 4px; border-radius: 3px; font-family: "Cascadia Code", monospace; }}',
+            f'pre {{ background: {colors["pre_bg"]}; color: {colors["pre_color"]}; padding: 8px; border-radius: 4px; overflow-x: auto; font-family: "Cascadia Code", monospace; margin: 8px 0; }}',
             '</style>',
             '</head><body>'
         ]
@@ -352,7 +352,7 @@ class ChatView(QWidget):
         try:
             colors = self._get_theme_colors()
             html_parts = ['<!DOCTYPE html>','<html><head><meta charset="utf-8">','<style>',
-                          'body { margin:0; padding:8px; font-family: "Segoe UI", Arial, sans-serif; }',
+                          'body { margin:0; padding:8px; font-family: "Cascadia Code", "Cascadia Mono", Arial, sans-serif; }',
                           f'.chat-msg {{ margin:8px 6px 12px 6px; padding:8px; border-radius:6px; font-size:12px; line-height:1.4; }}',
                           f'.user-msg {{ background:{colors["user_bg"]}; border-left:3px solid {colors["user_border"]}; }}',
                           f'.assistant-msg {{ background:{colors["assistant_bg"]}; border-left:3px solid {colors["assistant_border"]}; }}',
@@ -360,8 +360,8 @@ class ChatView(QWidget):
                           f'.role-label {{ font-weight:bold; margin-bottom:4px; }}',
                           f'.timestamp {{ color:{colors["timestamp_color"]}; font-size:10px; float:right; }}',
                           f'.content {{ clear:both; color:{colors["text_color"]}; }}',
-                          f'code {{ background:{colors["code_bg"]}; color:{colors["code_color"]}; padding:2px 4px; border-radius:3px; font-family:"Consolas", monospace; }}',
-                          f'pre {{ background:{colors["pre_bg"]}; color:{colors["pre_color"]}; padding:8px; border-radius:4px; overflow-x:auto; font-family:"Consolas", monospace; margin:8px 0; }}',
+                          f'code {{ background:{colors["code_bg"]}; color:{colors["code_color"]}; padding:2px 4px; border-radius:3px; font-family:"Cascadia Code", monospace; }}',
+                          f'pre {{ background:{colors["pre_bg"]}; color:{colors["pre_color"]}; padding:8px; border-radius:4px; overflow-x:auto; font-family:"Cascadia Code", monospace; margin:8px 0; }}',
                           '</style></head><body>']
             count_added = 0
             for msg in self._messages:

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QMenuBar, QMenu, QToolBar, QFileDialog, QMessageBox,
     QLabel, QProgressBar, QTextBrowser, QListWidget, QListWidgetItem, QDialog, QDialogButtonBox, QInputDialog
 )
-from PySide6.QtGui import QAction, QIcon, QFont
+from PySide6.QtGui import QAction, QIcon, QFont, QPixmap, QPainter, QColor, QLinearGradient
 from .design_system import apply_theme as legacy_apply_theme
 from .theme_manager import apply_theme as tokens_apply_theme
 try:
@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
 
         # Window basics
         self.setWindowTitle("AI Development Workbench")
+        self._apply_app_icon()
         self.setGeometry(100, 100, 1400, 900)
         self._update_window_title()
 
@@ -127,6 +128,46 @@ class MainWindow(QMainWindow):
         self._setup_status_bar()
         self._setup_backend()
         self._load_initial_state()
+
+    def _apply_app_icon(self):
+        """Create and apply a modern-looking window icon at runtime.
+
+        Avoids external assets; paints a soft gradient square with a subtle
+        glyph so the app feels like an Electron/Tailwind tool.
+        """
+        try:
+            size = 256
+            pm = QPixmap(size, size)
+            pm.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pm)
+            painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.TextAntialiasing)
+
+            # Gradient background
+            grad = QLinearGradient(0, 0, size, size)
+            grad.setColorAt(0.0, QColor('#1e293b'))   # slate-800
+            grad.setColorAt(1.0, QColor('#0ea5e9'))   # sky-500
+            painter.setBrush(grad)
+            painter.setPen(Qt.PenStyle.NoPen)
+            radius = int(size * 0.18)
+            painter.drawRoundedRect(0, 0, size, size, radius, radius)
+
+            # Accent corner chip
+            painter.setBrush(QColor('#22c55e'))  # green-500
+            chip = int(size * 0.22)
+            painter.drawRoundedRect(size - chip - 14, 14, chip, chip, 16, 16)
+
+            # Monogram
+            painter.setPen(QColor('white'))
+            f = QFont('Cascadia Code', int(size * 0.28))
+            f.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(f)
+            painter.drawText(pm.rect(), int(Qt.AlignmentFlag.AlignCenter), 'AI')
+            painter.end()
+
+            self.setWindowIcon(QIcon(pm))
+        except Exception:
+            # Fallback to default icon silently
+            pass
 
     def _init_chat_controls(self, chat_view: ChatView):
         """Populate chat toolbar controls: model options and temperature.
@@ -510,7 +551,7 @@ class MainWindow(QMainWindow):
         input_layout.setContentsMargins(0, 0, 0, 0)
         self.prompt_input = QTextEdit()
         self.prompt_input.setMaximumHeight(60)
-        self.prompt_input.setFont(QFont("Consolas", 10))
+        self.prompt_input.setFont(QFont("Cascadia Code", 11))
         self.prompt_input.setPlaceholderText("Ask the AI...")
         input_layout.addWidget(self.prompt_input, 1)
 
@@ -573,7 +614,7 @@ class MainWindow(QMainWindow):
         input_bar = QHBoxLayout()
         self.prompt_input = QTextEdit()
         self.prompt_input.setMaximumHeight(60)
-        self.prompt_input.setFont(QFont("Consolas", 10))
+        self.prompt_input.setFont(QFont("Cascadia Code", 11))
         self.prompt_input.setPlaceholderText("Ask the AI...")
         input_bar.addWidget(self.prompt_input, 1)
         send_btn = QPushButton("Send")

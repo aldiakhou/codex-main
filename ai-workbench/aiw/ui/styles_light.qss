@@ -2,7 +2,7 @@
 QMainWindow, QWidget {
   background-color: #f7f8fa;
   color: #1f2430;
-  font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  font-family: "Cascadia Code", "Cascadia Mono", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
   font-size: 11pt;
 }
 
@@ -91,4 +91,3 @@ QStatusBar {
 }
 
 QTextBrowser { font-size: 10.5pt; }
-
