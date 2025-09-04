@@ -149,39 +149,38 @@ class MessageRenderer:
         )
 
     def base_css(self) -> str:
-        """Return base CSS for chat content, tuned for readability.
+        """Return base CSS for chat content, using design tokens so colors match QSS.
 
-        Dark theme targets a Tailwind-like palette for better contrast.
+        We avoid setting an explicit body background to allow the parent QTextBrowser
+        (styled by QSS) to bleed through for a cohesive look.
         """
-        if self.theme == 'dark':
-            # Tailwind-inspired slate/blue accents for dark mode
-            text = '#e5e7eb'      # slate-200
-            subtle = '#a1a1aa'    # zinc-400
-            usr_bg = '#0f172a'    # slate-900
-            usr_border = '#3b82f6'  # blue-500
-            ai_bg = '#111827'     # gray-900
-            ai_border = '#22c55e' # green-500
-            sys_bg = '#1f2937'    # gray-800
-            sys_border = '#818cf8' # indigo-400
-            code_bg = '#0b1220'   # very dark blue-gray
-            code = '#e2e8f0'      # slate-200
-            meta = '#94a3b8'      # slate-400
-        else:
-            text = '#1f2937'      # gray-800
-            subtle = '#6b7280'    # gray-500
-            usr_bg = '#eaf2ff'
-            usr_border = '#3b82f6'
-            ai_bg = '#f8fafc'
-            ai_border = '#16a34a'
-            sys_bg = '#eef2ff'
-            sys_border = '#6366f1'
-            code_bg = '#f1f5f9'   # slate-100
-            code = '#0f172a'      # slate-900
-            meta = '#6b7280'
+        try:
+            from ...design_tokens import get_tokens
+            tokens = get_tokens(self.theme)
+            palette = tokens.colors.palette
+            semantic = tokens.colors.semantic
+            text = palette.get('text', '#e6e8eb')
+            subtle = palette.get('text-dim', '#9aa1ab')
+            usr_bg = semantic.get('surface-alt', palette.get('bg2', '#23272d'))
+            usr_border = palette.get('accent', '#4f8cff')
+            ai_bg = semantic.get('surface', palette.get('bg1', '#1a1d21'))
+            ai_border = palette.get('ok', '#44c27a')
+            sys_bg = palette.get('bg3', "#8e2897")
+            sys_border = palette.get('info', "#36d1bc")
+            code_bg = palette.get('code-bg', '#181b1f')
+            code = palette.get('text', '#e6e8eb')
+            meta = palette.get('text-dim', '#9aa1ab')
+        except Exception:
+            # Very safe fallback
+            text = '#e6e6e6'; subtle = '#9e9e9e'
+            usr_bg = '#1e2a38'; usr_border = '#3b82f6'
+            ai_bg = '#21262d'; ai_border = '#22c55e'
+            sys_bg = '#2b2f36'; sys_border = '#818cf8'
+            code_bg = '#0b1220'; code = '#e2e8f0'; meta = '#94a3b8'
 
         return "\n".join([
             # Cascadia everywhere for consistency with the app
-            f"body {{ margin:0; padding:10px; font-family:'Cascadia Code','Cascadia Mono','Segoe UI',Arial,sans-serif; color:{text}; }}",
+            f"body {{ margin:0; padding:10px; font-family:'Cascadia Code','Cascadia Mono','Segoe UI',Arial,sans-serif; color:{text}; background: transparent; }}",
             ".chat-msg { display:flex; gap:10px; margin:12px 8px; }",
             ".chat-msg .avatar { width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:16px; }",
             ".chat-msg .bubble { flex:1; }",

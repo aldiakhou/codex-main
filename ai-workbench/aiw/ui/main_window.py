@@ -1889,6 +1889,12 @@ class MainWindow(QMainWindow):
             self.current_message = ""
             self.current_reasoning = ""
 
+            # If backend doesn't emit token_count, estimate now
+            try:
+                self._handle_token_count({})
+            except Exception:
+                pass
+
         # Handle unified diff for the entire turn (codex-rs EventMsg::TurnDiff)
         elif event_type == "turn_diff":
             unified_diff = event_obj.get("unified_diff", "")
@@ -2836,10 +2842,33 @@ class MainWindow(QMainWindow):
     def _handle_token_count(self, event_obj):
         """Handle token count updates"""
         try:
-            msg = event_obj.get("msg", {})
+            # event_obj is already the inner 'msg' payload when routed here
+            msg = event_obj or {}
             input_tokens = msg.get("input_tokens", 0)
             output_tokens = msg.get("output_tokens", 0)
             total_tokens = msg.get("total_tokens", 0)
+
+            # Fallback: if totals are missing, approximate from last user/assistant texts
+            if (input_tokens == 0 and output_tokens == 0 and total_tokens == 0):
+                try:
+                    def _est(t: str) -> int:
+                        # Rough heuristic ~4 chars per token
+                        return (len(t) + 3) // 4
+                    last_user = ""
+                    last_ai = ""
+                    if hasattr(self, 'chat_view') and self.chat_view:
+                        for m in reversed(self.chat_view.get_messages()):
+                            if not last_ai and m.role == 'assistant':
+                                last_ai = m.content or ""
+                            elif not last_user and m.role == 'user':
+                                last_user = m.content or ""
+                            if last_ai and last_user:
+                                break
+                    input_tokens = _est(last_user) if last_user else 0
+                    output_tokens = _est(last_ai) if last_ai else 0
+                    total_tokens = input_tokens + output_tokens
+                except Exception:
+                    pass
             # Persist
             self.token_stats["input"] = input_tokens
             self.token_stats["output"] = output_tokens
