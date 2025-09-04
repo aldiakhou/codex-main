@@ -84,6 +84,38 @@ class Operation(BaseModel):
         )
 
     @classmethod
+    def create_user_turn_ex(
+        cls,
+        text: str,
+        cwd: str,
+        approval_policy: str = "on-request",
+        sandbox_mode: str = "read-only",
+        model: str = "gpt-5",
+        effort: str = "medium",
+        summary: str = "auto",
+        operation_id: Optional[str] = None,
+    ) -> 'Operation':
+        """Create a user turn operation with explicit policy/model knobs."""
+        if operation_id is None:
+            operation_id = f"user_turn_{int(datetime.now().timestamp())}"
+
+        normalized_cwd = cwd.replace("\\", "/")
+
+        return cls(
+            id=operation_id,
+            op={
+                "type": "user_turn",
+                "items": [{"type": "text", "text": text}],
+                "cwd": normalized_cwd,
+                "approval_policy": approval_policy,
+                "sandbox_policy": {"mode": sandbox_mode},
+                "model": model,
+                "effort": effort,
+                "summary": summary,
+            },
+        )
+
+    @classmethod
     def create_override_turn_context(cls, cwd: str, operation_id: Optional[str] = None) -> 'Operation':
         """Create an operation to override the working directory for future turns"""
         if operation_id is None:
@@ -111,6 +143,34 @@ class Operation(BaseModel):
         if operation_id is None:
             operation_id = f"interrupt_{int(datetime.now().timestamp())}"
         return cls(id=operation_id, op={"type": "interrupt"})
+
+    @classmethod
+    def create_exec_approval(cls, target_submission_id: str, decision: str, operation_id: Optional[str] = None) -> 'Operation':
+        """Approve/deny an exec request. decision in {approved, approved_for_session, denied, abort}."""
+        if operation_id is None:
+            operation_id = f"exec_approval_{int(datetime.now().timestamp())}"
+        return cls(
+            id=operation_id,
+            op={
+                "type": "exec_approval",
+                "id": target_submission_id,
+                "decision": decision,
+            },
+        )
+
+    @classmethod
+    def create_patch_approval(cls, target_submission_id: str, decision: str, operation_id: Optional[str] = None) -> 'Operation':
+        """Approve/deny a patch request. decision in {approved, approved_for_session, denied, abort}."""
+        if operation_id is None:
+            operation_id = f"patch_approval_{int(datetime.now().timestamp())}"
+        return cls(
+            id=operation_id,
+            op={
+                "type": "patch_approval",
+                "id": target_submission_id,
+                "decision": decision,
+            },
+        )
 
     @classmethod
     def create_file_operation(cls, operation_type: str, file_path: str,

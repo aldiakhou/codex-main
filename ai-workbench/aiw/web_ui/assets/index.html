@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Workbench</title>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      html, body { height: 100%; }
+      body { font-family: 'Inter', sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }
+      .scroll { overflow: auto; }
+      .pane { height: calc(100vh - 64px); }
+    </style>
+  </head>
+  <body class="bg-gray-50">
+    <header class="h-16 px-4 bg-indigo-600 text-white flex items-center justify-between shadow">
+      <div class="flex items-center gap-3">
+        <div class="font-bold text-lg">AI Workbench</div>
+        <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-red-400"></div>
+        <div id="statusText" class="text-sm opacity-90">Disconnected</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="startBtn" class="px-3 py-1.5 bg-white/20 rounded hover:bg-white/30">Start</button>
+        <button id="stopBtn" class="px-3 py-1.5 bg-white/20 rounded hover:bg-white/30">Stop</button>
+        <button id="loginBtn" class="px-3 py-1.5 bg-emerald-500 rounded hover:bg-emerald-600">Login</button>
+        <button id="settingsBtn" class="px-3 py-1.5 bg-white/20 rounded hover:bg-white/30">Settings</button>
+      </div>
+    </header>
+
+    <main class="grid grid-cols-12 gap-3 p-3">
+      <!-- Sidebar -->
+      <aside class="col-span-3 bg-white rounded shadow pane p-3 flex flex-col">
+        <div class="text-sm font-semibold mb-2">Repository</div>
+        <div class="flex items-center gap-2 mb-2">
+          <input id="cwdInput" class="w-full border rounded px-2 py-1 text-sm" placeholder="Working directory" />
+          <button id="refreshFs" class="px-2 py-1 text-sm bg-gray-100 rounded">List</button>
+        </div>
+        <div id="fsList" class="scroll flex-1 text-sm mono border rounded p-2 bg-gray-50"></div>
+        <div class="text-sm font-semibold mt-3 mb-2">Tools</div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <label class="flex items-center gap-2"><input id="toolWebSearch" type="checkbox" class="accent-indigo-600"/> Web search</label>
+          <label class="flex items-center gap-2"><input id="toolLocalDocs" type="checkbox" class="accent-indigo-600"/> Local docs</label>
+          <label class="flex items-center gap-2"><input id="toolMcp" type="checkbox" class="accent-indigo-600"/> MCP</label>
+        </div>
+        <div id="logs" class="scroll mono text-xs mt-3 h-40 border rounded p-2 bg-gray-50"></div>
+      </aside>
+
+      <!-- Chat -->
+      <section class="col-span-6 bg-white rounded shadow pane p-0 flex flex-col">
+        <div id="chat" class="flex-1 scroll p-4 space-y-3"></div>
+        <div class="border-t p-3 bg-gray-50">
+          <div class="grid grid-cols-2 gap-2 mb-2 text-xs">
+            <div class="flex gap-2">
+              <select id="approvalSelect" class="border rounded px-2 py-1">
+                <option value="on-request">Approval: on-request</option>
+                <option value="untrusted">Approval: untrusted</option>
+                <option value="on-failure">Approval: on-failure</option>
+                <option value="never">Approval: never</option>
+              </select>
+              <select id="sandboxSelect" class="border rounded px-2 py-1">
+                <option value="read-only">Sandbox: read-only</option>
+                <option value="workspace-write">Sandbox: workspace-write</option>
+                <option value="danger-full-access">Sandbox: danger-full-access</option>
+              </select>
+            </div>
+            <div class="flex gap-2 justify-end">
+              <select id="modelSelect" class="border rounded px-2 py-1">
+                <option value="gpt-5">Model: gpt-5</option>
+              </select>
+              <select id="effortSelect" class="border rounded px-2 py-1">
+                <option value="minimal">Effort: minimal</option>
+                <option value="low">Effort: low</option>
+                <option selected value="medium">Effort: medium</option>
+                <option value="high">Effort: high</option>
+              </select>
+              <select id="summarySelect" class="border rounded px-2 py-1">
+                <option value="auto">Summary: auto</option>
+                <option value="concise">Summary: concise</option>
+                <option value="detailed">Summary: detailed</option>
+                <option value="none">Summary: none</option>
+              </select>
+            </div>
+          </div>
+          <textarea id="composer" class="w-full border rounded p-2 mono" rows="3" placeholder="Describe your task..."></textarea>
+          <div class="flex gap-2 mt-2 justify-between">
+            <div class="text-xs text-gray-500" id="tokenInfo">Tokens: 0</div>
+            <div class="flex gap-2">
+              <button id="interruptBtn" class="px-3 py-1.5 bg-gray-200 rounded">Stop</button>
+              <button id="sendBtn" class="px-3 py-1.5 bg-indigo-600 text-white rounded">Send</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Side panels -->
+      <section class="col-span-3 pane flex flex-col gap-3">
+        <div class="flex-1 bg-white rounded shadow p-3 flex flex-col">
+          <div class="text-sm font-semibold mb-2">Live Diff</div>
+          <pre id="diffView" class="mono text-xs scroll flex-1 bg-gray-50 border rounded p-2"></pre>
+        </div>
+        <div class="h-52 bg-white rounded shadow p-3 flex flex-col">
+          <div class="text-sm font-semibold mb-2">Command Output</div>
+          <pre id="terminal" class="mono text-xs scroll flex-1 bg-black text-green-200 rounded p-2"></pre>
+        </div>
+        <div class="h-40 bg-white rounded shadow p-3 flex flex-col">
+          <div class="text-sm font-semibold mb-2">Plan</div>
+          <div id="plan" class="text-xs scroll flex-1"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Exec Approval Modal -->
+    <div id="execModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
+      <div class="bg-white rounded shadow w-[600px] p-4">
+        <div class="font-semibold mb-2">Approve Command</div>
+        <pre id="execPreview" class="mono text-xs bg-gray-50 p-2 border rounded"></pre>
+        <div class="mt-3 flex gap-2 justify-end">
+          <button data-decision="approved" class="px-3 py-1.5 bg-emerald-600 text-white rounded">Approve</button>
+          <button data-decision="approved_for_session" class="px-3 py-1.5 bg-emerald-700 text-white rounded">Approve for Session</button>
+          <button data-decision="denied" class="px-3 py-1.5 bg-gray-200 rounded">Deny</button>
+          <button data-decision="abort" class="px-3 py-1.5 bg-red-600 text-white rounded">Abort</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Patch Approval Modal -->
+    <div id="patchModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
+      <div class="bg-white rounded shadow w-[800px] p-4">
+        <div class="font-semibold mb-2">Approve Patch</div>
+        <pre id="patchPreview" class="mono text-xs bg-gray-50 p-2 border rounded h-72 scroll"></pre>
+        <div class="mt-3 flex gap-2 justify-end">
+          <button data-decision="approved" class="px-3 py-1.5 bg-emerald-600 text-white rounded">Approve</button>
+          <button data-decision="approved_for_session" class="px-3 py-1.5 bg-emerald-700 text-white rounded">Approve for Session</button>
+          <button data-decision="denied" class="px-3 py-1.5 bg-gray-200 rounded">Deny</button>
+          <button data-decision="abort" class="px-3 py-1.5 bg-red-600 text-white rounded">Abort</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
+      <div class="bg-white rounded shadow w-[600px] p-4">
+        <div class="font-semibold mb-2">Settings</div>
+        <div class="space-y-3 text-sm">
+          <div>
+            <label class="block text-gray-700 mb-1">Codex Path</label>
+            <div class="flex gap-2">
+              <input id="setCodexPath" class="flex-1 border rounded px-2 py-1" placeholder="codex or full path" />
+              <button id="browseCodex" class="px-2 py-1 bg-gray-100 rounded">Browse</button>
+              <button id="detectCodex" class="px-2 py-1 bg-gray-100 rounded">Detect</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-gray-700 mb-1">Profile (optional)</label>
+            <input id="setProfile" class="w-full border rounded px-2 py-1" placeholder="profile name" />
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <label class="block text-gray-700 mb-1">Timeout (s)</label>
+              <input id="setTimeout" type="number" class="w-full border rounded px-2 py-1" min="30" />
+            </div>
+            <div>
+              <label class="block text-gray-700 mb-1">Max retries</label>
+              <input id="setRetries" type="number" class="w-full border rounded px-2 py-1" min="0" />
+            </div>
+            <div>
+              <label class="block text-gray-700 mb-1">Log level</label>
+              <select id="setLogLevel" class="w-full border rounded px-2 py-1">
+                <option>info</option>
+                <option>debug</option>
+                <option>warning</option>
+                <option>error</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="mt-4 flex gap-2 justify-end">
+          <button id="settingsCancel" class="px-3 py-1.5 bg-gray-200 rounded">Cancel</button>
+          <button id="settingsSave" class="px-3 py-1.5 bg-indigo-600 text-white rounded">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modular JS (order matters for globals) -->
+    <script src="./js/utils.js"></script>
+    <script src="./js/settings.js"></script>
+    <script src="./js/events.js"></script>
+    <script src="./js/bridge.js"></script>
+    <script src="./js/main.js"></script>
+  </body>
+  </html>
