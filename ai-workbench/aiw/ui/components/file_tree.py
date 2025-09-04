@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..services.file_ops import FileOpsService
+from ..motion.animator import pulse_item_background, motion_enabled
 
 
 class FileTree(QWidget):
@@ -70,6 +71,46 @@ class FileTree(QWidget):
             self.tree.expandToDepth(1)
         finally:
             self.tree.blockSignals(False)
+
+    # --- UX ---------------------------------------------------------------
+    def highlight_paths(self, paths: list[str]):
+        """Pulse-highlight given absolute paths if present in the tree.
+
+        3s fade using cubic easing; no-op in reduced-motion mode.
+        """
+        try:
+            if not paths:
+                return
+            norm = {str(Path(p).resolve()) for p in paths}
+            def _walk(item: QTreeWidgetItem):
+                stack = [item]
+                while stack:
+                    it = stack.pop()
+                    p = it.data(0, Qt.ItemDataRole.UserRole)
+                    if p in norm:
+                        base_color = it.background(0)
+                        # Use a warm accent overlay
+                        from PySide6.QtGui import QColor, QBrush
+                        accent = QColor(224, 169, 65)  # amber-ish
+                        accent.setAlphaF(0.4)
+                        it.setBackground(0, QBrush(accent))
+                        def _set_alpha(a: float):
+                            try:
+                                c = QColor(accent)
+                                c.setAlphaF(max(0.0, min(0.4, 0.4 * a)))
+                                it.setBackground(0, QBrush(c))
+                                if a <= 0.01:
+                                    it.setBackground(0, base_color)
+                            except Exception:
+                                pass
+                        pulse_item_background(it, _set_alpha, duration_ms=3000)
+                    for i in range(it.childCount()):
+                        stack.append(it.child(i))
+            # Iterate top-level items
+            for i in range(self.tree.topLevelItemCount()):
+                _walk(self.tree.topLevelItem(i))
+        except Exception:
+            pass
 
     def _populate_dir(self, directory: Path, parent_item: Optional[QTreeWidgetItem], filter_text: str):
         try:

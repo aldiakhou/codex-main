@@ -169,7 +169,7 @@ class MessageRenderer:
             sys_border = palette.get('info', "#36d1bc")
             code_bg = palette.get('code-bg', '#181b1f')
             code = palette.get('text', '#e6e8eb')
-            meta = palette.get('text-dim', '#9aa1ab')
+            meta = palette.get('text-dim', "#ce2f07")
         except Exception:
             # Very safe fallback
             text = '#e6e6e6'; subtle = '#9e9e9e'

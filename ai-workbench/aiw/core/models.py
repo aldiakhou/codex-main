@@ -266,6 +266,7 @@ class UIConfig(BaseModel):
     layout_state: Optional[Dict[str, Any]] = None  # custom pane/dock layout persistence
     recent_files: List[str] = Field(default_factory=list)  # Recent file paths
     animations_enabled: bool = True  # Optional motion layer
+    prefers_reduced_motion: bool = False  # Global reduce motion toggle
 
 
 class BackendConfig(BaseModel):

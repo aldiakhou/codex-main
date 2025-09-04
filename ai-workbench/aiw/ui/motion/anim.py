@@ -46,7 +46,7 @@ def fade_in_widget(w: QWidget, duration_ms: int = 180, start: float = 0.0, end: 
         anim.setDuration(duration_ms)
         anim.setStartValue(start)
         anim.setEndValue(end)
-        anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         _attach_anim(target, anim)
         anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
     except Exception:
@@ -106,4 +106,3 @@ def animate_height_toggle(w: QWidget, make_visible: bool, duration_ms: int = 180
 
 
 __all__ = ["fade_in_widget", "animate_height_toggle"]
-

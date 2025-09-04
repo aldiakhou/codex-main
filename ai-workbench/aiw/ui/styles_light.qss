@@ -1,6 +1,6 @@
 /* Global Light Theme */
 QMainWindow, QWidget {
-  background-color: #f7f8fa;
+  background-color: #22f5e3ff;
   color: #1f2430;
   font-family: "Cascadia Code", "Cascadia Mono", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
   font-size: 11pt;
@@ -69,15 +69,15 @@ QLabel#BubbleHeader[msgRole="user"] { color: #1a4e8a; font-weight: 600; }
 QTextBrowser#BubbleBody[msgRole="user"] { color: #0d2240; }
 
 QFrame#BubbleContainer[msgRole="assistant"] {
-  background: #ffffff;
-  border: 1px solid #d7dde6;
+  background: #1a2ee2ff;
+  border: 1px solid #0f3e85ff;
   border-radius: 14px;
 }
 QLabel#BubbleHeader[msgRole="assistant"] { color: #0f5132; font-weight: 600; }
 QTextBrowser#BubbleBody[msgRole="assistant"] { color: #1f2430; }
 
 QFrame#BubbleContainer[msgRole="system"] {
-  background: #fff2f0;
+  background: #eb0c1fff;
   border: 1px solid #ffcdc4;
   border-radius: 14px;
 }
@@ -87,7 +87,7 @@ QTextBrowser#BubbleBody[msgRole="system"] { color: #5f1a1e; }
 QStatusBar {
   background: #f7f8fa;
   border-top: 1px solid #d7dde6;
-  color: #3a4354;
+  color: #db27ccff;
 }
 
 QTextBrowser { font-size: 10.5pt; }

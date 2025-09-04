@@ -566,7 +566,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
         # Optional motion fade-in for dock
         try:
-            if getattr(self.config_manager.config.ui, 'animations_enabled', True):
+            if getattr(self.config_manager.config.ui, 'animations_enabled', True) and not getattr(self.config_manager.config.ui, 'prefers_reduced_motion', False):
                 fade_in_widget(self.console_dock)
                 try:
                     self.console_dock.visibilityChanged.connect(
@@ -645,7 +645,7 @@ class MainWindow(QMainWindow):
         self.diff_dock.setWidget(self.diff_viewer)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.diff_dock)
         try:
-            if getattr(self.config_manager.config.ui, 'animations_enabled', True):
+            if getattr(self.config_manager.config.ui, 'animations_enabled', True) and not getattr(self.config_manager.config.ui, 'prefers_reduced_motion', False):
                 fade_in_widget(self.diff_dock)
                 try:
                     self.diff_dock.visibilityChanged.connect(
@@ -1454,6 +1454,12 @@ class MainWindow(QMainWindow):
             cur = self.code_editor.get_current_file_path()
             if cur and any(Path(cur).resolve() == Path(p).resolve() for p in modified_files):
                 self.code_editor.load_file(cur)
+            # Pulse-highlight changed files in tree
+            try:
+                if hasattr(self, 'file_tree') and self.file_tree:
+                    self.file_tree.highlight_paths(modified_files)
+            except Exception:
+                pass
         else:
             QMessageBox.critical(self, "Patch Failed", "No changes were applied.")
 
@@ -2161,7 +2167,7 @@ class MainWindow(QMainWindow):
         self.reasoning_panel_visible = not self.reasoning_panel_visible
         if hasattr(self, 'reasoning_view'):
             try:
-                if getattr(self.config_manager.config.ui, 'animations_enabled', True):
+                if getattr(self.config_manager.config.ui, 'animations_enabled', True) and not getattr(self.config_manager.config.ui, 'prefers_reduced_motion', False):
                     animate_height_toggle(self.reasoning_view, self.reasoning_panel_visible)
                 else:
                     self.reasoning_view.setVisible(self.reasoning_panel_visible)

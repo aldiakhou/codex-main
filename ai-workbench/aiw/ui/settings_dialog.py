@@ -53,6 +53,7 @@ class SettingsDialog(QDialog):
         self._init_mcp_tab()
         self._init_history_tab()
         self._init_reasoning_tab()
+        self._init_ui_tab()
         self._init_environment_tab()  # New environment variables tab
         self._init_advanced_tab()
 
@@ -356,6 +357,22 @@ class SettingsDialog(QDialog):
 
         self.tabs.addTab(w, "Advanced")
 
+    def _init_ui_tab(self):
+        """Appearance and motion preferences for the Workbench UI."""
+        w = QWidget()
+        form = QFormLayout(w)
+
+        # Reduced motion toggle
+        self.chk_reduced_motion = QCheckBox("Prefer reduced motion (disable animations)")
+        try:
+            current = bool(getattr(self._wb_cfg_mgr.config.ui, 'prefers_reduced_motion', False))
+        except Exception:
+            current = False
+        self.chk_reduced_motion.setChecked(current)
+        form.addRow(self.chk_reduced_motion)
+
+        self.tabs.addTab(w, "UI")
+
     # ---------- Profile Detection ----------
 
     def _populate_profiles(self):
@@ -651,6 +668,12 @@ class SettingsDialog(QDialog):
                 env_vars[name_item.text().strip()] = value_item.text()
         self._wb_cfg_mgr.config.backend.environment_variables = env_vars
 
+        # UI prefs (reduced motion)
+        try:
+            self._wb_cfg_mgr.config.ui.prefers_reduced_motion = self.chk_reduced_motion.isChecked()
+        except Exception:
+            pass
+
     # ---------- Environment Variables Management ----------
 
     def _refresh_env_table(self):
@@ -728,4 +751,3 @@ class SettingsDialog(QDialog):
         path, _ = QFileDialog.getOpenFileName(self, "Select File")
         if path:
             target.setText(path)
-

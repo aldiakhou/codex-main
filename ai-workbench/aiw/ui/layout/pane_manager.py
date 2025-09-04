@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QMimeData
 from PySide6.QtGui import QFont, QDrag
+from ..motion.animator import fade_in, fade_out, animate_splitter_open, motion_enabled
 
 from ..code_editor import CodeEditorWidget
 from ..components.search_panel import SearchPanel
@@ -254,6 +255,11 @@ class PaneManager(QWidget):
         self._tabs[tab_id] = pane_tab
         index = self._active_stack.tab_widget.addTab(widget, title)
         self._active_stack.tab_widget.setCurrentIndex(index)
+        try:
+            if motion_enabled():
+                fade_in(widget, duration_ms=180)
+        except Exception:
+            pass
         return widget
 
     # Convenience to open search panel
@@ -297,6 +303,11 @@ class PaneManager(QWidget):
             self._active_stack.tab_widget.setCurrentIndex(index)
             try:
                 editor.setFocus()
+            except Exception:
+                pass
+            try:
+                if motion_enabled():
+                    fade_in(editor, duration_ms=180)
             except Exception:
                 pass
 
@@ -444,6 +455,10 @@ class PaneManager(QWidget):
                 self._replace_root(splitter)
                 splitter.addWidget(self._active_stack)
                 splitter.addWidget(new_stack)
+                try:
+                    animate_splitter_open(splitter)
+                except Exception:
+                    pass
                 # Equal sizes (50/50)
                 splitter.setSizes([1, 1])
             else:
@@ -456,6 +471,10 @@ class PaneManager(QWidget):
                     parent.widget(idx + 1).setParent(None)
                     nested.addWidget(self._active_stack)
                     nested.addWidget(new_stack)
+                    try:
+                        animate_splitter_open(nested)
+                    except Exception:
+                        pass
                     # Equal sizes (50/50)
                     nested.setSizes([1, 1])
                 else:
@@ -463,6 +482,10 @@ class PaneManager(QWidget):
                     self._replace_root(splitter)
                     splitter.addWidget(self._active_stack)
                     splitter.addWidget(new_stack)
+                    try:
+                        animate_splitter_open(splitter)
+                    except Exception:
+                        pass
                     splitter.setSizes([1, 1])
         except Exception as e:
             main_logger.error(f"Failed to split pane: {e}")
@@ -597,6 +620,12 @@ class PaneManager(QWidget):
             widget = stack.tab_widget.widget(index)
             tab_id = self._get_tab_id_for_widget(widget)
             if tab_id:
+                try:
+                    if motion_enabled() and widget is not None:
+                        fade_out(widget, duration_ms=160, on_finished=lambda: self.close_tab(tab_id))
+                        return
+                except Exception:
+                    pass
                 self.close_tab(tab_id)
         except Exception as e:
             main_logger.error(f"Failed to close tab at index {index}: {e}")

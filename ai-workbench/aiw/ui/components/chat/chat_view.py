@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QTimer
 from PySide6.QtGui import QFont
+from ...motion.animator import pulse_opacity, motion_enabled
 
 from ...theme_manager import get_current_theme
 from .message_renderer import MessageRenderer, RenderResult
@@ -98,8 +99,8 @@ class ChatView(QWidget):
         # Streaming indicator + token label
         pace_bar = QHBoxLayout(); pace_bar.setContentsMargins(6, 2, 6, 4)
         # Slightly brighter labels for better readability in dark mode
-        self.typing_label = QLabel(""); self.typing_label.setStyleSheet("color:#a1a1aa;font-size:11px;")
-        self.token_label = QLabel(""); self.token_label.setStyleSheet("color:#a1a1aa;font-size:11px;")
+        self.typing_label = QLabel(""); self.typing_label.setStyleSheet("color:#ffcdc4;font-size:11px;")
+        self.token_label = QLabel(""); self.token_label.setStyleSheet("color:#ffcdcf;font-size:11px;")
         pace_bar.addWidget(self.typing_label); pace_bar.addStretch(1); pace_bar.addWidget(self.token_label)
         layout.addLayout(pace_bar)
 
@@ -126,6 +127,12 @@ class ChatView(QWidget):
         cm = ChatMessage(role=role if role in ('user','assistant','system') else 'assistant', content=content, timestamp=timestamp, rich=rich)
         self._messages.append(cm)
         self._render_all()
+        # Subtle fade hint for new content (reduced-motion aware)
+        try:
+            if motion_enabled():
+                pulse_opacity(self._browser, from_opacity=0.6, to_opacity=1.0, duration_ms=200)
+        except Exception:
+            pass
         self._update_count()
 
     def add_user_message(self, content: str, timestamp: Optional[str] = None):
