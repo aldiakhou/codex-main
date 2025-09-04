@@ -128,6 +128,46 @@ class MainWindow(QMainWindow):
         self._setup_backend()
         self._load_initial_state()
 
+    def _init_chat_controls(self, chat_view: ChatView):
+        """Populate chat toolbar controls: model options and temperature.
+
+        - Model selector: list from codex config (default + providers).
+        - Temperature slider override applied in _send_prompt.
+        """
+        try:
+            cfg = get_codex_config_manager().load()
+            models = []
+            if getattr(self, 'current_profile', None) and cfg.profiles:
+                prof = cfg.profiles.get(self.current_profile) or {}
+                m = prof.get('model')
+                if m:
+                    models.append(m)
+            if cfg.model and cfg.model not in models:
+                models.append(cfg.model)
+            for name in sorted(cfg.model_providers.keys()):
+                if name not in models:
+                    models.append(name)
+            if not models:
+                models = ["<default>"]
+            chat_view.model_combo.clear()
+            chat_view.model_combo.addItems(models)
+            pre = models[0]
+            if cfg.model and cfg.model in models:
+                pre = cfg.model
+            idx = chat_view.model_combo.findText(pre)
+            if idx >= 0:
+                chat_view.model_combo.setCurrentIndex(idx)
+            chat_view.model_combo.setEnabled(True)
+            def on_model_changed(i: int):
+                try:
+                    text = chat_view.model_combo.currentText()
+                    self._model_override = None if text == "<default>" else text
+                except Exception:
+                    pass
+            chat_view.model_combo.currentIndexChanged.connect(on_model_changed)
+        except Exception as e:
+            main_logger.warning(f"_init_chat_controls failed: {e}")
+
     def _update_window_title(self):
         """Update window title to show active session"""
         base_title = "AI Development Workbench"
@@ -430,71 +470,70 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.repo_dock)
 
     def _create_console_dock(self):
-            """Create the assistant (chat) dock with ChatView UI."""
-            self.console_dock = QDockWidget("Assistant", self)
-            self.console_dock.setObjectName("Console")
-            self.console_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
-            self.console_dock.setMinimumWidth(340)
+        """Create the assistant (chat) dock with ChatView UI."""
+        self.console_dock = QDockWidget("Assistant", self)
+        self.console_dock.setObjectName("Console")
+        self.console_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
+        self.console_dock.setMinimumWidth(340)
 
-            container = QWidget()
-            vbox = QVBoxLayout(container)
-            vbox.setContentsMargins(4, 4, 4, 4)
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(4, 4, 4, 4)
 
-            # Reasoning panel (live)
-            self.reasoning_view = QTextBrowser()
-            self.reasoning_view.setObjectName("ReasoningView")
-            self.reasoning_view.setStyleSheet("QTextBrowser#ReasoningView { background:#2a2f38; border:1px solid #3a4048; border-radius:4px; font-size:11px; padding:4px; }")
-            self.reasoning_view.setMaximumHeight(120)
-            self.reasoning_view.setVisible(self.reasoning_panel_visible)
-            self.reasoning_view.setHtml("<b>Reasoning</b><br><i>Waiting...</i>")
-            vbox.addWidget(self.reasoning_view)
+        # Reasoning panel (live)
+        self.reasoning_view = QTextBrowser()
+        self.reasoning_view.setObjectName("ReasoningView")
+        self.reasoning_view.setStyleSheet("QTextBrowser#ReasoningView { background:#2a2f38; border:1px solid #3a4048; border-radius:4px; font-size:11px; padding:4px; }")
+        self.reasoning_view.setMaximumHeight(120)
+        self.reasoning_view.setVisible(self.reasoning_panel_visible)
+        self.reasoning_view.setHtml("<b>Reasoning</b><br><i>Waiting...</i>")
+        vbox.addWidget(self.reasoning_view)
 
-            # Chat view
-            self.chat_view = ChatView()
-            try:
-                self.chat_view.apply_patch_requested.connect(lambda raw: self._inline_apply_patch(raw))
-                self.chat_view.explain_requested.connect(lambda raw: self._inline_explain(raw))
-                self.chat_view.refine_requested.connect(lambda raw: self._inline_refine(raw))
-                self.chat_view.temperature_changed.connect(lambda t: setattr(self, '_temp_override', t))
-                self.chat_view.reasoning_toggle.connect(self._toggle_raw_reasoning)
-            except Exception:
-                pass
-            self.chat_view.setMinimumWidth(320)
-            vbox.addWidget(self.chat_view)
-            # Backward compatibility alias (legacy code expects chat_console)
-            self.chat_console = self.chat_view
+        # Chat view
+        self.chat_view = ChatView()
+        try:
+            self.chat_view.apply_patch_requested.connect(lambda raw: self._inline_apply_patch(raw))
+            self.chat_view.explain_requested.connect(lambda raw: self._inline_explain(raw))
+            self.chat_view.refine_requested.connect(lambda raw: self._inline_refine(raw))
+            self.chat_view.temperature_changed.connect(lambda t: setattr(self, '_temp_override', t))
+            self.chat_view.reasoning_toggle.connect(self._toggle_raw_reasoning)
+            self._init_chat_controls(self.chat_view)
+        except Exception:
+            pass
+        self.chat_view.setMinimumWidth(320)
+        vbox.addWidget(self.chat_view)
+        # Backward compatibility alias (legacy code expects chat_console)
+        self.chat_console = self.chat_view
 
-            # Input area
-            input_layout = QHBoxLayout()
-            input_layout.setContentsMargins(0, 0, 0, 0)
-            self.prompt_input = QTextEdit()
-            self.prompt_input.setMaximumHeight(60)
-            self.prompt_input.setFont(QFont("Consolas", 10))
-            self.prompt_input.setPlaceholderText("Ask the AI...")
-            input_layout.addWidget(self.prompt_input, 1)
+        # Input area
+        input_layout = QHBoxLayout()
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        self.prompt_input = QTextEdit()
+        self.prompt_input.setMaximumHeight(60)
+        self.prompt_input.setFont(QFont("Consolas", 10))
+        self.prompt_input.setPlaceholderText("Ask the AI...")
+        input_layout.addWidget(self.prompt_input, 1)
 
-            send_button = QPushButton("Send")
-            send_button.setObjectName("SendPromptButton")
-            send_button.clicked.connect(self._send_prompt)
-            input_layout.addWidget(send_button)
+        send_button = QPushButton("Send")
+        send_button.setObjectName("SendPromptButton")
+        send_button.clicked.connect(self._send_prompt)
+        input_layout.addWidget(send_button)
 
-            vbox.addLayout(input_layout)
-            self.console_dock.setWidget(container)
-            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
-            # Provide a pane-manager style wrapper reference for unified usage
-            self.chat_view = self.chat_console
-            # Optional motion fade-in for dock
-            try:
-                if getattr(self.config_manager.config.ui, 'animations_enabled', True):
-                    fade_in_widget(self.console_dock)
-                    try:
-                        self.console_dock.visibilityChanged.connect(
-                            lambda vis: fade_in_widget(self.console_dock) if vis else None
-                        )
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+        vbox.addLayout(input_layout)
+        self.console_dock.setWidget(container)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.console_dock)
+        # Optional motion fade-in for dock
+        try:
+            if getattr(self.config_manager.config.ui, 'animations_enabled', True):
+                fade_in_widget(self.console_dock)
+                try:
+                    self.console_dock.visibilityChanged.connect(
+                        lambda vis: fade_in_widget(self.console_dock) if vis else None
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _create_chat_tab_widget(self):
         """Factory returning chat view widget for tab mode."""
@@ -515,6 +554,7 @@ class MainWindow(QMainWindow):
             cv.refine_requested.connect(lambda raw: self._inline_refine(raw))
             cv.temperature_changed.connect(lambda t: setattr(self, "_temp_override", t))
             cv.reasoning_toggle.connect(self._toggle_raw_reasoning)
+            self._init_chat_controls(cv)
         except Exception:
             pass
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton
@@ -1484,6 +1524,26 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 main_logger.warning(f"Could not apply configured model override: {e}")
 
+            # Apply UI overrides: model selector and temperature slider
+            try:
+                # Model selector (takes ultimate precedence if set)
+                if getattr(self, '_model_override', None):
+                    prev_model = op.op.get('model')
+                    op.op['model'] = self._model_override
+                    if prev_model != self._model_override:
+                        main_logger.info(f"UI model override applied: '{prev_model}' -> '{self._model_override}'")
+            except Exception as e:
+                main_logger.warning(f"Failed applying UI model override: {e}")
+
+            try:
+                # Temperature (0.0 - 1.0); backend may ignore if unsupported
+                t = getattr(self, '_temp_override', None)
+                if t is not None:
+                    op.op['temperature'] = float(t)
+                    main_logger.info(f"Applied temperature override: {t}")
+            except Exception as e:
+                main_logger.warning(f"Failed applying temperature override: {e}")
+
             # Log the full operation for debugging
             op_json = op.model_dump_json(indent=2)
             main_logger.info(f"Operation JSON: {op_json}")
@@ -1491,6 +1551,12 @@ class MainWindow(QMainWindow):
             GLOBAL_EVENT_BUS.publish('chat.message', {'role': 'system', 'content': f"<i>Sending op:</i> <pre>{op_json}</pre>", 'rich': True})
 
             main_logger.info("Calling backend.send_op()")
+            # Begin streaming indicator immediately
+            try:
+                if hasattr(self, 'chat_view') and self.chat_view:
+                    self.chat_view.set_streaming(True)
+            except Exception:
+                pass
             result = self.backend.send_op(op.model_dump())
             main_logger.info(f"backend.send_op() returned: {result}")
             self.status_bar.showMessage("Waiting for AI response...", 0)
@@ -1712,6 +1778,12 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     main_logger.error(f"Failed to publish agent_message to event bus: {e}")
                     self._add_message("assistant", message)
+            # Stop typing indicator if backend does not send task_complete
+            try:
+                if hasattr(self, 'chat_view') and self.chat_view:
+                    self.chat_view.set_streaming(False)
+            except Exception:
+                pass
 
         # Handle task completion (display accumulated message)
         elif event_type == "task_complete":
