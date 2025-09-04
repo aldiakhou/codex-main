@@ -160,6 +160,7 @@ class PaneManager(QWidget):
     file_opened = Signal(str)
     file_closed = Signal(str)
     content_changed = Signal(str)
+    before_close_unsaved = Signal(str)  # Emitted when attempting to close a dirty file
 
     def __init__(self, parent=None, create_default: bool = True):
         super().__init__(parent)
@@ -273,6 +274,11 @@ class PaneManager(QWidget):
                     return self._tabs[tab_id].widget
 
             editor = CodeEditorWidget()
+            # Wire unsaved-change signal to set tab modified state
+            try:
+                editor.file_changed.connect(lambda changed, _fp=file_path: self._mark_tab_modified(_fp, changed))
+            except Exception:
+                pass
             if content:
                 editor.setPlainText(content)
             else:
@@ -298,6 +304,11 @@ class PaneManager(QWidget):
                 editor.cursorPositionChanged.connect(self._update_cursor_info)
             if hasattr(editor, 'textChanged'):
                 editor.textChanged.connect(self._on_content_changed)
+            # Track modified state for confirm-on-close and star title
+            try:
+                editor.file_changed.connect(lambda changed, _fp=file_path: self._mark_tab_modified(_fp, changed))
+            except Exception:
+                pass
 
             self.file_opened.emit(file_path)
             self._update_file_info()
@@ -364,6 +375,24 @@ class PaneManager(QWidget):
 
             tab = self._tabs[tab_id]
 
+            # Confirm close if unsaved
+            try:
+                if tab.is_modified:
+                    # Let MainWindow decide (connect to before_close_unsaved)
+                    self.before_close_unsaved.emit(tab.file_path or "")
+                    # If MainWindow clears modified state (user saved/discarded), refresh local flag
+                    # Re-read title star as a heuristic
+                    for stack in self._stacks:
+                        idx = stack.tab_widget.indexOf(tab.widget)
+                        if idx >= 0:
+                            t = stack.tab_widget.tabText(idx)
+                            if t.endswith("*"):
+                                # User cancelled; do not close
+                                return
+                            break
+            except Exception:
+                pass
+
             if tab.file_path and tab.file_path in self._file_tabs:
                 del self._file_tabs[tab.file_path]
                 self.file_closed.emit(tab.file_path)
@@ -385,6 +414,25 @@ class PaneManager(QWidget):
             main_logger.info(f"Closed tab: {tab_id}")
         except Exception as e:
             main_logger.error(f"Failed to close tab {tab_id}: {e}")
+
+    def _mark_tab_modified(self, file_path: str, modified: bool):
+        try:
+            tab_id = self._file_tabs.get(file_path)
+            if not tab_id or tab_id not in self._tabs:
+                return
+            tab = self._tabs[tab_id]
+            tab.is_modified = modified
+            # Update star in title
+            for stack in self._stacks:
+                idx = stack.tab_widget.indexOf(tab.widget)
+                if idx >= 0:
+                    title = Path(file_path).name
+                    if modified and not title.endswith("*"):
+                        title += "*"
+                    stack.tab_widget.setTabText(idx, title)
+                    break
+        except Exception as e:
+            main_logger.error(f"Failed to mark tab modified: {e}")
 
     def split_current(self, orientation: Qt.Orientation):
         try:

@@ -12,7 +12,7 @@ from typing import Optional, List
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLineEdit, QTreeWidget, QTreeWidgetItem, QMenu,
-    QFileDialog, QMessageBox, QAbstractItemView
+    QFileDialog, QMessageBox, QAbstractItemView, QInputDialog
 )
 
 from ..services.file_ops import FileOpsService
@@ -186,12 +186,58 @@ class FileTree(QWidget):
 
     # --- Shortcuts --------------------------------------------------------
     def keyPressEvent(self, event):
+        # Rename
         if event.key() == Qt.Key.Key_F2:
             items = self.tree.selectedItems()
             if items:
                 self.tree.editItem(items[0], 0)
                 return
+        # Delete selected files/folders
+        if event.key() == Qt.Key.Key_Delete:
+            items = self.tree.selectedItems()
+            if items:
+                try:
+                    for it in items:
+                        p = Path(it.data(0, Qt.ItemDataRole.UserRole))
+                        self.ops.delete(p.relative_to(self.root))
+                    self.refresh()
+                except Exception as e:
+                    QMessageBox.warning(self, "Delete Failed", str(e))
+                return
+        # New file: Ctrl+N
+        if event.key() == Qt.Key.Key_N and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            # Ctrl+Shift+N handled below
+            if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                base_dir = self._current_dir_or_root()
+                name, ok = QInputDialog.getText(self, "New File", "File name:")
+                if ok and name.strip():
+                    try:
+                        rel = (base_dir / name.strip()).relative_to(self.root)
+                        self.ops.new_file(rel)
+                        self.refresh()
+                    except Exception as e:
+                        QMessageBox.warning(self, "Create File Failed", str(e))
+                return
+        # New folder: Ctrl+Shift+N
+        if event.key() == Qt.Key.Key_N and (event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            base_dir = self._current_dir_or_root()
+            name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+            if ok and name.strip():
+                try:
+                    rel = (base_dir / name.strip()).relative_to(self.root)
+                    self.ops.new_folder(rel)
+                    self.refresh()
+                except Exception as e:
+                    QMessageBox.warning(self, "Create Folder Failed", str(e))
+            return
         super().keyPressEvent(event)
+
+    def _current_dir_or_root(self) -> Path:
+        items = self.tree.selectedItems()
+        if items:
+            p = Path(items[0].data(0, Qt.ItemDataRole.UserRole))
+            return p if p.is_dir() else p.parent
+        return self.root
 
 
 __all__ = ["FileTree"]

@@ -117,6 +117,11 @@ class MainWindow(QMainWindow):
         # Build UI
         self._setup_ui()
         self._apply_theme()
+        # Hook pane manager signals for unsaved-close confirmation and dirty tabs
+        try:
+            self.pane_manager.before_close_unsaved.connect(self._confirm_close_unsaved)
+        except Exception:
+            pass
         self._setup_menus()
         self._setup_toolbar()
         self._setup_status_bar()
@@ -775,6 +780,65 @@ class MainWindow(QMainWindow):
             qs.exec()
         except Exception as e:
             main_logger.error(f"Quick Switcher failed: {e}")
+    
+    def _confirm_close_unsaved(self, file_path: str):
+        """Prompt the user to save/discard/cancel when closing a dirty tab.
+        Updates tab title star and saves when requested.
+        """
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            # Identify current tab widget
+            current_widget = self.pane_manager._active_stack.tab_widget.currentWidget()
+            tab_id = self.pane_manager._get_tab_id_for_widget(current_widget)
+            if not tab_id or tab_id not in self.pane_manager._tabs:
+                return
+            tab = self.pane_manager._tabs[tab_id]
+            title = Path(tab.file_path or 'Untitled').name
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setWindowTitle("Unsaved Changes")
+            msg.setText(f"Save changes to {title}?")
+            msg.setInformativeText("Your changes will be lost if you don't save them.")
+            save_btn = msg.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+            discard_btn = msg.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
+            cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            msg.setDefaultButton(save_btn)
+            msg.exec()
+            clicked = msg.clickedButton()
+            if clicked is save_btn:
+                # Delegate save to PaneManager
+                try:
+                    self.pane_manager.save_current_tab()
+                except Exception:
+                    pass
+                # Clear star
+                try:
+                    idx = self.pane_manager._active_stack.tab_widget.currentIndex()
+                    base = Path(tab.file_path or 'Untitled').name
+                    self.pane_manager._active_stack.tab_widget.setTabText(idx, base)
+                    tab.is_modified = False
+                except Exception:
+                    pass
+            elif clicked is discard_btn:
+                # Clear star without saving; PaneManager will proceed to close
+                try:
+                    idx = self.pane_manager._active_stack.tab_widget.currentIndex()
+                    base = Path(tab.file_path or 'Untitled').name
+                    self.pane_manager._active_stack.tab_widget.setTabText(idx, base)
+                    tab.is_modified = False
+                except Exception:
+                    pass
+            else:
+                # Cancel: re-add star to indicate still modified
+                try:
+                    idx = self.pane_manager._active_stack.tab_widget.currentIndex()
+                    base = Path(tab.file_path or 'Untitled').name + "*"
+                    self.pane_manager._active_stack.tab_widget.setTabText(idx, base)
+                    tab.is_modified = True
+                except Exception:
+                    pass
+        except Exception as e:
+            main_logger.error(f"Failed to confirm unsaved close: {e}")
 
     def _open_file_dialog(self):
         """Open a file from disk and display it in an editor tab."""
