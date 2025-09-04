@@ -48,6 +48,13 @@
           <label class="flex items-center gap-2"><input id="toolMcp" type="checkbox" class="accent-indigo-600"/> MCP</label>
         </div>
         <div id="logs" class="scroll mono text-xs mt-3 h-40 border rounded p-2 bg-gray-50"></div>
+        <div class="mt-3">
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-sm font-semibold">MCP Tools</div>
+            <button id="refreshTools" class="px-2 py-1 text-xs bg-gray-100 rounded">Refresh</button>
+          </div>
+          <div id="mcpTools" class="scroll h-40 border rounded p-2 bg-gray-50 text-sm"></div>
+        </div>
       </aside>
 
       <!-- Chat -->
@@ -107,9 +114,19 @@
           <div class="text-sm font-semibold mb-2">Command Output</div>
           <pre id="terminal" class="mono text-xs scroll flex-1 bg-black text-green-200 rounded p-2"></pre>
         </div>
-        <div class="h-40 bg-white rounded shadow p-3 flex flex-col">
-          <div class="text-sm font-semibold mb-2">Plan</div>
-          <div id="plan" class="text-xs scroll flex-1"></div>
+        <div class="h-56 bg-white rounded shadow p-3 flex flex-col">
+          <div class="text-sm font-semibold mb-2">Plan & History</div>
+          <div id="plan" class="text-xs scroll flex-1 border rounded p-2 mb-2 bg-gray-50"></div>
+          <div class="flex justify-between items-center mb-1">
+            <div class="text-sm">History</div>
+            <button id="refreshHistory" class="px-2 py-1 text-xs bg-gray-100 rounded">Refresh</button>
+          </div>
+          <pre id="historyPanel" class="mono text-xs scroll h-24 bg-gray-50 border rounded p-2"></pre>
+        </div>
+        <div class="h-72 bg-white rounded shadow p-3 flex flex-col">
+          <div class="text-sm font-semibold mb-2">Code Viewer</div>
+          <textarea id="editor" class="hidden"></textarea>
+          <div id="editorMount" class="flex-1 border rounded"></div>
         </div>
       </section>
     </main>
@@ -185,6 +202,21 @@
         </div>
       </div>
     </div>
+    <!-- CodeMirror 5 (from CDN; optional) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js"></script>
+    <script>
+      // Offline Tailwind fallback: if window.tailwind is not present, inject local CSS
+      window.addEventListener('DOMContentLoaded', function(){
+        if (!window.tailwind) {
+          var link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = './css/tw-lite.css';
+          document.head.appendChild(link);
+        }
+      });
+    </script>
 
     <!-- Modular JS (order matters for globals) -->
     <script src="./js/utils.js"></script>

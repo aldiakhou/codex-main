@@ -62,10 +62,30 @@ window.App = window.App || {};
         break;
       case 'plan_update': {
         const el = App.qs('#plan'); if (el) el.textContent = JSON.stringify(e, null, 2); break; }
+      case 'mcp_list_tools_response': {
+        const list = App.qs('#mcpTools'); if (!list) break;
+        list.innerHTML = '';
+        const tools = e.tools ? Object.keys(e.tools) : [];
+        tools.sort().forEach(name => {
+          const item = document.createElement('div');
+          item.className = 'flex items-center justify-between text-sm py-1 border-b last:border-0';
+          item.innerHTML = `<div class="truncate pr-2" title="${name}">${name}</div>`+
+            `<button class="px-2 py-0.5 bg-gray-100 rounded hover:bg-gray-200" data-tool="${name}">Prompt</button>`;
+          item.querySelector('button').onclick = () => {
+            const prompt = `Please use the MCP tool \`${name}\` with appropriate parameters to accomplish the task.`;
+            App.ui.addMsg('user', prompt);
+            App.backend.send_user_turn_json(JSON.stringify({ text: prompt }));
+          };
+          list.appendChild(item);
+        });
+        break; }
+      case 'conversation_history': {
+        const panel = App.qs('#historyPanel'); if (!panel) break;
+        panel.textContent = JSON.stringify(e, null, 2);
+        break; }
       case 'stream_error': App.log(`Stream error: ${e.message}`); break;
       case 'turn_aborted': App.log('Turn aborted'); break;
       default: break;
     }
   };
 })();
-

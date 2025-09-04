@@ -115,6 +115,70 @@ class WebBridge(QObject):
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
 
+    # --- Settings / Config -------------------------------------------------
+    @Slot(result=str)
+    def get_backend_config(self) -> str:
+        try:
+            cfg = get_config_manager().config
+            data = cfg.backend.model_dump()
+            return json.dumps({"ok": True, "backend": data})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot(str, result=str)
+    def set_backend_config(self, payload: str) -> str:
+        try:
+            data = json.loads(payload)
+            allowed = {k: v for k, v in data.items() if k in {"codex_path", "profile", "timeout", "max_retries", "log_level"}}
+            if not allowed:
+                return json.dumps({"ok": False, "error": "no valid keys"})
+            cm = get_config_manager()
+            cm.update_backend_config(**allowed)
+            return json.dumps({"ok": True})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot(result=str)
+    def detect_codex_path(self) -> str:
+        try:
+            cm = get_config_manager()
+            p = cm.get_codex_path()
+            return json.dumps({"ok": bool(p), "codex_path": p})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot(result=str)
+    def browse_for_codex(self) -> str:
+        try:
+            path, _ = QFileDialog.getOpenFileName(None, "Select Codex executable", "", "Executable (*.exe);;All Files (*)")
+            if not path:
+                return json.dumps({"ok": False, "cancelled": True})
+            return json.dumps({"ok": True, "codex_path": path})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    # --- MCP Tools / History ----------------------------------------------
+    @Slot()
+    def list_mcp_tools(self):
+        op = Operation.create_list_mcp_tools()
+        self.backend.send_op(op.model_dump())
+
+    @Slot()
+    def get_history(self):
+        op = Operation.create_get_history()
+        self.backend.send_op(op.model_dump())
+
+    @Slot(str, result=str)
+    def read_file(self, path: str) -> str:
+        try:
+            p = Path(path)
+            if not p.exists():
+                return json.dumps({"ok": False, "error": "not found"})
+            text = p.read_text(encoding="utf-8", errors="replace")
+            return json.dumps({"ok": True, "path": str(p), "content": text})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
     def _on_backend_event(self, event: dict):
         try:
             if isinstance(event, dict) and "msg" in event and isinstance(event["msg"], dict):

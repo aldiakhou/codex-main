@@ -28,7 +28,18 @@ window.App = window.App || {};
         const line = document.createElement('div');
         line.className = 'flex gap-2';
         line.innerHTML = `<span class="${it.is_dir?'text-indigo-600':'text-gray-600'}">${it.is_dir?'📁':'📄'}</span><button class="text-left hover:underline" title="${it.path}">${it.name}</button>`;
-        line.querySelector('button').onclick = () => { if (it.is_dir) { App.qs('#cwdInput').value = it.path; listDir(); } };
+        line.querySelector('button').onclick = async () => {
+          if (it.is_dir) { App.qs('#cwdInput').value = it.path; listDir(); }
+          else {
+            const res = JSON.parse(await App.backend.read_file(it.path));
+            if (res.ok) {
+              if (!window._cm) {
+                try { window._cm = CodeMirror(App.qs('#editorMount'), { value: res.content, lineNumbers: true, mode: 'javascript' }); }
+                catch { App.qs('#editorMount').textContent = res.content; }
+              } else { window._cm.setValue(res.content); }
+            }
+          }
+        };
         el.appendChild(line);
       });
     });
@@ -45,10 +56,11 @@ window.App = window.App || {};
     const start = App.qs('#startBtn'); if (start) start.onclick = () => App.backend.start_backend();
     const stop = App.qs('#stopBtn'); if (stop) stop.onclick = () => App.backend.stop_backend();
     const login = App.qs('#loginBtn'); if (login) login.onclick = () => App.backend.login('');
+    const refreshTools = App.qs('#refreshTools'); if (refreshTools) refreshTools.onclick = () => App.backend.list_mcp_tools();
+    const refreshHistory = App.qs('#refreshHistory'); if (refreshHistory) refreshHistory.onclick = () => App.backend.get_history();
     const sendBtn = App.qs('#sendBtn'); if (sendBtn) sendBtn.onclick = send;
     const interruptBtn = App.qs('#interruptBtn'); if (interruptBtn) interruptBtn.onclick = () => App.backend.interrupt();
     const refreshFs = App.qs('#refreshFs'); if (refreshFs) refreshFs.onclick = listDir;
     bindApprovals(); listDir();
   });
 })();
-
