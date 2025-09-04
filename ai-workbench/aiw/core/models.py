@@ -101,15 +101,9 @@ class Operation(BaseModel):
         )
 
     @classmethod
-    def create_login_request(cls, operation_id: Optional[str] = None) -> 'Operation':
-        """Create a login request operation"""
-        if operation_id is None:
-            operation_id = f"login_{int(datetime.now().timestamp())}"
-
-        return cls(
-            id=operation_id,
-            op={"type": "login_chat_gpt"}
-        )
+    # NOTE: Login is handled out-of-band via `codex login` and is not a proto operation.
+    # See aiw.core.backend_service.BackendService.login_with_chatgpt()
+    # and aiw.core.auth for helpers.
 
     @classmethod
     def create_interrupt(cls, operation_id: Optional[str] = None) -> 'Operation':
@@ -154,7 +148,7 @@ class Operation(BaseModel):
 
 
 class Event(BaseModel):
-    """Event received from backend"""
+    """Event received from backend (shape mirrors codex protocol Event.msg)."""
     type: str
     msg: Dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.now)
@@ -168,34 +162,11 @@ class Event(BaseModel):
         return self.type == "agent_reasoning"
 
     @property
-    def is_login_response(self) -> bool:
-        return self.type in ["login_chat_gpt_response", "login_chat_gpt_complete"]
-
-    @property
     def is_error(self) -> bool:
         return self.type == "error"
 
 
-class Repository(BaseModel):
-    """Represents a Git repository"""
-    path: str
-    name: str
-    current_branch: str = "main"
-    last_opened: Optional[datetime] = None
-
-    @property
-    def display_name(self) -> str:
-        return f"{self.name} ({Path(self.path).name})"
-
-
-class FileItem(BaseModel):
-    """Represents a file in the repository"""
-    path: str
-    name: str
-    is_directory: bool = False
-    size: Optional[int] = None
-    modified_time: Optional[datetime] = None
-    git_status: Optional[str] = None  # "modified", "staged", "untracked", etc.
+## Removed duplicate Repository and FileItem definitions below
 
 
 class Task(BaseModel):
@@ -270,10 +241,4 @@ class UIConfig(BaseModel):
     custom_qss_path: Optional[str] = None  # External QSS override (dev)
 
 
-class BackendConfig(BaseModel):
-    """Backend/Codex configuration"""
-    codex_path: Optional[str] = None
-    profile: Optional[str] = None
-    timeout: int = 300  # seconds
-    max_retries: int = 3
-    log_level: str = "info"
+## Removed duplicate BackendConfig definition below

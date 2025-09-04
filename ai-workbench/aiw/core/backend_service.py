@@ -53,11 +53,13 @@ class BackendService(QObject):
         self.max_connection_attempts = 3
         self.reconnect_timer = QTimer(self)
         self.reconnect_timer.timeout.connect(self._attempt_reconnect)
-        self.heartbeat_timer = QTimer(self)
-        self.heartbeat_timer.timeout.connect(self._send_heartbeat)
+        # Periodic GC for pending operations
+        self.gc_timer = QTimer(self)
+        self.gc_timer.timeout.connect(self._gc_pending_operations)
         self.last_activity = QElapsedTimer()
         self.pending_operations = {}  # Track operations and their progress
         self.running = False
+        self.pending_timeout_seconds = 120
 
     def start(self):
         """Start the backend service with improved error handling"""
@@ -118,8 +120,10 @@ class BackendService(QObject):
             self.stdout_thread.start()
             self.stderr_thread.start()
 
-            # Start heartbeat timer
-            self.heartbeat_timer.start(30000)
+            # Start background GC timer
+            self.gc_timer.start(10000)
+
+            # Initialize activity timer (optional)
             self.last_activity.start()
 
             # Set up timeout for process startup
@@ -133,7 +137,7 @@ class BackendService(QObject):
     def _check_startup_timeout(self):
         """Check if the process failed to start within timeout"""
         if not self.running or self.process.poll() is not None:
-            print("Backend startup timeout - process may be hanging")
+            logger.warning("Backend startup timeout - process may be hanging")
             self.connection_status_changed.emit("error")
             self.backend_error.emit("Backend startup timeout. The process may be hanging or unresponsive.")
 
@@ -214,15 +218,7 @@ class BackendService(QObject):
             if self.running:
                 logger.error(f"Error reading stderr: {e}", exc_info=True)
 
-    def _check_startup_timeout(self):
-        """Check if the process failed to start within timeout"""
-        logger.debug("_check_startup_timeout called")
-        if not self.running or (self.process and self.process.poll() is not None):
-            logger.warning("Backend startup timeout - process may be hanging or failed to start")
-            self.connection_status_changed.emit("error")
-            self.backend_error.emit("Backend startup timeout. The process may be hanging or unresponsive.")
-        else:
-            logger.info("Backend startup timeout check passed - process appears to be running")
+    # (removed duplicate _check_startup_timeout definition)
 
     def stop(self):
         """Stop the backend service gracefully"""
@@ -237,7 +233,7 @@ class BackendService(QObject):
 
         # Stop timers
         self.reconnect_timer.stop()
-        self.heartbeat_timer.stop()
+        self.gc_timer.stop()
 
         # Terminate process gracefully
         if self.process:
@@ -312,78 +308,69 @@ class BackendService(QObject):
             self.backend_error.emit(error_msg)
             return False
 
-    def _on_ready_read(self):
-        """Handle standard output from the backend"""
-        while self.process.canReadLine():
-            line = self.process.readLine().data().decode('utf-8', errors='replace').strip()
-            if line:
-                # Skip log messages that start with timestamp and contain log levels
-                if (line.startswith('20') and ('INFO' in line or 'WARN' in line or 'ERROR' in line or 'DEBUG' in line)):
-                    continue
-                # Skip empty lines or lines that don't look like JSON
-                if not line or not (line.startswith('{') or line.startswith('[')):
-                    continue
-                try:
-                    event = json.loads(line)
-                    self.new_event.emit(event)
-
-                    # Update operation progress if this is a response
-                    if isinstance(event, dict) and "id" in event:
-                        operation_id = event["id"]
-                        if operation_id in self.pending_operations:
-                            self.operation_progress.emit(operation_id, 100, "Operation completed")
-                            # Clean up completed operation after a delay
-                            self.operation_cleanup.emit(operation_id)
-
-                    # Update last activity
-                    self.last_activity.restart()
-
-                except json.JSONDecodeError as e:
-                    print(f"Failed to parse JSON from backend: {e}\nLine: {line}", file=sys.stderr)
-                    self.backend_error.emit(f"Backend communication error: Invalid JSON received")
-
-    def _on_ready_read_error(self):
-        """Handle standard error output from the backend"""
-        if self.process:
-            error_data = self.process.readAllStandardError().data().decode('utf-8', errors='replace')
-            if error_data.strip():
-                print(f"Backend stderr: {error_data}", file=sys.stderr)
-                # Emit error signal for significant errors
-                if "error" in error_data.lower() or "failed" in error_data.lower():
-                    self.backend_error.emit(f"Backend error: {error_data.strip()}")
-
-    def _on_process_started(self):
-        """Handle successful process startup"""
-        print("Backend process started successfully")
-        self.connection_attempts = 0
-        self.connection_status_changed.emit("connected")
-        self.backend_started.emit()
-
-        # Start heartbeat timer (check every 30 seconds)
-        self.heartbeat_timer.start(30000)
-
-        # Reset last activity timer
-        self.last_activity.start()
-
-        # Send an initial newline to stdin to ensure the pipe is established
-        # This helps with protocol mode initialization
-        if self.process:
-            self.process.write(b"\n")
+    # Removed unused QProcess-style handlers; using subprocess + threads.
 
     def _attempt_reconnect(self):
         """Attempt to reconnect to the backend"""
         self.reconnect_timer.stop()
         if self.connection_attempts < self.max_connection_attempts:
-            print(f"Reconnecting to backend (attempt {self.connection_attempts + 1})")
+            logger.info(f"Reconnecting to backend (attempt {self.connection_attempts + 1})")
             self.start()
         else:
             self.backend_error.emit("Failed to reconnect to backend after multiple attempts")
 
-    def _send_heartbeat(self):
-        """Send a heartbeat to check if backend is responsive"""
-        if self.last_activity.elapsed() > 60000:  # No activity for 1 minute
-            print("Backend appears unresponsive, sending heartbeat check")
-            # Could send a simple ping operation here if needed
+    def _gc_pending_operations(self):
+        """Garbage-collect timed-out operations to avoid leaks."""
+        try:
+            now = time.time()
+            stale = []
+            for op_id, meta in list(self.pending_operations.items()):
+                start = meta.get("start_time", now)
+                if now - start > self.pending_timeout_seconds:
+                    stale.append(op_id)
+            for op_id in stale:
+                logger.warning(f"Operation {op_id} timed out after {self.pending_timeout_seconds}s; cleaning up")
+                self.operation_progress.emit(op_id, -1, "Operation timed out")
+                self._cleanup_operation(op_id)
+        except Exception:
+            logger.debug("GC of pending operations encountered an error", exc_info=True)
+
+    # --- Auth helpers -----------------------------------------------------
+    def login_with_chatgpt(self, api_key: Optional[str] = None) -> None:
+        """Run `codex login` (optionally with --api-key) in a background thread."""
+        def _worker():
+            try:
+                op_id = f"login_{int(time.time())}"
+                self.operation_progress.emit(op_id, 0, "Starting login")
+                cmd = [self.codex_executable_path] if self.codex_executable_path else ["codex"]
+                cmd.append("login")
+                if api_key:
+                    cmd.extend(["--api-key", api_key])
+                env = dict(os.environ)
+                env["RUST_BACKTRACE"] = "1"
+                logger.info(f"Launching login command: {' '.join(cmd)}")
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+                # Stream stderr to logs; stdout is minimal for login
+                stderr_lines = []
+                if proc.stderr:
+                    for line in proc.stderr:
+                        line = line.rstrip()
+                        if not line:
+                            continue
+                        stderr_lines.append(line)
+                        logger.info(f"login: {line}")
+                ret = proc.wait()
+                if ret == 0:
+                    self.operation_progress.emit(op_id, 100, "Login successful")
+                else:
+                    msg = stderr_lines[-1] if stderr_lines else f"Login failed with code {ret}"
+                    self.backend_error.emit(msg)
+                    self.operation_progress.emit(op_id, -1, msg)
+            except Exception as e:
+                logger.error("Login command failed", exc_info=True)
+                self.backend_error.emit(f"Login failed: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _cleanup_operation(self, operation_id: str):
         """Clean up a completed operation"""

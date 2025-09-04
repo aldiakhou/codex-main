@@ -134,32 +134,28 @@ class ConfigManager:
         search_paths = []
 
         if system == "windows":
-            # Windows paths
+            # Prefer PATH first, then well-known install dirs
             search_paths.extend([
-                # Local installation
+                self._find_in_path("codex.exe"),
                 Path.home() / "AppData" / "Local" / "Programs" / "Codex",
                 Path.home() / "AppData" / "Roaming" / "npm",
                 "C:\\Program Files\\Codex",
                 "C:\\Program Files (x86)\\Codex",
-                # Check PATH
-                self._find_in_path("codex.exe"),
             ])
         elif system == "darwin":  # macOS
             search_paths.extend([
+                self._find_in_path("codex"),
                 "/usr/local/bin",
                 "/opt/homebrew/bin",
                 Path.home() / "Library" / "Application Support" / "Codex",
-                # Check PATH
-                self._find_in_path("codex"),
             ])
         elif system == "linux":
             search_paths.extend([
+                self._find_in_path("codex"),
                 "/usr/local/bin",
                 "/usr/bin",
                 "/opt/codex",
                 Path.home() / ".local" / "bin",
-                # Check PATH
-                self._find_in_path("codex"),
             ])
 
         # Also check for codex-rs binary in the current project
@@ -175,12 +171,17 @@ class ConfigManager:
             ])
 
         # Check all paths
+        seen = set()
         for path in search_paths + project_codex_paths:
-            if path:
-                # Ensure path is a Path object
-                path_obj = Path(path) if isinstance(path, str) else path
-                if self._is_valid_codex_executable(path_obj):
-                    return str(path_obj)
+            if not path:
+                continue
+            path_obj = Path(path) if isinstance(path, str) else path
+            key = str(path_obj)
+            if key in seen:
+                continue
+            seen.add(key)
+            if self._is_valid_codex_executable(path_obj):
+                return str(path_obj)
 
         return None
 
