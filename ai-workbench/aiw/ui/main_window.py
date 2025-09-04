@@ -35,7 +35,7 @@ from ..core.models import Repository, FileItem, Operation, Task
 from ..core.task_runner import get_workflow_runner
 from .code_editor import CodeEditorWidget
 from .diff_view import DiffViewWidget
-from .components.chat_view import ChatView
+from .components.chat.chat_view import ChatView
 from .components.file_tree import FileTree
 from .components.quick_switcher import QuickSwitcher
 from .components.search_panel import SearchPanel
@@ -451,6 +451,14 @@ class MainWindow(QMainWindow):
 
             # Chat view
             self.chat_view = ChatView()
+            try:
+                self.chat_view.apply_patch_requested.connect(lambda raw: self._inline_apply_patch(raw))
+                self.chat_view.explain_requested.connect(lambda raw: self._inline_explain(raw))
+                self.chat_view.refine_requested.connect(lambda raw: self._inline_refine(raw))
+                self.chat_view.temperature_changed.connect(lambda t: setattr(self, '_temp_override', t))
+                self.chat_view.reasoning_toggle.connect(self._toggle_raw_reasoning)
+            except Exception:
+                pass
             self.chat_view.setMinimumWidth(320)
             vbox.addWidget(self.chat_view)
             # Backward compatibility alias (legacy code expects chat_console)
@@ -501,6 +509,14 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         cv = ChatView()
+        try:
+            cv.apply_patch_requested.connect(lambda raw: self._inline_apply_patch(raw))
+            cv.explain_requested.connect(lambda raw: self._inline_explain(raw))
+            cv.refine_requested.connect(lambda raw: self._inline_refine(raw))
+            cv.temperature_changed.connect(lambda t: setattr(self, "_temp_override", t))
+            cv.reasoning_toggle.connect(self._toggle_raw_reasoning)
+        except Exception:
+            pass
         from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
@@ -1044,7 +1060,7 @@ class MainWindow(QMainWindow):
             if getattr(self, 'conversation_store', None) and getattr(self.conversation_store, 'session', None):
                 loaded_msgs = self.conversation_store.get_messages()
                 if hasattr(self, 'chat_view') and self.chat_view:
-                    from .components.chat_view import ChatMessage
+                    from .components.chat.chat_view import ChatMessage
                     self.chat_view.set_messages([
                         ChatMessage(role=m.role, content=m.content, timestamp=m.timestamp, rich=m.rich)
                         for m in loaded_msgs
@@ -1642,6 +1658,11 @@ class MainWindow(QMainWindow):
             delta = event_obj.get("delta", "")
             if self.show_raw_reasoning:
                 self.current_reasoning += delta
+            try:
+                if hasattr(self, 'chat_view'):
+                    self.chat_view.set_streaming(True)
+            except Exception:
+                pass
 
         # Handle reasoning section break (merge into assistant message)
         elif event_type == "agent_reasoning_section_break":
@@ -1664,6 +1685,11 @@ class MainWindow(QMainWindow):
         elif event_type == "agent_message_delta":
             delta = event_obj.get("delta", "")
             self.current_message += delta
+            try:
+                if hasattr(self, 'chat_view'):
+                    self.chat_view.set_streaming(True)
+            except Exception:
+                pass
             try:
                 if hasattr(self, 'chat_view'):
                     self.chat_view.append_assistant_delta(delta)
@@ -1689,6 +1715,11 @@ class MainWindow(QMainWindow):
 
         # Handle task completion (display accumulated message)
         elif event_type == "task_complete":
+            try:
+                if hasattr(self, "chat_view"):
+                    self.chat_view.set_streaming(False)
+            except Exception:
+                pass
             # Include any final reasoning in the assistant message
             final_content = ""
             if self.current_message.strip():
@@ -2677,6 +2708,10 @@ class MainWindow(QMainWindow):
                 pass
             # Update status bar with token information (short-lived)
             self.status_bar.showMessage(f"Tokens: {total_tokens} (In: {input_tokens}, Out: {output_tokens})", 3000)
+            try:
+                self.chat_view.set_token_counts(input_tokens, output_tokens, total_tokens)
+            except Exception:
+                pass
 
         except Exception as e:
             main_logger.error(f"Error handling token count: {e}", exc_info=True)
@@ -2722,7 +2757,7 @@ class MainWindow(QMainWindow):
                 self.conversation_store.set_messages(messages)
             # Hydrate chat view directly without re-adding to store
             if hasattr(self, 'chat_view') and self.chat_view:
-                from .components.chat_view import ChatMessage
+                from .components.chat.chat_view import ChatMessage
                 self.chat_view.set_messages([
                     ChatMessage(role=m.get('role', 'assistant'), content=m.get('content', ''),
                                 timestamp=m.get('timestamp'), rich=bool(m.get('rich', False)))
@@ -2908,7 +2943,7 @@ class MainWindow(QMainWindow):
             self.conversation_store.session.created = data.get('created', '')
             self.conversation_store.session.messages = [StoredMessage(**m) for m in messages]
             # Hydrate chat view
-            from .components.chat_view import ChatMessage
+            from .components.chat.chat_view import ChatMessage
             self.chat_view.set_messages([
                 ChatMessage(role=m['role'], content=m['content'], timestamp=m.get('timestamp'), rich=m.get('rich', False))
                 for m in messages
@@ -2959,5 +2994,19 @@ class MainWindow(QMainWindow):
             main_logger.error(f"Failed deleting session {session_id}: {e}")
             QMessageBox.critical(self, "Delete Failed", f"Failed to delete session: {e}")
             return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
