@@ -114,15 +114,25 @@ class TabStack(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.tab_widget = QTabWidget(self)
-        self.tab_widget.setTabsClosable(True)
         self.tab_widget.setMovable(True)
+        # Install custom draggable tab bar first
         self._tab_bar = DraggableTabBar(lambda: self)
         self.tab_widget.setTabBar(self._tab_bar)
+        # Then enable close buttons and wire both widget and bar signals
         try:
+            self.tab_widget.setTabsClosable(True)
             self._tab_bar.setTabsClosable(True)
         except Exception:
+            # Some platforms/styles may not support setTabsClosable on bar
             pass
-        self.tab_widget.tabCloseRequested.connect(self._on_close_index)
+        try:
+            self.tab_widget.tabCloseRequested.connect(self._on_close_index)
+        except Exception:
+            pass
+        try:
+            self._tab_bar.tabCloseRequested.connect(self._on_close_index)
+        except Exception:
+            pass
         self.tab_widget.currentChanged.connect(self._on_current_changed)
         self.layout.addWidget(self.tab_widget)
 
