@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cadenza"
+version = "0.1.0"
+description = "Cadenza - Python MCP client and orchestrator"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Codex Team", email = "team@codex.dev"},
+]
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    # Stay compatible with common Google libs that require protobuf < 6
+    "protobuf>=5.26.1,<6.0.0",
+    "grpcio>=1.50.0",
+    "grpcio-tools>=1.50.0",
+    "asyncio-mqtt>=0.13.0",
+    "pydantic>=2.0.0",
+    "structlog>=23.0.0",
+    "click>=8.0.0",
+    "httpx>=0.24.0",
+    "websockets>=11.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "pyright>=1.1.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+cadenza = "codex_python.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codex_python"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/codex_python",
+  "README.md",
+  "proto/*.proto",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP"]
+ignore = ["E501"]
+
+[tool.pyright]
+include = ["src"]
+exclude = ["**/node_modules", "**/__pycache__"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v"
+asyncio_mode = "auto"

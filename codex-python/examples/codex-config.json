@@ -1,0 +1,67 @@
+"""
+Example configuration file for Codex Python
+"""
+
+{
+  "servers": {
+    "filesystem": {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/files"],
+      "transport": "stdio",
+      "env": {
+        "NODE_ENV": "production"
+      },
+      "timeout": 30.0
+    },
+    "github": {
+      "name": "github",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "transport": "stdio",
+      "env": {
+        "GITHUB_TOKEN": "your-github-token-here"
+      },
+      "timeout": 60.0
+    },
+    "brave-search": {
+      "name": "brave-search",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "transport": "stdio",
+      "env": {
+        "BRAVE_API_KEY": "your-brave-api-key-here"
+      },
+      "timeout": 30.0
+    },
+    "sqlite": {
+      "name": "sqlite",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite", "database.db"],
+      "transport": "stdio",
+      "timeout": 30.0
+    }
+  },
+  "auth": {
+    "type": "none"
+  },
+  "timeout": 30.0,
+  "log_level": "INFO",
+  "max_retries": 3,
+  "retry_delay": 1.0,
+  "default_transport": "stdio",
+  "enable_websocket": true,
+  "tool_timeout": 60.0,
+  "max_concurrent_tools": 10,
+  "allowed_tools": [
+    "fs.*",
+    "github.*",
+    "brave.*",
+    "sqlite.*"
+  ],
+  "blocked_tools": [
+    "fs.delete",
+    "fs.remove"
+  ],
+  "enable_sandbox": true
+}
