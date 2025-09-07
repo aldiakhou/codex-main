@@ -40,6 +40,17 @@ class BackendConfig(BaseModel):
     environment_variables: Dict[str, str] = Field(default_factory=dict)  # Custom env vars for codex process
 
 
+class MCPServerConfig(BaseModel):
+    """UI-managed MCP server configuration (applied to codex via -c overrides)."""
+    name: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
+    transport: str = "stdio"  # currently only stdio supported for codex -c
+    url: Optional[str] = None
+    timeout: int = 30
+
+
 class Operation(BaseModel):
     """JSON operation sent to backend"""
     id: str
@@ -293,6 +304,8 @@ class Config(BaseModel):
     version: str = "1.0.0"
     ui: UIConfig = Field(default_factory=lambda: UIConfig())
     backend: BackendConfig = Field(default_factory=lambda: BackendConfig())
+    # UI-managed MCP servers; pushed to codex via -c overrides on start
+    mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
     repositories: List[Repository] = Field(default_factory=list)
     recent_workflows: List[str] = Field(default_factory=list)
     window_geometry: Optional[Dict[str, Any]] = None

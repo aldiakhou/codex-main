@@ -15,7 +15,8 @@ window.App = window.App || {};
     if (dot) dot.className = 'w-2.5 h-2.5 rounded-full ' + (s === 'connected' ? 'bg-emerald-500' : s === 'connecting' ? 'bg-amber-400' : 'bg-red-400');
     // Toggle start/stop buttons
     const start = qs('#startBtn'); const stop = qs('#stopBtn');
-    if (start) { start.disabled = (s !== 'disconnected'); start.classList.toggle('opacity-50', start.disabled); start.classList.toggle('cursor-not-allowed', start.disabled); }
+    // Allow Start unless already connected; Stop only when connected
+    if (start) { start.disabled = (s === 'connected'); start.classList.toggle('opacity-50', start.disabled); start.classList.toggle('cursor-not-allowed', start.disabled); }
     if (stop) { stop.disabled = (s !== 'connected'); stop.classList.toggle('opacity-50', stop.disabled); stop.classList.toggle('cursor-not-allowed', stop.disabled); }
   };
 

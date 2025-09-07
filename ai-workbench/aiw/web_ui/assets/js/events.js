@@ -16,6 +16,8 @@ window.App = window.App || {};
         if (App.backend && App.backend.list_mcp_tools) {
           try { App._toolsRefreshing = true; App.backend.list_mcp_tools(); } catch {}
         }
+        // Clear server status
+        const ss = App.qs('#serverStatus'); if (ss) ss.textContent = '';
         break;
       case 'agent_message_delta':
         App.ui.addMsg('assistant', e.delta || '');
@@ -88,6 +90,26 @@ window.App = window.App || {};
           };
           list.appendChild(item);
         });
+        // Server status summary from qualified names
+        const ss = App.qs('#serverStatus');
+        if (ss) {
+          const counts = {};
+          (App.state.mcpToolNames || []).forEach(n => {
+            const ix = n.indexOf('__'); if (ix>0) { const srv = n.slice(0, ix); counts[srv]=(counts[srv]||0)+1; }
+          });
+          const lines = Object.keys(counts).sort().map(k => `Server ${k}: ${counts[k]} tools`);
+          ss.textContent = lines.length ? lines.join('\n') + '\n' : '';
+        }
+        break; }
+      case 'error': {
+        // Show errors (including MCP startup) in logs and server panel
+        if (e.message) App.log(`Error: ${e.message}`);
+        const m = /MCP client for `([^`]+)` failed to start: (.*)/.exec(e.message||'');
+        if (m) {
+          const [_, name, err] = m;
+          const ss = App.qs('#serverStatus');
+          if (ss) ss.textContent += `Server ${name}: ERROR ${err}\n`;
+        }
         break; }
       case 'conversation_history': {
         const panel = App.qs('#historyPanel'); if (!panel) break;

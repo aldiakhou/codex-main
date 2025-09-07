@@ -47,7 +47,9 @@
           <label class="flex items-center gap-2"><input id="toolLocalDocs" type="checkbox" class="accent-indigo-600"/> Local docs</label>
           <label class="flex items-center gap-2"><input id="toolMcp" type="checkbox" class="accent-indigo-600"/> MCP</label>
         </div>
-        <div id="logs" class="scroll mono text-xs mt-3 h-40 border rounded p-2 bg-gray-50"></div>
+        <div class="text-sm font-semibold mt-3 mb-1">Servers</div>
+        <div id="serverStatus" class="scroll mono text-xs h-24 border rounded p-2 bg-gray-50"></div>
+        <div id="logs" class="scroll mono text-xs mt-3 h-32 border rounded p-2 bg-gray-50"></div>
         <div class="mt-3">
           <div class="flex items-center justify-between mb-2 gap-2">
             <div class="text-sm font-semibold">MCP Tools</div>
@@ -195,6 +197,18 @@
                 <option>error</option>
               </select>
             </div>
+          </div>
+        </div>
+        <div class="mt-4 border-t pt-3">
+          <div class="flex items-center justify-between mb-2">
+            <div class="font-semibold">MCP Servers</div>
+            <div class="flex gap-2">
+              <button id="addServerBtn" class="px-2 py-1 text-xs bg-gray-100 rounded">Add</button>
+              <button id="applyServersBtn" class="px-2 py-1 text-xs bg-indigo-600 text-white rounded">Apply & Restart</button>
+            </div>
+          </div>
+          <div id="serversList" class="max-h-40 overflow-auto border rounded">
+            <!-- rows injected by JS -->
           </div>
         </div>
         <div class="mt-4 flex gap-2 justify-end">

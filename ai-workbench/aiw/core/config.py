@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 from .models import Config, UIConfig, BackendConfig, Repository
+from .models import MCPServerConfig
 
 
 class ConfigManager:
@@ -69,6 +70,19 @@ class ConfigManager:
             if hasattr(self.config.backend, key):
                 setattr(self.config.backend, key, value)
         self.save_config()
+
+    # --- MCP servers -------------------------------------------------------
+    def get_mcp_servers(self) -> Dict[str, MCPServerConfig]:
+        return self.config.mcp_servers
+
+    def upsert_mcp_server(self, server: MCPServerConfig) -> None:
+        self.config.mcp_servers[server.name] = server
+        self.save_config()
+
+    def remove_mcp_server(self, name: str) -> None:
+        if name in self.config.mcp_servers:
+            del self.config.mcp_servers[name]
+            self.save_config()
 
     def add_repository(self, repo: Repository) -> None:
         """Add a repository to the list"""

@@ -11,8 +11,8 @@ window.App = window.App || {};
   App.initChannel = function () {
     new QWebChannel(qt.webChannelTransport, (channel) => {
       bindBackend(channel.objects.backend);
-      App.status('connecting');
+      // Default to disconnected until backend reports otherwise
+      App.status('disconnected');
     });
   };
 })();
-

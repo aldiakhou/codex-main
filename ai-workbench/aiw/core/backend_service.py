@@ -5,6 +5,7 @@ import time
 import threading
 import subprocess
 import logging
+from .config import get_config_manager
 from typing import Dict, Optional
 from PySide6.QtCore import QObject, Signal, QThread, QTimer, QElapsedTimer
 
@@ -83,6 +84,21 @@ class BackendService(QObject):
             if self.profile:
                 cmd.extend(["-p", self.profile])
                 logger.info(f"Using profile: {self.profile}")
+            # Inject MCP servers as -c overrides from UI-managed config
+            try:
+                cm = get_config_manager()
+                mcp = cm.get_mcp_servers()
+                for name, s in mcp.items():
+                    # Command
+                    cmd.extend(["-c", f"mcp_servers.{name}.command={json.dumps(s.command)}"])
+                    # Args (JSON array)
+                    if s.args:
+                        cmd.extend(["-c", f"mcp_servers.{name}.args={json.dumps(s.args)}"])
+                    # Env (JSON object)
+                    if s.env:
+                        cmd.extend(["-c", f"mcp_servers.{name}.env={json.dumps(s.env)}"])
+            except Exception:
+                logger.debug("Failed to append MCP -c overrides", exc_info=True)
             cmd.append("proto")
             
             logger.info(f"Full command: {' '.join(cmd)}")

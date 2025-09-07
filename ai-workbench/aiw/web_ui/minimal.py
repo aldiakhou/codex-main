@@ -37,6 +37,8 @@ class WebBridge(QObject):
         self.backend.connection_status_changed.connect(self.status_changed.emit)
         self.backend.backend_error.connect(self._on_backend_error)
         self.backend.operation_progress.connect(self.operation_progress.emit)
+        # Cache: servers and errors for UI
+        self._server_errors: dict[str, str] = {}
 
     # Lifecycle
     @Slot()
@@ -184,6 +186,14 @@ class WebBridge(QObject):
             if isinstance(event, dict) and "msg" in event and isinstance(event["msg"], dict):
                 msg_type = event["msg"].get("type", "")
                 flat = {"id": event.get("id", ""), "type": msg_type, **event["msg"]}
+                # Track server error messages for display
+                if msg_type == "error":
+                    msg = event["msg"].get("message", "")
+                    # crude extract: MCP client for `name` failed to start: ...
+                    import re
+                    m = re.search(r"MCP client for `([^`]+)` failed to start: (.*)", msg)
+                    if m:
+                        self._server_errors[m.group(1)] = m.group(2)
                 self.event_received.emit(flat)
             else:
                 self.event_received.emit(event)
@@ -203,6 +213,48 @@ class WebBridge(QObject):
             return json.dumps({"ok": True, "backend": data})
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
+
+    # --- MCP Servers management -------------------------------------------
+    @Slot(result=str)
+    def get_mcp_servers(self) -> str:
+        try:
+            from ..core.config import get_config_manager
+            cm = get_config_manager()
+            servers = {name: s.model_dump() for name, s in cm.get_mcp_servers().items()}
+            return json.dumps({"ok": True, "servers": servers, "errors": self._server_errors})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot(str, result=str)
+    def upsert_mcp_server(self, payload: str) -> str:
+        try:
+            from ..core.config import get_config_manager
+            from ..core.models import MCPServerConfig
+            data = json.loads(payload)
+            server = MCPServerConfig(**data)
+            cm = get_config_manager()
+            cm.upsert_mcp_server(server)
+            return json.dumps({"ok": True})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot(str, result=str)
+    def delete_mcp_server(self, name: str) -> str:
+        try:
+            from ..core.config import get_config_manager
+            cm = get_config_manager()
+            cm.remove_mcp_server(name)
+            return json.dumps({"ok": True})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot()
+    def restart_backend(self):
+        try:
+            self.backend.stop()
+        except Exception:
+            pass
+        self.backend.start()
 
     @Slot(str, result=str)
     def set_backend_config(self, payload: str) -> str:
