@@ -15,7 +15,12 @@
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }
       .scroll { overflow: auto; }
       .pane { height: calc(100vh - 64px); }
+      /* Make CodeMirror stretch to parent height */
+      #editorMountCenter, #graphMount { height: 100%; }
+      .CodeMirror { height: 100% !important; }
     </style>
+    <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
   </head>
   <body class="bg-gray-50">
     <header class="h-16 px-4 bg-indigo-600 text-white flex items-center justify-between shadow">
@@ -60,48 +65,83 @@
         </div>
       </aside>
 
-      <!-- Chat -->
+      <!-- Center: Chat / Graph / Code tabs -->
       <section class="col-span-6 bg-white rounded shadow pane p-0 flex flex-col">
-        <div id="chat" class="flex-1 scroll p-4 space-y-3"></div>
-        <div class="border-t p-3 bg-gray-50">
-          <div class="grid grid-cols-2 gap-2 mb-2 text-xs">
-            <div class="flex gap-2">
-              <select id="approvalSelect" class="border rounded px-2 py-1">
-                <option value="on-request">Approval: on-request</option>
-                <option value="untrusted">Approval: untrusted</option>
-                <option value="on-failure">Approval: on-failure</option>
-                <option value="never">Approval: never</option>
-              </select>
-              <select id="sandboxSelect" class="border rounded px-2 py-1">
-                <option value="read-only">Sandbox: read-only</option>
-                <option value="workspace-write">Sandbox: workspace-write</option>
-                <option value="danger-full-access">Sandbox: danger-full-access</option>
-              </select>
+        <div class="border-b px-3 pt-2 bg-gray-50 flex items-center gap-2">
+          <button id="tabChat" class="px-2 py-1 text-sm rounded bg-indigo-600 text-white">Chat</button>
+          <button id="tabGraph" class="px-2 py-1 text-sm rounded bg-gray-200">Graph</button>
+          <button id="tabCode" class="px-2 py-1 text-sm rounded bg-gray-200">Code</button>
+          <div class="flex-1"></div>
+          <input id="graphSearch" class="hidden border rounded px-2 py-1 text-xs" placeholder="Search graph..." />
+          <select id="graphLayout" class="hidden border rounded px-2 py-1 text-xs">
+            <option value="cose">cose</option>
+            <option value="breadthfirst">breadthfirst</option>
+          </select>
+          <button id="graphFit" class="hidden px-2 py-1 text-xs bg-gray-100 rounded">Fit</button>
+          <button id="refreshGraph" class="hidden px-2 py-1 text-xs bg-gray-100 rounded">Refresh</button>
+        </div>
+        <!-- Chat pane -->
+        <div id="chatPane" class="flex-1 scroll p-0 flex flex-col">
+          <div id="chat" class="flex-1 scroll p-4 space-y-3"></div>
+          <div class="border-t p-3 bg-gray-50">
+            <div class="grid grid-cols-2 gap-2 mb-2 text-xs">
+              <div class="flex gap-2">
+                <select id="approvalSelect" class="border rounded px-2 py-1">
+                  <option value="on-request">Approval: on-request</option>
+                  <option value="untrusted">Approval: untrusted</option>
+                  <option value="on-failure">Approval: on-failure</option>
+                  <option value="never">Approval: never</option>
+                </select>
+                <select id="sandboxSelect" class="border rounded px-2 py-1">
+                  <option value="read-only">Sandbox: read-only</option>
+                  <option value="workspace-write">Sandbox: workspace-write</option>
+                  <option value="danger-full-access">Sandbox: danger-full-access</option>
+                </select>
+              </div>
+              <div class="flex gap-2 justify-end">
+                <select id="modelSelect" class="border rounded px-2 py-1">
+                  <option value="gpt-5">Model: gpt-5</option>
+                </select>
+                <select id="effortSelect" class="border rounded px-2 py-1">
+                  <option value="minimal">Effort: minimal</option>
+                  <option value="low">Effort: low</option>
+                  <option selected value="medium">Effort: medium</option>
+                  <option value="high">Effort: high</option>
+                </select>
+                <select id="summarySelect" class="border rounded px-2 py-1">
+                  <option value="auto">Summary: auto</option>
+                  <option value="concise">Summary: concise</option>
+                  <option value="detailed">Summary: detailed</option>
+                  <option value="none">Summary: none</option>
+                </select>
+              </div>
             </div>
-            <div class="flex gap-2 justify-end">
-              <select id="modelSelect" class="border rounded px-2 py-1">
-                <option value="gpt-5">Model: gpt-5</option>
-              </select>
-              <select id="effortSelect" class="border rounded px-2 py-1">
-                <option value="minimal">Effort: minimal</option>
-                <option value="low">Effort: low</option>
-                <option selected value="medium">Effort: medium</option>
-                <option value="high">Effort: high</option>
-              </select>
-              <select id="summarySelect" class="border rounded px-2 py-1">
-                <option value="auto">Summary: auto</option>
-                <option value="concise">Summary: concise</option>
-                <option value="detailed">Summary: detailed</option>
-                <option value="none">Summary: none</option>
-              </select>
+            <textarea id="composer" class="w-full border rounded p-2 mono" rows="3" placeholder="Describe your task..."></textarea>
+            <div class="flex gap-2 mt-2 justify-between">
+              <div class="text-xs text-gray-500" id="tokenInfo">Tokens: 0</div>
+              <div class="flex gap-2">
+                <button id="interruptBtn" class="px-3 py-1.5 bg-gray-200 rounded">Stop</button>
+                <button id="sendBtn" class="px-3 py-1.5 bg-indigo-600 text-white rounded">Send</button>
+              </div>
             </div>
           </div>
-          <textarea id="composer" class="w-full border rounded p-2 mono" rows="3" placeholder="Describe your task..."></textarea>
-          <div class="flex gap-2 mt-2 justify-between">
-            <div class="text-xs text-gray-500" id="tokenInfo">Tokens: 0</div>
-            <div class="flex gap-2">
-              <button id="interruptBtn" class="px-3 py-1.5 bg-gray-200 rounded">Stop</button>
-              <button id="sendBtn" class="px-3 py-1.5 bg-indigo-600 text-white rounded">Send</button>
+        </div>
+        <!-- Graph pane -->
+        <div id="graphPane" class="hidden flex-1">
+          <div id="graphMount" class="w-full h-full"></div>
+        </div>
+        <!-- Code pane -->
+        <div id="codePane" class="hidden flex-1 p-3 bg-white">
+          <div class="flex flex-col w-full h-full min-h-0">
+            <div class="flex items-center gap-2 mb-2">
+              <div id="codeTabs" class="flex items-center gap-1 overflow-x-auto flex-1"></div>
+              <button id="togglePreview" class="px-2 py-1 text-xs bg-gray-100 rounded">Preview</button>
+              <button id="saveWithApproval" class="px-2 py-1 text-xs bg-amber-600 text-white rounded">Save (Approve)</button>
+              <button id="saveFile" class="px-2 py-1 text-xs bg-emerald-600 text-white rounded">Save</button>
+            </div>
+            <div class="flex-1 min-h-0 flex flex-col">
+              <div id="editorMountCenter" class="flex-1 border rounded mb-2"></div>
+              <div id="editorPreviewCenter" class="hidden scroll border rounded p-2 bg-gray-50 text-xs" style="max-height: 30%;"></div>
             </div>
           </div>
         </div>
@@ -113,9 +153,13 @@
           <div class="text-sm font-semibold mb-2">Live Diff</div>
           <pre id="diffView" class="mono text-xs scroll flex-1 bg-gray-50 border rounded p-2"></pre>
         </div>
-        <div class="h-52 bg-white rounded shadow p-3 flex flex-col">
+        <div class="h-48 bg-white rounded shadow p-3 flex flex-col">
           <div class="text-sm font-semibold mb-2">Command Output</div>
           <pre id="terminal" class="mono text-xs scroll flex-1 bg-black text-green-200 rounded p-2"></pre>
+        </div>
+        <div class="h-48 bg-white rounded shadow p-3 flex flex-col">
+          <div class="text-sm font-semibold mb-2">Backlinks</div>
+          <div id="backlinksPanel" class="text-xs scroll flex-1 border rounded p-2 bg-gray-50"></div>
         </div>
         <div class="h-56 bg-white rounded shadow p-3 flex flex-col">
           <div class="text-sm font-semibold mb-2">Plan & History</div>
@@ -126,11 +170,7 @@
           </div>
           <pre id="historyPanel" class="mono text-xs scroll h-24 bg-gray-50 border rounded p-2"></pre>
         </div>
-        <div class="h-72 bg-white rounded shadow p-3 flex flex-col">
-          <div class="text-sm font-semibold mb-2">Code Viewer</div>
-          <textarea id="editor" class="hidden"></textarea>
-          <div id="editorMount" class="flex-1 border rounded"></div>
-        </div>
+        <!-- Removed side Code Viewer; editor now lives in Code tab -->
       </section>
     </main>
 
@@ -144,6 +184,19 @@
           <button data-decision="approved_for_session" class="px-3 py-1.5 bg-emerald-700 text-white rounded">Approve for Session</button>
           <button data-decision="denied" class="px-3 py-1.5 bg-gray-200 rounded">Deny</button>
           <button data-decision="abort" class="px-3 py-1.5 bg-red-600 text-white rounded">Abort</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Save Approval Modal -->
+    <div id="saveModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
+      <div class="bg-white rounded shadow w-[800px] p-4">
+        <div class="font-semibold mb-2">Save Changes (Approval)</div>
+        <div class="text-xs text-gray-600 mb-2" id="saveMeta"></div>
+        <pre id="savePreview" class="mono text-xs bg-gray-50 p-2 border rounded h-72 scroll"></pre>
+        <div class="mt-3 flex gap-2 justify-end">
+          <button id="saveApproveBtn" class="px-3 py-1.5 bg-emerald-600 text-white rounded">Approve & Save</button>
+          <button id="saveCancelBtn" class="px-3 py-1.5 bg-gray-200 rounded">Cancel</button>
         </div>
       </div>
     </div>
@@ -221,6 +274,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/markdown/markdown.min.js"></script>
     <script>
       // Offline Tailwind fallback: if window.tailwind is not present, inject local CSS
       window.addEventListener('DOMContentLoaded', function(){

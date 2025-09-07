@@ -7,6 +7,9 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
+import re
+from pathlib import Path
+from typing import Dict, Any
 
 # Support direct run and package run
 try:
@@ -159,6 +162,67 @@ class WebBridge(QObject):
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
 
+    # --- Graph builder -----------------------------------------------------
+    @Slot(str, result=str)
+    def build_graph(self, root: str) -> str:
+        """Build a simple Markdown content graph with backlinks from a root folder.
+
+        - Nodes: markdown files (.md)
+        - Edges: links via markdown [text](path) or Obsidian-style [[note]] / [[path|alias]]
+        """
+        try:
+            root_path = Path(root or ".").resolve()
+            if not root_path.exists() or not root_path.is_dir():
+                return json.dumps({"ok": False, "error": f"invalid root: {root_path}"})
+
+            files = [p for p in root_path.rglob("*.md") if p.is_file()]
+            # Map slugs to paths (basename without extension, lowercase)
+            slug_map: Dict[str, Path] = {}
+            for p in files:
+                slug = p.stem.lower()
+                slug_map.setdefault(slug, p)
+
+            link_pat = re.compile(r"\[[^\]]*\]\(([^\)]+)\)")
+            obs_pat = re.compile(r"\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]")
+
+            nodes = []
+            edges = []
+            id_map: Dict[Path, str] = {}
+            for p in files:
+                nid = str(p)
+                id_map[p] = nid
+                nodes.append({"data": {"id": nid, "label": p.name}})
+
+            for p in files:
+                try:
+                    text = p.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                src = id_map[p]
+                # Standard markdown links
+                for target in link_pat.findall(text):
+                    t = target.strip()
+                    if t.startswith("http:") or t.startswith("https:"):
+                        continue
+                    tpath = (p.parent / t).with_suffix(".md") if not t.endswith(".md") else (p.parent / t)
+                    tpath = tpath.resolve()
+                    if tpath in id_map:
+                        edges.append({"data": {"source": src, "target": id_map[tpath]}})
+                # Obsidian wiki-links
+                for inner in obs_pat.findall(text):
+                    slug = inner.strip().lower()
+                    tpath = None
+                    if (p.parent / (slug + ".md")).exists():
+                        tpath = (p.parent / (slug + ".md")).resolve()
+                    elif slug in slug_map:
+                        tpath = slug_map[slug].resolve()
+                    if tpath and tpath in id_map:
+                        edges.append({"data": {"source": src, "target": id_map[tpath]}})
+
+            return json.dumps({"ok": True, "nodes": nodes, "edges": edges})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
     # --- MCP Tools / History ----------------------------------------------
     @Slot()
     def list_mcp_tools(self):
@@ -211,6 +275,38 @@ class WebBridge(QObject):
             cfg = get_config_manager().config
             data = cfg.backend.model_dump()
             return json.dumps({"ok": True, "backend": data})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    # --- File write (Save) -------------------------------------------------
+    @Slot(str, str, result=str)
+    def write_file(self, path: str, content: str) -> str:
+        try:
+            p = Path(path)
+            if not p.parent.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            # update recent files
+            try:
+                get_config_manager().add_recent_file(str(p))
+            except Exception:
+                pass
+            return json.dumps({"ok": True})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot(str)
+    def add_recent_file(self, path: str):
+        try:
+            get_config_manager().add_recent_file(path)
+        except Exception:
+            pass
+
+    @Slot(result=str)
+    def get_recent_files(self) -> str:
+        try:
+            files = get_config_manager().get_recent_files()
+            return json.dumps({"ok": True, "files": files, "last": get_config_manager().get_last_active_file()})
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
 

@@ -324,6 +324,7 @@ class UIConfig(BaseModel):
     animations_enabled: bool = True  # Optional motion layer
     prefers_reduced_motion: bool = False  # Global reduce motion toggle
     custom_qss_path: Optional[str] = None  # External QSS override (dev)
+    last_active_file: Optional[str] = None  # Restore active editor file
 
 
 ## Removed duplicate BackendConfig definition below

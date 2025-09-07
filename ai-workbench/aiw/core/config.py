@@ -262,6 +262,20 @@ class ConfigManager:
         except Exception:
             pass
 
+    # --- Recent files / editor state ---------------------------------------
+    def get_recent_files(self) -> list[str]:
+        return self.config.ui.recent_files
+
+    def add_recent_file(self, path: str, max_items: int = 10):
+        files = [p for p in self.config.ui.recent_files if p != path]
+        files.insert(0, path)
+        self.config.ui.recent_files = files[:max_items]
+        self.config.ui.last_active_file = path
+        self.save_config()
+
+    def get_last_active_file(self) -> Optional[str]:
+        return self.config.ui.last_active_file
+
 
 # Global config manager instance
 _config_manager: Optional[ConfigManager] = None

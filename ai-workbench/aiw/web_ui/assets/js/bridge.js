@@ -6,6 +6,10 @@ window.App = window.App || {};
     b.event_received.connect(App.onEvent);
     b.log_message.connect(App.log);
     b.operation_progress.connect((id, p, msg) => App.log(`[op ${id}] ${p}% ${msg}`));
+    App._backendReady = true;
+    if (typeof App.onBackendReady === 'function') {
+      try { App.onBackendReady(); } catch {}
+    }
   }
 
   App.initChannel = function () {
