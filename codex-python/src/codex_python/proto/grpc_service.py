@@ -7,8 +7,8 @@ import structlog
 from typing import AsyncIterator, Dict, List, Optional
 
 import grpc
-import proto.codex_pb2 as codex_proto
-import proto.codex_pb2_grpc as codex_grpc
+from . import codex_pb2 as codex_proto
+from . import codex_pb2_grpc as codex_grpc
 
 from ..core.client import CodexClient
 from ..core.config import Config
@@ -476,6 +476,91 @@ class CodexGRPCService(codex_grpc.CodexServiceServicer):
                 success=False,
                 message=str(e)
             )
+
+    # --- Event stream ---
+    async def SubscribeEvents(
+        self,
+        request: codex_proto.EventSubscribeRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> AsyncIterator[codex_proto.EventEnvelope]:
+        orch = self._orch or CodexOrchestrator(self.client.config)
+        await orch.initialize()
+        types = list(request.types)
+        async for ev in orch.events.subscribe(types=types or None):
+            env = codex_proto.EventEnvelope(type=ev.get("type", ""))
+            for k, v in ev.items():
+                if k == "type":
+                    continue
+                env.fields[k].CopyFrom(self.converter.dict_to_value(v))
+            yield env
+
+    # --- Approvals stream ---
+    async def WatchApprovals(
+        self,
+        request,  # Empty
+        context: grpc.aio.ServicerContext,
+    ) -> AsyncIterator[codex_proto.ApprovalRequestMsg]:
+        orch = self._orch or CodexOrchestrator(self.client.config)
+        await orch.initialize()
+        q: asyncio.Queue = asyncio.Queue()
+
+        def listener(req):
+            if q.qsize() < 100:
+                q.put_nowait(req)
+
+        orch.approval_manager.add_listener(listener)
+        try:
+            while True:
+                req = await q.get()
+                msg = codex_proto.ApprovalRequestMsg(
+                    id=req.id,
+                    operation=req.operation,
+                    description=req.description,
+                    requester=req.requester,
+                    session_id=req.session_id or "",
+                    timeout_s=req.timeout,
+                )
+                for k, v in (req.details or {}).items():
+                    msg.details[k].CopyFrom(self.converter.dict_to_value(v))
+                yield msg
+        finally:
+            try:
+                orch.approval_manager.remove_listener(listener)
+            except Exception:
+                pass
+
+    async def RespondApproval(
+        self,
+        request: codex_proto.RespondApprovalRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> codex_proto.RespondApprovalResponse:
+        try:
+            status_map = {
+                "approved": codex_proto.ApprovalStatus.APPROVED if hasattr(codex_proto, 'ApprovalStatus') else None,
+            }
+            # Translate decision string to enum in manager
+            from ..approval.system import ApprovalStatus
+            dec = request.decision.lower()
+            if dec == "approved":
+                status = ApprovalStatus.APPROVED
+            elif dec == "denied":
+                status = ApprovalStatus.DENIED
+            elif dec == "cancelled":
+                status = ApprovalStatus.CANCELLED
+            else:
+                status = ApprovalStatus.DENIED
+            # Respond via manager
+            orch = self._orch or CodexOrchestrator(self.client.config)
+            await orch.initialize()
+            success = await orch.approval_manager.respond_to_request(
+                request_id=request.request_id,
+                status=status,
+                responder=request.responder or None,
+                reason=request.reason or None,
+            )
+            return codex_proto.RespondApprovalResponse(success=success, message="")
+        except Exception as e:
+            return codex_proto.RespondApprovalResponse(success=False, message=str(e))
     
     # Placeholder methods for session management
     async def CreateSession(

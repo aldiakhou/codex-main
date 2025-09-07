@@ -318,6 +318,11 @@ service CodexService {
   // Configuration
   rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
   rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+
+  // Events and approvals
+  rpc SubscribeEvents(EventSubscribeRequest) returns (stream EventEnvelope);
+  rpc WatchApprovals(Empty) returns (stream ApprovalRequestMsg);
+  rpc RespondApproval(RespondApprovalRequest) returns (RespondApprovalResponse);
 }
 
 message ListToolsRequest {
@@ -454,6 +459,42 @@ message ApplyPatchRequest {
 }
 
 message ApplyPatchResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Simple empty message
+message Empty {}
+
+// --- Events -------------------------------------------------------------
+message EventSubscribeRequest {
+  repeated string types = 1;
+}
+
+message EventEnvelope {
+  string type = 1;
+  map<string, Value> fields = 2;
+}
+
+// --- Approvals ----------------------------------------------------------
+message ApprovalRequestMsg {
+  string id = 1;
+  string operation = 2;
+  string description = 3;
+  map<string, Value> details = 4;
+  string requester = 5;
+  string session_id = 6;
+  double timeout_s = 7;
+}
+
+message RespondApprovalRequest {
+  string request_id = 1;
+  string decision = 2; // approved / denied / cancelled
+  string responder = 3;
+  string reason = 4;
+}
+
+message RespondApprovalResponse {
   bool success = 1;
   string message = 2;
 }

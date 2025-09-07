@@ -65,6 +65,7 @@ class Config:
     approval_policy: str = "on_request"  # on_request, on_failure, unless_trusted, never
     history_enabled: bool = True
     history_path: Optional[str] = None
+    notify: Optional[List[str]] = None
     
     @classmethod
     def from_file(cls, config_path: Union[str, Path]) -> "Config":
@@ -169,6 +170,7 @@ class Config:
             approval_policy=data.get("approval_policy", "on_request"),
             history_enabled=bool(data.get("history_enabled", True)),
             history_path=data.get("history_path")
+            ,notify=data.get("notify")
         )
     
     @classmethod
@@ -227,7 +229,8 @@ class Config:
             enable_sandbox=os.getenv("CODEX_ENABLE_SANDBOX", "true").lower() == "true",
             approval_policy=os.getenv("CODEX_APPROVAL_POLICY", "on_request"),
             history_enabled=os.getenv("CODEX_HISTORY_ENABLED", "true").lower() == "true",
-            history_path=os.getenv("CODEX_HISTORY_PATH")
+            history_path=os.getenv("CODEX_HISTORY_PATH"),
+            notify=(os.getenv("CODEX_NOTIFY","" ).split(" ") if os.getenv("CODEX_NOTIFY") else None)
         )
     
     def to_dict(self) -> dict:
@@ -267,4 +270,5 @@ class Config:
             ,"approval_policy": self.approval_policy
             ,"history_enabled": self.history_enabled
             ,"history_path": self.history_path
+            ,"notify": self.notify
         }

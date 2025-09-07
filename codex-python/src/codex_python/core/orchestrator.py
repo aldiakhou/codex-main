@@ -32,6 +32,7 @@ from ..exec_policy.engine import PolicyManager, ExecutionContext, PolicyEvaluati
 from ..approval.system import ApprovalManager, ApprovalContext, ApprovalLevel, ApprovalStatus
 from ..mcp.tool_registry import ToolRegistry, ToolInfo
 from ..utils.history import append_event
+from ..utils.events import EventBus
 
 logger = structlog.get_logger(__name__)
 
@@ -97,8 +98,12 @@ class CodexOrchestrator:
         # Session-scoped writable roots for patches/commands (auto-approval scope)
         self._session_writable_roots: Dict[str, set] = {}
         
+        # Event bus
+        self.events = EventBus()
+
         # Initialize
         self._initialized = False
+        self.shared_plan: List[Dict[str, Any]] = []
     
     async def initialize(self) -> None:
         """Initialize all components"""
@@ -118,6 +123,20 @@ class CodexOrchestrator:
         
         # Initialize approval manager with default policies
         self.approval_manager.load_default_policies()
+        # Bridge approval requests to event bus
+        try:
+            self.approval_manager.add_listener(lambda req: asyncio.create_task(self.events.publish(
+                "approval_request",
+                id=req.id,
+                operation=req.operation,
+                description=req.description,
+                requester=req.requester,
+                session_id=req.session_id,
+                timeout_s=req.timeout,
+                details=req.details,
+            )))
+        except Exception:
+            pass
         
         self._initialized = True
         logger.info("Codex orchestrator initialized successfully")
@@ -230,6 +249,7 @@ class CodexOrchestrator:
         # Tool-calling loop (bounded)
         max_steps = 4
         step = 0
+        final_response: Optional[str] = None
         while True:
             if stream:
                 # Stream deltas until a tool call shows up or completion
@@ -248,11 +268,13 @@ class CodexOrchestrator:
                 if not tool_calls:
                     # No tools requested => done
                     yield {"content": content_accum, "tool_calls": []}
+                    final_response = content_accum
                     break
             else:
                 response = await self.llm_manager.chat(normalized_messages, tools=tools, stream=False)
                 if response.content:
                     yield {"content": response.content, "step": step}
+                    final_response = response.content
                 if not response.tool_calls:
                     yield {"content": response.content, "usage": response.usage, "tool_calls": []}
                     break
@@ -265,8 +287,12 @@ class CodexOrchestrator:
                 tool_output_text = ""
                 try:
                     if stream:
-                        # notify UI about tool start
+                        # notify UI about tool start and publish event
                         yield {"type": "tool_start", "name": tool_name}
+                        try:
+                            await self.events.publish("tool_start", name=tool_name)
+                        except Exception:
+                            pass
                     # Built-in tools
                     if tool_name in {"local_shell", "apply_patch", "file_search"}:
                         result = await self.execute_builtin_tool(tool_name, args, session_id=session_id)
@@ -289,13 +315,29 @@ class CodexOrchestrator:
                 normalized_messages.append(LLMMessage(role="tool", content=tool_output_text, tool_call_id=call.id))
 
                 if stream:
-                    # notify UI about tool end
+                    # notify UI about tool end and publish event
                     yield {"type": "tool_end", "name": tool_name}
+                    try:
+                        await self.events.publish("tool_end", name=tool_name)
+                    except Exception:
+                        pass
 
             step += 1
             if step >= max_steps:
                 yield {"content": "[tool loop limit reached]", "tool_calls": []}
                 break
+
+        # Notifier hook
+        try:
+            if getattr(self.config, 'notify', None):
+                import asyncio.subprocess as asp
+                args = list(self.config.notify)
+                payload = json.dumps({"type": "agent-turn-complete", "timestamp": time.time()})
+                if args:
+                    args = args + [payload]
+                    await asp.create_subprocess_exec(*args)
+        except Exception:
+            pass
     
     async def execute_command(
         self,
@@ -370,6 +412,12 @@ class CodexOrchestrator:
             if policy_result.decision == PolicyDecision.SANDBOX:
                 sandbox_policy.level = SandboxLevel.RESTRICTED
             
+            # Publish begin event
+            try:
+                await self.events.publish("exec_begin", call_id=f"exec_{int(time.time()*1000)}", command=command, cwd=working_dir)
+            except Exception:
+                pass
+
             # Initial run (sandboxed by default; restricted if policy says so)
             result = await self.sandbox_executor.execute_command(
                 command,
@@ -388,6 +436,11 @@ class CodexOrchestrator:
                     "policy_evaluation": policy_result.__dict__
                 }
             )
+
+            try:
+                await self.events.publish("exec_end", call_id="", exit_code=op_result.result.get("returncode") if isinstance(op_result.result, dict) else None, success=op_result.success)
+            except Exception:
+                pass
 
             # On-failure escalation path
             if (
@@ -504,6 +557,12 @@ class CodexOrchestrator:
         if policy_result.decision == PolicyDecision.SANDBOX:
             sandbox_policy.level = SandboxLevel.RESTRICTED
 
+        call_id = f"exec_{int(time.time()*1000)}"
+        try:
+            await self.events.publish("exec_begin", call_id=call_id, command=command, cwd=working_dir)
+        except Exception:
+            pass
+
         async for item in self.sandbox_executor.execute_command_stream(
             command,
             cwd=working_dir,
@@ -511,6 +570,16 @@ class CodexOrchestrator:
             policy=sandbox_policy,
             max_deltas=max_deltas,
         ):
+            if item.get("type") == "delta":
+                try:
+                    await self.events.publish("exec_output_delta", call_id=call_id, stream=item.get("stream"))
+                except Exception:
+                    pass
+            elif item.get("type") == "result":
+                try:
+                    await self.events.publish("exec_end", call_id=call_id, exit_code=item.get("returncode"), success=(item.get("returncode", 1) == 0))
+                except Exception:
+                    pass
             yield item
     
     async def search_files(
@@ -643,7 +712,16 @@ class CodexOrchestrator:
                         roots.add(str(Path(suggested_root).resolve()))
             
             # Apply patch
+            call_id = f"patch_{int(time.time()*1000)}"
+            try:
+                await self.events.publish("patch_begin", call_id=call_id)
+            except Exception:
+                pass
             result = await self.patch_manager.apply_patch_text(patch_text, patch_root)
+            try:
+                await self.events.publish("patch_end", call_id=call_id, success=result.success)
+            except Exception:
+                pass
             
             return OperationResult(
                 operation=CodexOperation.PATCH,
@@ -748,6 +826,17 @@ class CodexOrchestrator:
         context_parts.append("- Patch application")
         context_parts.append("- Using available tools")
         
+        # Embed AGENTS.md or similar project doc (max ~32 KiB)
+        for name in ["AGENTS.md", "agents.md", "README_CODING.md"]:
+            p = Path(working_directory) / name
+            if p.exists():
+                try:
+                    data = p.read_bytes()[:32 * 1024]
+                    context_parts.append("\nProject instructions (truncated):\n" + data.decode("utf-8", errors="replace"))
+                except Exception:
+                    pass
+                break
+
         return "\n".join(context_parts)
     
     async def _get_available_tools(self, session_id: Optional[str] = None) -> List[LLMTool]:
@@ -791,6 +880,17 @@ class CodexOrchestrator:
                     "root": {"type": "string"}
                 },
                 "required": ["pattern"]
+            }
+        ))
+        tools.append(LLMTool(
+            name="update_plan",
+            description="Update the current execution plan and step statuses",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "steps": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["steps"]
             }
         ))
         mcp_tools = self.mcp_client.tool_registry.list_tools()
@@ -890,4 +990,10 @@ class CodexOrchestrator:
             root = arguments.get("root")
             res = await self.search_files(pattern, session_id=session_id, root_path=root, mode=mode)
             return {"success": res.success, "files": [r.path for r in (res.result or [])]}
+        if name == "update_plan":
+            steps = arguments.get("steps")
+            if not isinstance(steps, list):
+                raise ValueError("update_plan.steps must be a list of step dicts")
+            self.shared_plan = steps
+            return {"success": True, "plan": self.shared_plan}
         raise ValueError(f"Unknown built-in tool: {name}")

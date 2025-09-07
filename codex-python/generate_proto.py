@@ -42,16 +42,11 @@ def generate_protobuf_files():
             print(f"Error generating {proto_file.name}: {e}")
             return False
     
-    # Create __init__.py files
-    init_files = [
-        output_dir / "__init__.py",
-        output_dir / "proto" / "__init__.py"
-    ]
-    
-    for init_file in init_files:
-        if not init_file.exists():
-            init_file.touch()
-            print(f"Created {init_file}")
+    # Ensure package marker in output dir only
+    pkg_init = output_dir / "__init__.py"
+    if not pkg_init.exists():
+        pkg_init.touch()
+        print(f"Created {pkg_init}")
     
     return True
 

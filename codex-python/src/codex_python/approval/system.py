@@ -105,6 +105,7 @@ class ApprovalManager:
         self.session_approvals: Dict[str, Set[str]] = {}
         self.auto_approve_cache: Dict[str, datetime] = {}
         self.callbacks: Dict[str, Callable] = {}
+        self._listeners: List[Callable[[ApprovalRequest], None]] = []
     
     def add_policy(self, policy: ApprovalPolicy) -> None:
         """Add an approval policy"""
@@ -218,11 +219,18 @@ class ApprovalManager:
         
         # Store request
         self.pending_requests[request.id] = request
-        
+
         # Register callback if provided
         if callback:
             self.callbacks[request.id] = callback
-        
+
+        # Notify listeners
+        for listener in list(self._listeners):
+            try:
+                listener(request)
+            except Exception:
+                pass
+
         # Send for approval
         response = await self._send_for_approval(request)
         
@@ -234,6 +242,15 @@ class ApprovalManager:
         self.approval_history.append(response)
         
         return response
+
+    def add_listener(self, fn: Callable[[ApprovalRequest], None]) -> None:
+        self._listeners.append(fn)
+
+    def remove_listener(self, fn: Callable[[ApprovalRequest], None]) -> None:
+        try:
+            self._listeners.remove(fn)
+        except ValueError:
+            pass
     
     async def _evaluate_approval_requirements(
         self, 

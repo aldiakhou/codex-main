@@ -39,9 +39,10 @@ logger = structlog.get_logger(__name__)
 
 @click.group()
 @click.option("--config", "-c", type=click.Path(exists=True), help="Configuration file path")
+@click.option("--override", "-o", multiple=True, help="Override config key=value (supports dotted paths)")
 @click.option("--log-level", default="INFO", help="Log level (DEBUG, INFO, WARNING, ERROR)")
 @click.pass_context
-def cli(ctx, config, log_level):
+def cli(ctx, config, override, log_level):
     """Cadenza - Model Context Protocol Client"""
     ctx.ensure_object(dict)
     
@@ -49,9 +50,36 @@ def cli(ctx, config, log_level):
     import logging
     logging.basicConfig(level=getattr(logging, log_level.upper()))
     
+    def _deep_set(d: dict, path: str, value):
+        keys = path.split('.')
+        cur = d
+        for k in keys[:-1]:
+            if k not in cur or not isinstance(cur[k], dict):
+                cur[k] = {}
+            cur = cur[k]
+        cur[keys[-1]] = value
+
+    def _apply_overrides(cfg_obj: Config, overrides: tuple[str, ...]) -> Config:
+        if not overrides:
+            return cfg_obj
+        base = cfg_obj.to_dict()
+        import json as _json
+        for item in overrides:
+            if '=' not in item:
+                continue
+            k, v = item.split('=', 1)
+            try:
+                # try to parse JSON value
+                parsed = _json.loads(v)
+            except Exception:
+                parsed = v
+            _deep_set(base, k, parsed)
+        return Config.from_dict(base)
+
     # Load configuration
     if config:
-        ctx.obj["config"] = Config.from_file(config)
+        cfg = Config.from_file(config)
+        ctx.obj["config"] = _apply_overrides(cfg, override)
     else:
         # Try to load from default locations
         default_paths = [
@@ -73,7 +101,7 @@ def cli(ctx, config, log_level):
             # Fall back to environment variables
             config_obj = Config.from_env()
         
-        ctx.obj["config"] = config_obj
+        ctx.obj["config"] = _apply_overrides(config_obj, override)
 
 
 @cli.command()
@@ -411,6 +439,25 @@ async def history(ctx, n):
 
 
 @cli.command()
+@click.option("--types", multiple=True, help="Event types to include (repeat)")
+@click.pass_context
+async def events(ctx, types):
+    """Subscribe to in-proc event bus and print events."""
+    config = ctx.obj["config"]
+    from .core.orchestrator import CodexOrchestrator
+    orch = CodexOrchestrator(config)
+    await orch.initialize()
+    try:
+        click.echo("Subscribing to events... (Ctrl+C to stop)")
+        async for ev in orch.events.subscribe(types=list(types) or None):
+            click.echo(json.dumps(ev))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await orch.cleanup()
+
+
+@cli.command()
 @click.argument("output_file", type=click.Path())
 @click.pass_context
 async def export_config(ctx, output_file):
@@ -479,22 +526,28 @@ async def chat(ctx, prompt, stream):
 
 
 @cli.command()
-@click.option("--host", default="localhost", help="Host to bind to")
-@click.option("--port", default=8000, type=int, help="Port to bind to")
+@click.option("--host", default="[::]", help="gRPC host to bind to (use [::] for IPv4/IPv6)")
+@click.option("--port", default=50051, type=int, help="gRPC port to bind to")
 @click.pass_context
 async def serve(ctx, host, port):
-    """Start Codex as a service"""
+    """Start Cadenza gRPC server (CodexService)."""
     config = ctx.obj["config"]
-    
-    click.echo(f"Starting Codex service on {host}:{port}")
-    click.echo("Press Ctrl+C to stop")
-    
-    # This would start an HTTP server - placeholder for now
+    from .core.client import CodexClient
+    from .core.orchestrator import CodexOrchestrator
+    from .proto.grpc_service import CodexGRPCServer
+
+    client = CodexClient(config)
+    orch = CodexOrchestrator(config)
+    server = CodexGRPCServer(client, host=host, port=port, orchestrator=orch)
+
+    click.echo(f"Starting Cadenza gRPC on {host}:{port} (Ctrl+C to stop)")
     try:
-        while True:
-            await asyncio.sleep(1)
+        await server.start()
+        await server.wait_for_termination()
     except KeyboardInterrupt:
         click.echo("\nShutting down...")
+    finally:
+        await server.stop(0.5)
 
 
 def main():
@@ -517,6 +570,7 @@ def main():
     cli.commands["search"].callback = run_async(cli.commands["search"].callback)
     cli.commands["history"].callback = run_async(cli.commands["history"].callback)
     cli.commands["chat"].callback = run_async(cli.commands["chat"].callback)
+    cli.commands["events"].callback = run_async(cli.commands["events"].callback)
     
     cli()
 
