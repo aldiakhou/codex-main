@@ -56,7 +56,31 @@ window.App = window.App || {};
     const start = App.qs('#startBtn'); if (start) start.onclick = () => App.backend.start_backend();
     const stop = App.qs('#stopBtn'); if (stop) stop.onclick = () => App.backend.stop_backend();
     const login = App.qs('#loginBtn'); if (login) login.onclick = () => App.backend.login('');
-    const refreshTools = App.qs('#refreshTools'); if (refreshTools) refreshTools.onclick = () => App.backend.list_mcp_tools();
+    const refreshTools = App.qs('#refreshTools'); if (refreshTools) refreshTools.onclick = () => {
+      if (App._toolsRefreshing) return;
+      App._toolsRefreshing = true;
+      refreshTools.disabled = true;
+      refreshTools.textContent = 'Refreshing…';
+      refreshTools.classList.add('opacity-50','cursor-not-allowed');
+      try { App.backend.list_mcp_tools(); } catch { /* noop */ }
+    };
+    const toolFilter = App.qs('#toolFilter'); if (toolFilter) toolFilter.addEventListener('input', () => {
+      const list = App.qs('#mcpTools'); if (!list) return;
+      const names = (App.state?.mcpToolNames || []).filter(n => n.toLowerCase().includes(toolFilter.value.toLowerCase()));
+      list.innerHTML = '';
+      names.forEach(name => {
+        const item = document.createElement('div');
+        item.className = 'flex items-center justify-between text-sm py-1 border-b last:border-0';
+        item.innerHTML = `<div class=\"truncate pr-2\" title=\"${name}\">${name}</div>`+
+          `<button class=\"px-2 py-0.5 bg-gray-100 rounded hover:bg-gray-200\" data-tool=\"${name}\">Prompt</button>`;
+        item.querySelector('button').onclick = () => {
+          const prompt = `Please use the MCP tool \`${name}\` with appropriate parameters to accomplish the task.`;
+          App.ui.addMsg('user', prompt);
+          App.backend.send_user_turn_json(JSON.stringify({ text: prompt }));
+        };
+        list.appendChild(item);
+      });
+    });
     const refreshHistory = App.qs('#refreshHistory'); if (refreshHistory) refreshHistory.onclick = () => App.backend.get_history();
     const sendBtn = App.qs('#sendBtn'); if (sendBtn) sendBtn.onclick = send;
     const interruptBtn = App.qs('#interruptBtn'); if (interruptBtn) interruptBtn.onclick = () => App.backend.interrupt();

@@ -12,6 +12,10 @@ window.App = window.App || {};
       case 'session_configured':
         App.status('connected');
         App.log(`Session configured. model=${e.model}`);
+        // Auto-refresh MCP tools on session start
+        if (App.backend && App.backend.list_mcp_tools) {
+          try { App._toolsRefreshing = true; App.backend.list_mcp_tools(); } catch {}
+        }
         break;
       case 'agent_message_delta':
         App.ui.addMsg('assistant', e.delta || '');
@@ -64,9 +68,15 @@ window.App = window.App || {};
         const el = App.qs('#plan'); if (el) el.textContent = JSON.stringify(e, null, 2); break; }
       case 'mcp_list_tools_response': {
         const list = App.qs('#mcpTools'); if (!list) break;
+        const btn = App.qs('#refreshTools');
+        if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; btn.classList.remove('opacity-50','cursor-not-allowed'); }
+        App._toolsRefreshing = false;
+        // Cache tools for filtering
+        App.state = App.state || {}; App.state.mcpToolNames = (e.tools ? Object.keys(e.tools) : []).sort();
+        const filter = (App.qs('#toolFilter')?.value || '').toLowerCase();
+        const names = App.state.mcpToolNames.filter(n => n.toLowerCase().includes(filter));
         list.innerHTML = '';
-        const tools = e.tools ? Object.keys(e.tools) : [];
-        tools.sort().forEach(name => {
+        names.forEach(name => {
           const item = document.createElement('div');
           item.className = 'flex items-center justify-between text-sm py-1 border-b last:border-0';
           item.innerHTML = `<div class="truncate pr-2" title="${name}">${name}</div>`+
