@@ -78,6 +78,9 @@ class Config:
     diff_ignore_by_language: Dict[str, List[str]] = field(default_factory=dict)
     # Optional project languages to activate language-specific ignores
     project_languages: List[str] = field(default_factory=list)
+    # Optional default vision model to use when a turn includes images and the
+    # configured model is not vision-capable.
+    default_vision_model: Optional[str] = None
     
     @classmethod
     def from_file(cls, config_path: Union[str, Path]) -> "Config":
@@ -149,6 +152,7 @@ class Config:
             diff_file_size_limit_bytes=int(data.get("diff_file_size_limit_bytes", 10 * 1024 * 1024)),
             diff_ignore_by_language=data.get("diff_ignore_by_language", {}) or {},
             project_languages=list(data.get("project_languages", [])) if isinstance(data.get("project_languages", []), list) else [],
+            default_vision_model=data.get("default_vision_model"),
         )
     
     @classmethod
@@ -262,6 +266,7 @@ class Config:
             diff_max_files=int(os.getenv("CODEX_DIFF_MAX_FILES", "5000")),
             diff_hash_limit_bytes=int(os.getenv("CODEX_DIFF_HASH_LIMIT_BYTES", str(128 * 1024))),
             diff_file_size_limit_bytes=int(os.getenv("CODEX_DIFF_FILE_SIZE_LIMIT_BYTES", str(10 * 1024 * 1024))),
+            default_vision_model=os.getenv("CODEX_DEFAULT_VISION_MODEL"),
         )
     
     def to_dict(self) -> dict:
@@ -309,4 +314,5 @@ class Config:
             ,"diff_file_size_limit_bytes": self.diff_file_size_limit_bytes
             ,"diff_ignore_by_language": self.diff_ignore_by_language
             ,"project_languages": self.project_languages
+            ,"default_vision_model": self.default_vision_model
         }

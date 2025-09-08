@@ -13,6 +13,17 @@ import httpx
 import aiohttp
 from abc import ABC, abstractmethod
 
+# Prefer the official OpenAI SDK when available; fall back gracefully when not
+try:  # pragma: no cover - optional dependency
+    from openai import AsyncOpenAI  # type: ignore
+    try:
+        from openai import pydantic_function_tool as _pydantic_function_tool  # type: ignore
+    except Exception:  # pragma: no cover
+        _pydantic_function_tool = None  # type: ignore
+except Exception:  # pragma: no cover
+    AsyncOpenAI = None  # type: ignore
+    _pydantic_function_tool = None  # type: ignore
+
 logger = structlog.get_logger(__name__)
 
 
@@ -42,6 +53,7 @@ class LLMTool:
     description: str
     parameters: Dict[str, Any]
     strict: bool = False
+    pydantic_model: Optional[Any] = None
 
 
 @dataclass
@@ -80,6 +92,9 @@ class LLMConfig:
     streaming: bool = True
     # Prefer OpenAI Responses API for richer reasoning (when tools are not used)
     use_responses_api: bool = False
+    # Optional default vision model to use for image turns when the primary
+    # model is not vision-capable.
+    default_vision_model: Optional[str] = None
 
 
 class LLMClient(ABC):
@@ -123,7 +138,15 @@ class LLMClient(ABC):
                     return resp
                 except httpx.HTTPStatusError as e:
                     code = e.response.status_code if e.response is not None else None
-                    logger.debug("llm_post_status_error", url=url, status=code, attempt=attempt, elapsed=_time.perf_counter()-t0)
+                    # For concise diagnostics on 4xx, include a short body snippet.
+                    body_snippet = None
+                    try:
+                        if e.response is not None and code is not None and 400 <= code < 500:
+                            text = await e.response.aread()
+                            body_snippet = (text[:1024]).decode(errors="replace") if isinstance(text, (bytes, bytearray)) else str(text)[:1024]
+                    except Exception:
+                        pass
+                    logger.debug("llm_post_status_error", url=url, status=code, attempt=attempt, elapsed=_time.perf_counter()-t0, body=body_snippet)
                     if attempt >= max_retries - 1 or not (code == 429 or (code is not None and code >= 500)):
                         raise
             except (httpx.TransportError, httpx.TimeoutException) as e:
@@ -145,8 +168,14 @@ class LLMClient(ABC):
                 resp = await cm.__aenter__()
                 code = resp.status_code
                 if code >= 400 and not (code == 429 or code >= 500):
-                    # non-retryable HTTP error
-                    logger.debug("llm_stream_http_error", url=url, status=code, attempt=attempt, elapsed=_time.perf_counter()-t0)
+                    # non-retryable HTTP error, include short body snippet
+                    body_snippet = None
+                    try:
+                        text = await resp.aread()
+                        body_snippet = (text[:1024]).decode(errors="replace") if isinstance(text, (bytes, bytearray)) else str(text)[:1024]
+                    except Exception:
+                        pass
+                    logger.debug("llm_stream_http_error", url=url, status=code, attempt=attempt, elapsed=_time.perf_counter()-t0, body=body_snippet)
                     await cm.__aexit__(None, None, None)
                     raise httpx.HTTPStatusError("HTTP error", request=None, response=resp)
                 logger.debug("llm_stream_ok", url=url, status=code, attempt=attempt, elapsed=_time.perf_counter()-t0)
@@ -163,6 +192,40 @@ class LLMClient(ABC):
         if last_exc:
             raise last_exc
         raise RuntimeError("exhausted retries for stream")
+
+    # Compose headers for the Responses API (requires beta header on raw HTTP paths).
+    def _responses_headers(self) -> Dict[str, str]:
+        base = dict(getattr(self, "headers", {}) or {})
+        # Align with codex-rs behaviour: opt into Responses beta when not using SDK
+        base.setdefault("OpenAI-Beta", "responses=experimental")
+        return base
+
+    # Extract plain text from nested Responses output structures.
+    @staticmethod
+    def _flatten_text(node: Any) -> str:
+        if node is None:
+            return ""
+        if isinstance(node, str):
+            return node
+        if isinstance(node, (bytes, bytearray)):
+            try:
+                return node.decode("utf-8", errors="replace")
+            except Exception:
+                return str(node)
+        if isinstance(node, list):
+            return "".join(LLMClient._flatten_text(x) for x in node)
+        if isinstance(node, dict):
+            # Prefer explicit fields first
+            for key in ("output_text", "text", "content", "delta"):
+                if key in node:
+                    return LLMClient._flatten_text(node.get(key))
+            # Fallback: concatenate any stringly fields
+            acc = []
+            for v in node.values():
+                acc.append(LLMClient._flatten_text(v))
+            return "".join(acc)
+        # Fallback to string
+        return str(node)
 
     # Helpers for multi-modal (encode local image path to data URL)
     @staticmethod
@@ -189,6 +252,17 @@ class OpenAIClient(LLMClient):
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json"
         }
+        # Best-effort initialization of the official SDK for streaming
+        self._sdk = None
+        if AsyncOpenAI is not None and config.api_key:
+            try:
+                sdk_kwargs: Dict[str, Any] = {"api_key": config.api_key}
+                if config.base_url:
+                    sdk_kwargs["base_url"] = config.base_url
+                self._sdk = AsyncOpenAI(**sdk_kwargs)  # type: ignore[call-arg]
+            except Exception:
+                # swallow and continue with httpx paths
+                self._sdk = None
     
     async def chat(
         self,
@@ -197,12 +271,26 @@ class OpenAIClient(LLMClient):
         stream: bool = False
     ) -> Union[LLMResponse, AsyncIterator[LLMResponse]]:
         """Send chat messages to OpenAI"""
-        # Prefer the Responses API for richer reasoning when enabled.
-        if getattr(self.config, 'use_responses_api', False):
+        # If any message includes images, prefer the Responses API and ensure
+        # a vision-capable model. Fallback to gpt-4o-mini when the configured
+        # model does not appear to support vision.
+        has_images = any(bool(m.images) for m in messages)
+        vision_model = self.config.model
+        if has_images and not any(x in (self.config.model or "").lower() for x in ("gpt-4o",)):
+            # Prefer configured default vision model when provided
+            dv = getattr(self.config, 'default_vision_model', None)
+            vision_model = dv or "gpt-4o-mini"
+
+        # Prefer the Responses API for richer reasoning when enabled or when
+        # images are present.
+        if getattr(self.config, 'use_responses_api', False) or has_images:
+            tools_for_turn = None if has_images else tools
             if stream:
-                return self._stream_chat_responses(messages, tools=tools)
+                # Use Responses streaming when images are present; prefer SDK
+                # when available, otherwise SSE fallback.
+                return self._stream_chat_responses(messages, tools=tools_for_turn, model_override=vision_model)
             else:
-                return await self._non_stream_chat_responses(messages, tools=tools)
+                return await self._non_stream_chat_responses(messages, tools=tools_for_turn, model_override=vision_model)
 
         # Convert messages to OpenAI format (multi-modal support via content list)
         openai_messages = []
@@ -250,8 +338,35 @@ class OpenAIClient(LLMClient):
             ]
         
         if stream:
+            # Prefer SDK streaming when tools are absent or declared strict;
+            # otherwise fall back to HTTP streaming to avoid SDK auto-parse
+            # strictness requirements.
+            if self._sdk is not None:
+                all_strict = (not tools) or all(getattr(t, "strict", False) for t in (tools or []))
+                if all_strict:
+                    return self._stream_chat_via_sdk(messages, tools)
             return self._stream_chat(payload)
         else:
+            # Prefer SDK parse() when all tools are strict Pydantic function tools.
+            if self._sdk is not None and tools:
+                all_pydantic = all(getattr(t, "pydantic_model", None) is not None and getattr(t, "strict", False) for t in tools)
+                if all_pydantic and _pydantic_function_tool is not None:
+                    try:
+                        return await self._non_stream_chat_via_sdk_parse(messages, tools)
+                    except Exception:
+                        pass
+            if getattr(self.config, 'use_responses_api', False) and self._sdk is not None:
+                # When using Responses API in non-stream mode and SDK is
+                # available, route through SDK for richer typed responses.
+                try:
+                    return await self._non_stream_responses_via_sdk(messages, tools)
+                except Exception:
+                    pass
+            if self._sdk is not None:
+                try:
+                    return await self._non_stream_chat_via_sdk(messages, tools)
+                except Exception:
+                    pass
             return await self._non_stream_chat(payload)
 
     def _responses_tools_payload(self, tools: Optional[List[LLMTool]]) -> Optional[List[Dict]]:
@@ -269,8 +384,110 @@ class OpenAIClient(LLMClient):
             for t in tools
         ]
 
-    async def _non_stream_chat_responses(self, messages: List[LLMMessage], tools: Optional[List[LLMTool]] = None) -> LLMResponse:
-        # Build structured input with multi-modal support
+    # --- SDK-powered helpers (Chat/Responses) ---------------------------------
+
+    def _format_chat_messages(self, messages: List[LLMMessage]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for msg in messages:
+            content: Union[str, List[Dict[str, Any]]]
+            if msg.images:
+                parts: List[Dict[str, Any]] = []
+                if msg.content:
+                    parts.append({"type": "text", "text": msg.content})
+                for p in (msg.images or []):
+                    data_url = self._path_to_data_url(p)
+                    if data_url:
+                        parts.append({"type": "image_url", "image_url": {"url": data_url}})
+                content = parts if parts else msg.content
+            else:
+                content = msg.content
+            m = {"role": msg.role, "content": content}
+            if msg.tool_calls:
+                m["tool_calls"] = msg.tool_calls
+            if msg.tool_call_id:
+                m["tool_call_id"] = msg.tool_call_id
+            out.append(m)
+        return out
+
+    def _format_chat_tools(self, tools: Optional[List[LLMTool]]) -> Optional[List[Dict[str, Any]]]:
+        if not tools:
+            return None
+        out: List[Dict[str, Any]] = []
+        for tool in tools:
+            fn: Dict[str, Any] = {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            }
+            # Only include strict when requested. Some external schemas may
+            # not be fully strict-compatible; omitting the flag is safer.
+            if getattr(tool, "strict", False):
+                fn["strict"] = True
+            out.append({"type": "function", "function": fn})
+        return out
+
+    async def _non_stream_chat_via_sdk(self, messages: List[LLMMessage], tools: Optional[List[LLMTool]]) -> LLMResponse:
+        assert self._sdk is not None
+        res = await self._sdk.chat.completions.create(  # type: ignore[union-attr]
+            model=self.config.model,
+            messages=self._format_chat_messages(messages),
+            tools=self._format_chat_tools(tools),
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+        choice = res.choices[0]
+        content = getattr(choice.message, "content", None)
+        text = content if isinstance(content, str) else ("" if content is None else str(content))
+        tool_calls: List[LLMToolCall] = []
+        for tc in getattr(choice.message, "tool_calls", []) or []:
+            fn = getattr(tc, "function", None)
+            name = getattr(fn, "name", None)
+            args = getattr(fn, "arguments", None)
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {"raw": args}
+            if name:
+                tool_calls.append(LLMToolCall(id=getattr(tc, "id", ""), name=name, arguments=args or {}))
+        return LLMResponse(content=text, tool_calls=tool_calls)
+
+    async def _non_stream_chat_via_sdk_parse(self, messages: List[LLMMessage], tools: List[LLMTool]) -> LLMResponse:
+        """Use AsyncOpenAI chat.completions.parse with Pydantic tools to auto-parse.
+
+        Preconditions: every tool has pydantic_model and strict=True.
+        """
+        assert self._sdk is not None and _pydantic_function_tool is not None
+        tool_defs = [_pydantic_function_tool(t.pydantic_model) for t in tools]  # type: ignore[arg-type]
+        res = await self._sdk.chat.completions.parse(  # type: ignore[union-attr]
+            model=self.config.model,
+            messages=self._format_chat_messages(messages),
+            tools=tool_defs,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+        choice = res.choices[0]
+        content = getattr(choice.message, "content", None)
+        text = content if isinstance(content, str) else ("" if content is None else str(content))
+        tool_calls: List[LLMToolCall] = []
+        for tc in getattr(choice.message, "tool_calls", []) or []:
+            fn = getattr(tc, "function", None)
+            name = getattr(fn, "name", None)
+            parsed = getattr(fn, "parsed_arguments", None)
+            args: Any = {}
+            if parsed is not None:
+                if hasattr(parsed, "model_dump"):
+                    args = parsed.model_dump()
+                elif isinstance(parsed, dict):
+                    args = parsed
+                else:
+                    args = {"value": str(parsed)}
+            if name:
+                tool_calls.append(LLMToolCall(id=getattr(tc, "id", ""), name=name, arguments=args))
+        return LLMResponse(content=text, tool_calls=tool_calls)
+
+    async def _non_stream_responses_via_sdk(self, messages: List[LLMMessage], tools: Optional[List[LLMTool]]) -> LLMResponse:
+        assert self._sdk is not None
         input_items: List[Dict[str, Any]] = []
         for m in messages:
             if m.images:
@@ -284,10 +501,103 @@ class OpenAIClient(LLMClient):
                 input_items.append({"role": m.role, "content": parts})
             else:
                 input_items.append({"role": m.role, "content": m.content})
+        res = await self._sdk.responses.create(  # type: ignore[union-attr]
+            model=self.config.model,
+            input=input_items,
+            tools=self._responses_tools_payload(tools),
+            tool_choice=("auto" if tools else None),
+        )
+        content = getattr(res, "output_text", None)
+        if not isinstance(content, str):
+            try:
+                data = res.model_dump()
+                content = data.get("output_text") if isinstance(data, dict) else None
+            except Exception:
+                content = None
+        return LLMResponse(content=content or "")
+
+    def _stream_chat_via_sdk(self, messages: List[LLMMessage], tools: Optional[List[LLMTool]]) -> AsyncIterator[LLMResponse]:
+        assert self._sdk is not None
+
+        async def _gen() -> AsyncIterator[LLMResponse]:
+            content_buffer = ""
+            try:
+                async with self._sdk.chat.completions.stream(  # type: ignore[union-attr]
+                    model=self.config.model,
+                    messages=self._format_chat_messages(messages),
+                    tools=self._format_chat_tools(tools),
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                ) as stream:
+                    async for event in stream:
+                        if getattr(event, "type", None) == "content.delta":
+                            delta = getattr(event, "content", "")
+                            if isinstance(delta, str) and delta:
+                                content_buffer += delta
+                                yield LLMResponse(content=content_buffer)
+                    try:
+                        completion = await stream.get_final_completion()
+                        choice = completion.choices[0]
+                        tcalls: List[LLMToolCall] = []
+                        for tc in getattr(choice.message, "tool_calls", []) or []:
+                            fn = getattr(tc, "function", None)
+                            name = getattr(fn, "name", None)
+                            args = getattr(fn, "arguments", None)
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {"raw": args}
+                            if name:
+                                tcalls.append(LLMToolCall(id=getattr(tc, "id", ""), name=name, arguments=args or {}))
+                        if tcalls:
+                            yield LLMResponse(content=content_buffer, tool_calls=tcalls)
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error("OpenAI Chat (SDK stream) error", error=str(e))
+                return
+
+        return _gen()
+
+    async def _non_stream_chat_responses(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[LLMTool]] = None,
+        model_override: Optional[str] = None,
+    ) -> LLMResponse:
+        # Prefer SDK when available for typed handling
+        if getattr(self, "_sdk", None) is not None:
+            try:
+                return await self._non_stream_responses_via_sdk(messages, tools)
+            except Exception:
+                pass
+        # Build structured input with multi-modal support
+        # Map system messages to `instructions` field rather than input items.
+        instructions_parts: List[str] = []
+        input_items: List[Dict[str, Any]] = []
+        for m in messages:
+            if m.role == "system" and m.content:
+                instructions_parts.append(m.content)
+                continue
+            if m.images:
+                parts: List[Dict[str, Any]] = []
+                if m.content:
+                    parts.append({"type": "input_text", "text": m.content})
+                for p in (m.images or []):
+                    data_url = self._path_to_data_url(p)
+                    if data_url:
+                        parts.append({"type": "input_image", "image_url": data_url})
+                input_items.append({"role": m.role, "content": parts})
+            else:
+                input_items.append({"role": m.role, "content": m.content})
+        model = model_override or self.config.model
         payload: Dict[str, Any] = {
-            "model": self.config.model,
+            "model": model,
             "input": input_items,
         }
+        if instructions_parts:
+            payload["instructions"] = "\n\n".join(instructions_parts)
         tool_defs = self._responses_tools_payload(tools)
         if tool_defs:
             payload["tools"] = tool_defs
@@ -296,15 +606,15 @@ class OpenAIClient(LLMClient):
             response = await self._post_with_retries(
                 f"{self.base_url}/responses",
                 json=payload,
-                headers=self.headers,
+                headers=self._responses_headers(),
             )
             data = response.json()
 
-            # Prefer `output_text` if present, else concatenate text segments from `output` items
-            content = data.get("output_text") or ""
+            # Prefer output_text; otherwise flatten output items recursively
+            content_raw = data.get("output_text")
+            content = content_raw if isinstance(content_raw, str) else ""
             if not content:
-                output = data.get("output", []) or []
-                content = "".join([item.get("content", "") for item in output if isinstance(item, dict)])
+                content = self._flatten_text(data.get("output"))
 
             # Reasoning may be present in vendor fields
             reasoning_raw = None
@@ -348,12 +658,102 @@ class OpenAIClient(LLMClient):
             # Fall back to empty response on failure
             return LLMResponse(content="")
 
-    async def _stream_chat_responses(self, messages: List[LLMMessage], tools: Optional[List[LLMTool]] = None) -> AsyncIterator[LLMResponse]:
+    async def _stream_chat_responses(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[LLMTool]] = None,
+        model_override: Optional[str] = None,
+    ) -> AsyncIterator[LLMResponse]:
+        # Prefer SDK streaming when available; otherwise fall back to SSE.
+        if getattr(self, "_sdk", None) is not None:
+            async def _gen() -> AsyncIterator[LLMResponse]:
+                try:
+                    # If SDK does not expose responses.stream, use non-stream as single yield
+                    if not hasattr(self._sdk, "responses") or not hasattr(self._sdk.responses, "stream"):
+                        yield await self._non_stream_responses_via_sdk(messages, tools)
+                        return
+                    instructions_parts: List[str] = []
+                    input_items: List[Dict[str, Any]] = []
+                    for m in messages:
+                        if m.role == "system" and m.content:
+                            instructions_parts.append(m.content)
+                            continue
+                        # For streaming, we only support simple text/image union sufficient for deltas.
+                        if m.images:
+                            parts: List[Dict[str, Any]] = []
+                            if m.content:
+                                parts.append({"type": "input_text", "text": m.content})
+                            for p in (m.images or []):
+                                data_url = self._path_to_data_url(p)
+                                if data_url:
+                                    parts.append({"type": "input_image", "image_url": data_url})
+                            input_items.append({"role": m.role, "content": parts})
+                        else:
+                            input_items.append({"role": m.role, "content": m.content})
+                    stream_kwargs: Dict[str, Any] = {
+                        "model": (model_override or self.config.model),
+                        "input": input_items,
+                    }
+                    tools_json = self._responses_tools_payload(tools)
+                    if tools_json:
+                        stream_kwargs["tools"] = tools_json
+                        stream_kwargs["tool_choice"] = "auto"
+                    if instructions_parts:
+                        stream_kwargs["instructions"] = "\n\n".join(instructions_parts)
+                    async with self._sdk.responses.stream(  # type: ignore[attr-defined]
+                        **stream_kwargs
+                    ) as stream:
+                        content_buffer = ""
+                        async for event in stream:
+                            et = getattr(event, "type", None)
+                            if isinstance(et, str) and "output_text.delta" in et:
+                                delta = getattr(event, "delta", None) or getattr(event, "output_text", None)
+                                if isinstance(delta, str) and delta:
+                                    content_buffer += delta
+                                    yield LLMResponse(content=content_buffer)
+                        # Best-effort final response emission
+                        try:
+                            final = getattr(stream, "get_final_response", None)
+                            if callable(final):
+                                fr = await final()
+                                text = getattr(fr, "output_text", None)
+                                if isinstance(text, str) and text and text != content_buffer:
+                                    yield LLMResponse(content=text)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.error("OpenAI Responses (SDK stream) error", error=str(e))
+                    return
+            # In an async generator function, we cannot `return` a value. Forward the
+            # inner generator explicitly.
+            async for _ev in _gen():
+                yield _ev
+            return
+        model = model_override or self.config.model
+        instructions_parts: List[str] = []
+        input_items: List[Dict[str, Any]] = []
+        for m in messages:
+            if m.role == "system" and m.content:
+                instructions_parts.append(m.content)
+                continue
+            if m.images:
+                parts: List[Dict[str, Any]] = []
+                if m.content:
+                    parts.append({"type": "input_text", "text": m.content})
+                for p in (m.images or []):
+                    data_url = self._path_to_data_url(p)
+                    if data_url:
+                        parts.append({"type": "input_image", "image_url": data_url})
+                input_items.append({"role": m.role, "content": parts})
+            else:
+                input_items.append({"role": m.role, "content": m.content})
         payload: Dict[str, Any] = {
-            "model": self.config.model,
-            "input": [{"role": m.role, "content": m.content} for m in messages],
+            "model": model,
+            "input": input_items,
             "stream": True,
         }
+        if instructions_parts:
+            payload["instructions"] = "\n\n".join(instructions_parts)
         tool_defs = self._responses_tools_payload(tools)
         if tool_defs:
             payload["tools"] = tool_defs
@@ -362,7 +762,7 @@ class OpenAIClient(LLMClient):
             cm, response = await self._enter_stream_with_retries(
                 f"{self.base_url}/responses",
                 json=payload,
-                headers=self.headers,
+                headers=self._responses_headers(),
             )
             response.raise_for_status()
 
@@ -522,11 +922,12 @@ class OpenAIClient(LLMClient):
             tool_calls_buffer = {}
             reasoning_buffer = ""
             
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
+            try:
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str.strip() == "[DONE]":
+                            break
                     
                     try:
                         data = json.loads(data_str)
@@ -587,74 +988,6 @@ class OpenAIClient(LLMClient):
                     
                     except json.JSONDecodeError:
                         continue
-            try:
-                
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        
-                        try:
-                            data = json.loads(data_str)
-                            delta = data["choices"][0]["delta"]
-                            
-                            # Handle content
-                            if "content" in delta:
-                                content_buffer += delta["content"] or ""
-                                yield LLMResponse(content=content_buffer)
-                            
-                            # Heuristic handling for reasoning content when present
-                            # Some providers may emit `reasoning` or `reasoning_content` keys
-                            # in either the choice-level object or the delta.
-                            raw_reason = None
-                            if isinstance(delta, dict):
-                                if "reasoning" in delta and isinstance(delta["reasoning"], str):
-                                    raw_reason = delta["reasoning"]
-                                elif "reasoning_content" in delta and isinstance(delta["reasoning_content"], str):
-                                    raw_reason = delta["reasoning_content"]
-                            if raw_reason:
-                                reasoning_buffer += raw_reason
-                                yield LLMResponse(content=content_buffer, reasoning_raw_delta=raw_reason)
-                            
-                            # Handle tool calls
-                            if "tool_calls" in delta:
-                                for tool_call_delta in delta["tool_calls"]:
-                                    index = tool_call_delta.get("index", 0)
-                                    if index not in tool_calls_buffer:
-                                        tool_calls_buffer[index] = {
-                                            "id": "",
-                                            "name": "",
-                                            "arguments": ""
-                                        }
-                                    
-                                    if "id" in tool_call_delta.get("function", {}):
-                                        tool_calls_buffer[index]["id"] = tool_call_delta["function"]["id"]
-                                    
-                                    if "name" in tool_call_delta.get("function", {}):
-                                        tool_calls_buffer[index]["name"] = tool_call_delta["function"]["name"]
-                                    
-                                    if "arguments" in tool_call_delta.get("function", {}):
-                                        tool_calls_buffer[index]["arguments"] += tool_call_delta["function"]["arguments"]
-                                    
-                                    # Yield complete tool calls
-                                    if tool_calls_buffer[index]["id"] and tool_calls_buffer[index]["name"]:
-                                        try:
-                                            arguments = json.loads(tool_calls_buffer[index]["arguments"])
-                                            yield LLMResponse(
-                                                content=content_buffer,
-                                                tool_calls=[LLMToolCall(
-                                                    id=tool_calls_buffer[index]["id"],
-                                                    name=tool_calls_buffer[index]["name"],
-                                                    arguments=arguments
-                                                )]
-                                            )
-                                        except json.JSONDecodeError:
-                                            pass  # Incomplete JSON
-                        
-                        except json.JSONDecodeError:
-                            continue
-                
             finally:
                 await cm.__aexit__(None, None, None)
         except Exception as e:

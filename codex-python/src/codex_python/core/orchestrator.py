@@ -196,6 +196,7 @@ class CodexOrchestrator:
                 max_tokens=getattr(self.config, 'max_tokens', 4096),
                 temperature=getattr(self.config, 'temperature', 0.7),
                 use_responses_api=getattr(self.config, 'openai_use_responses_api', False),
+                default_vision_model=getattr(self.config, 'default_vision_model', None),
             )
             self.llm_manager.add_client("openai", create_llm_client(openai_config), is_default=True)
         
