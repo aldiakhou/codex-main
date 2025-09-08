@@ -60,12 +60,24 @@ class Config:
     allowed_tools: List[str] = field(default_factory=list)
     blocked_tools: List[str] = field(default_factory=list)
     enable_sandbox: bool = True
+    # Sandbox mode: read-only | workspace (workspace-write) | danger-full-access
+    sandbox_mode: str = "workspace"
 
     # Approval and history
     approval_policy: str = "on_request"  # on_request, on_failure, unless_trusted, never
     history_enabled: bool = True
     history_path: Optional[str] = None
     notify: Optional[List[str]] = None
+    # Turn diff ignores (glob patterns relative to cwd)
+    diff_ignore: List[str] = field(default_factory=list)
+    # Turn diff advanced controls
+    diff_max_files: int = 5000
+    diff_hash_limit_bytes: int = 128 * 1024
+    diff_file_size_limit_bytes: int = 10 * 1024 * 1024
+    # Optional language-specific ignore patterns, keyed by language name
+    diff_ignore_by_language: Dict[str, List[str]] = field(default_factory=dict)
+    # Optional project languages to activate language-specific ignores
+    project_languages: List[str] = field(default_factory=list)
     
     @classmethod
     def from_file(cls, config_path: Union[str, Path]) -> "Config":
@@ -130,6 +142,13 @@ class Config:
             allowed_tools=data.get("allowed_tools", []) or [],
             blocked_tools=data.get("blocked_tools", []) or [],
             enable_sandbox=bool(data.get("enable_sandbox", True)),
+            sandbox_mode=str(data.get("sandbox_mode", data.get("sandbox", "workspace"))),
+            diff_ignore=list(data.get("diff_ignore", [])) if isinstance(data.get("diff_ignore", []), list) else [],
+            diff_max_files=int(data.get("diff_max_files", 5000)),
+            diff_hash_limit_bytes=int(data.get("diff_hash_limit_bytes", 128 * 1024)),
+            diff_file_size_limit_bytes=int(data.get("diff_file_size_limit_bytes", 10 * 1024 * 1024)),
+            diff_ignore_by_language=data.get("diff_ignore_by_language", {}) or {},
+            project_languages=list(data.get("project_languages", [])) if isinstance(data.get("project_languages", []), list) else [],
         )
     
     @classmethod
@@ -167,10 +186,17 @@ class Config:
             allowed_tools=data.get("allowed_tools", []),
             blocked_tools=data.get("blocked_tools", []),
             enable_sandbox=data.get("enable_sandbox", True),
+            sandbox_mode=data.get("sandbox_mode", data.get("sandbox", "workspace")),
             approval_policy=data.get("approval_policy", "on_request"),
             history_enabled=bool(data.get("history_enabled", True)),
             history_path=data.get("history_path")
             ,notify=data.get("notify")
+            ,diff_ignore=list(data.get("diff_ignore", [])) if isinstance(data.get("diff_ignore", []), list) else []
+            ,diff_max_files=int(data.get("diff_max_files", 5000))
+            ,diff_hash_limit_bytes=int(data.get("diff_hash_limit_bytes", 128 * 1024))
+            ,diff_file_size_limit_bytes=int(data.get("diff_file_size_limit_bytes", 10 * 1024 * 1024))
+            ,diff_ignore_by_language=data.get("diff_ignore_by_language", {}) or {}
+            ,project_languages=list(data.get("project_languages", [])) if isinstance(data.get("project_languages", []), list) else []
         )
     
     @classmethod
@@ -227,10 +253,15 @@ class Config:
             allowed_tools=os.getenv("CODEX_ALLOWED_TOOLS", "").split(",") if os.getenv("CODEX_ALLOWED_TOOLS") else [],
             blocked_tools=os.getenv("CODEX_BLOCKED_TOOLS", "").split(",") if os.getenv("CODEX_BLOCKED_TOOLS") else [],
             enable_sandbox=os.getenv("CODEX_ENABLE_SANDBOX", "true").lower() == "true",
+            sandbox_mode=os.getenv("CODEX_SANDBOX_MODE", "workspace"),
             approval_policy=os.getenv("CODEX_APPROVAL_POLICY", "on_request"),
             history_enabled=os.getenv("CODEX_HISTORY_ENABLED", "true").lower() == "true",
             history_path=os.getenv("CODEX_HISTORY_PATH"),
-            notify=(os.getenv("CODEX_NOTIFY","" ).split(" ") if os.getenv("CODEX_NOTIFY") else None)
+            notify=(os.getenv("CODEX_NOTIFY","" ).split(" ") if os.getenv("CODEX_NOTIFY") else None),
+            diff_ignore=os.getenv("CODEX_DIFF_IGNORE", "").split(",") if os.getenv("CODEX_DIFF_IGNORE") else [],
+            diff_max_files=int(os.getenv("CODEX_DIFF_MAX_FILES", "5000")),
+            diff_hash_limit_bytes=int(os.getenv("CODEX_DIFF_HASH_LIMIT_BYTES", str(128 * 1024))),
+            diff_file_size_limit_bytes=int(os.getenv("CODEX_DIFF_FILE_SIZE_LIMIT_BYTES", str(10 * 1024 * 1024))),
         )
     
     def to_dict(self) -> dict:
@@ -266,9 +297,16 @@ class Config:
             "max_concurrent_tools": self.max_concurrent_tools,
             "allowed_tools": self.allowed_tools,
             "blocked_tools": self.blocked_tools,
-            "enable_sandbox": self.enable_sandbox
+            "enable_sandbox": self.enable_sandbox,
+            "sandbox_mode": self.sandbox_mode
             ,"approval_policy": self.approval_policy
             ,"history_enabled": self.history_enabled
             ,"history_path": self.history_path
             ,"notify": self.notify
+            ,"diff_ignore": self.diff_ignore
+            ,"diff_max_files": self.diff_max_files
+            ,"diff_hash_limit_bytes": self.diff_hash_limit_bytes
+            ,"diff_file_size_limit_bytes": self.diff_file_size_limit_bytes
+            ,"diff_ignore_by_language": self.diff_ignore_by_language
+            ,"project_languages": self.project_languages
         }

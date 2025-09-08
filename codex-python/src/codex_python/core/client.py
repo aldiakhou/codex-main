@@ -55,6 +55,31 @@ class CodexClient:
         self._initialized = True
         
         logger.info("Codex client initialized successfully")
+
+    # Async context manager helpers for tests/CLI ergonomics
+    async def __aenter__(self) -> "CodexClient":
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        """Close all sessions and stop the connection manager."""
+        try:
+            for name, session in list(self._sessions.items()):
+                try:
+                    await session.close()
+                except Exception:
+                    pass
+                self._sessions.pop(name, None)
+        except Exception:
+            pass
+        try:
+            await self.connection_manager.stop()
+        except Exception:
+            pass
+        self._initialized = False
     
     async def _connect_to_server(self, server_name: str, server_config: ServerConfig) -> None:
         """Connect to a specific MCP server"""
@@ -213,8 +238,8 @@ class CodexClient:
             info[server_name] = await self.get_server_info(server_name)
         return info
     
-    async def close(self) -> None:
-        """Close all connections"""
+    async def _close_manager_only(self) -> None:
+        """Close connection manager (legacy helper)."""
         logger.info("Closing Codex client")
         try:
             await self.connection_manager.stop()
@@ -233,7 +258,7 @@ class CodexClient:
                 await self.initialize()
             yield self
         finally:
-            await self.close()
+            await self._close_manager_only()
     
     async def health_check(self) -> Dict[str, Any]:
         """Perform health check on all connections"""

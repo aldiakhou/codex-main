@@ -13,6 +13,7 @@ import structlog
 
 from .core.client import CodexClient
 from .core.config import Config
+from .proto.events_adapter import EventsAdapter
 from .auth.store import save_api_key, load_api_key, clear_auth, safe_format_key
 
 
@@ -41,8 +42,13 @@ logger = structlog.get_logger(__name__)
 @click.option("--config", "-c", type=click.Path(exists=True), help="Configuration file path")
 @click.option("--override", "-o", multiple=True, help="Override config key=value (supports dotted paths)")
 @click.option("--log-level", default="INFO", help="Log level (DEBUG, INFO, WARNING, ERROR)")
+@click.option(
+    "--sandbox",
+    type=click.Choice(["read-only", "workspace-write", "danger-full-access"], case_sensitive=False),
+    help="Select sandbox policy (overrides config)",
+)
 @click.pass_context
-def cli(ctx, config, override, log_level):
+def cli(ctx, config, override, log_level, sandbox):
     """Cadenza - Model Context Protocol Client"""
     ctx.ensure_object(dict)
     
@@ -79,7 +85,16 @@ def cli(ctx, config, override, log_level):
     # Load configuration
     if config:
         cfg = Config.from_file(config)
-        ctx.obj["config"] = _apply_overrides(cfg, override)
+        cfg2 = _apply_overrides(cfg, override)
+        if sandbox:
+            # Map CLI sandbox flag to config
+            cfg2.enable_sandbox = sandbox.lower() != "danger-full-access"
+            cfg2.sandbox_mode = {
+                "read-only": "read-only",
+                "workspace-write": "workspace",
+                "danger-full-access": "danger-full-access",
+            }[sandbox.lower()]
+        ctx.obj["config"] = cfg2
     else:
         # Try to load from default locations
         default_paths = [
@@ -101,7 +116,15 @@ def cli(ctx, config, override, log_level):
             # Fall back to environment variables
             config_obj = Config.from_env()
         
-        ctx.obj["config"] = _apply_overrides(config_obj, override)
+        cfg2 = _apply_overrides(config_obj, override)
+        if sandbox:
+            cfg2.enable_sandbox = sandbox.lower() != "danger-full-access"
+            cfg2.sandbox_mode = {
+                "read-only": "read-only",
+                "workspace-write": "workspace",
+                "danger-full-access": "danger-full-access",
+            }[sandbox.lower()]
+        ctx.obj["config"] = cfg2
 
 
 @cli.command()
@@ -240,6 +263,213 @@ async def exec_stream(ctx, cmd, cwd, env):
     finally:
         await orch.cleanup()
 
+
+@cli.command(name="agent-exec")
+@click.argument("prompt", required=False)
+@click.option("--json", "json_mode", is_flag=True, help="Emit JSONL events instead of human output")
+@click.option("--cwd", type=click.Path(), help="Working directory for the session")
+@click.option("--session-id", type=str, help="Optional session id (default: auto)")
+@click.pass_context
+async def agent_exec(ctx, prompt: Optional[str], json_mode: bool, cwd: Optional[str], session_id: Optional[str]):
+    """Run an agent loop against a PROMPT using the Orchestrator.
+
+    Streams assistant deltas and basic tool notifications; prints final result.
+    """
+    config = ctx.obj["config"]
+
+    # Read prompt from stdin if not provided or set to '-'
+    if not prompt or prompt == "-":
+        try:
+            data = sys.stdin.read()
+            prompt = data.strip()
+        except Exception:
+            prompt = ""
+    if not prompt:
+        click.echo("No prompt provided. Pass PROMPT or pipe to stdin.", err=True)
+        raise SystemExit(1)
+
+    from .core.orchestrator import CodexOrchestrator
+    orch = CodexOrchestrator(config)
+    await orch.initialize()
+
+    # Session setup
+    import uuid
+    sid = session_id or str(uuid.uuid4())
+    workdir = cwd or str(Path.cwd())
+    orch.create_session(sid, workdir)
+
+    # Turn/event id to correlate substreams
+    import uuid as _uuid
+    turn_id = str(_uuid.uuid4())
+    adapter = EventsAdapter(json_mode=json_mode, event_id=turn_id, originator="cadenza_cli_py", session_id=sid, session_cwd=workdir)
+
+    async def consume_event_bus():
+        # Forward a subset of orchestrator events
+        async for ev in orch.events.subscribe(types=[
+            "tool_start", "tool_end", "exec_begin", "exec_end", "patch_begin", "patch_end", "approval_request", "turn_diff", "exec_session_output"
+        ]):
+            out = adapter.from_bus_event(ev)
+            if out is not None:
+                _emit(out, json_mode)
+
+    # Emit a minimal SessionConfigured + TaskStarted
+    _emit(adapter.session_configured(sid, workdir), json_mode)
+    _emit(adapter.task_started(sid, prompt), json_mode)
+
+    # Start background consumer
+    bus_task = asyncio.create_task(consume_event_bus())
+
+    last_len = 0
+    final_text: Optional[str] = None
+    try:
+        # Drive the chat loop with streaming
+        async for item in orch.chat([prompt], session_id=sid, stream=True):
+            # Stream deltas
+            if isinstance(item, dict) and item.get("type") == "delta":
+                content = item.get("content") or ""
+                # compute only the new suffix
+                new = content[last_len:]
+                last_len = len(content)
+                if new:
+                    _emit(adapter.agent_message_delta(new), json_mode)
+                continue
+
+            # Reasoning deltas (if available from provider)
+            if isinstance(item, dict) and item.get("type") == "reasoning_raw_delta":
+                _emit(adapter.reasoning_raw_delta(item.get("content") or ""), json_mode)
+                continue
+            if isinstance(item, dict) and item.get("type") == "reasoning_delta":
+                _emit(adapter.reasoning_delta(item.get("content") or ""), json_mode)
+                continue
+            # Tool result surfaced from provider
+            if isinstance(item, dict) and item.get("type") == "tool_result":
+                _emit(adapter.tool_result(item.get("name"), item.get("content") or ""), json_mode)
+                continue
+
+            # Tool lifecycle notifications from the chat loop
+            if isinstance(item, dict) and item.get("type") in ("tool_start", "tool_end"):
+                name = item.get("name") or "unknown"
+                if item.get("type") == "tool_start":
+                    # Reasoning section break around tool calls
+                    _emit(adapter.reasoning_section_break("tool"), json_mode)
+                    _emit(adapter.tool_call_begin(name), json_mode)
+                else:
+                    _emit(adapter.tool_call_end(name, success=True), json_mode)
+                continue
+
+            # Non-stream snapshots or completion
+            if isinstance(item, dict) and "content" in item and item.get("tool_calls") == []:
+                final_text = item.get("content")
+                if final_text:
+                    _emit(adapter.agent_message(final_text), json_mode)
+                break
+    finally:
+        bus_task.cancel()
+        try:
+            await orch.cleanup()
+        except Exception:
+            pass
+
+    if final_text is None:
+        final_text = ""
+
+    _emit(adapter.task_complete(final_text), json_mode)
+
+
+def _emit(event: dict, json_mode: bool) -> None:
+    if json_mode:
+        click.echo(json.dumps(event, ensure_ascii=False))
+    else:
+        # Minimal human formatting
+        t = event.get("type")
+        if t == "agent_message_delta":
+            click.echo(event.get("content", ""), nl=False)
+        elif t == "tool_call_begin":
+            click.echo(f"\n→ tool: {event.get('name')}")
+        elif t == "tool_result":
+            content = event.get("content") or ""
+            if content:
+                click.echo("\n" + content)
+        elif t == "tool_call_end":
+            click.echo(f"✓ tool done: {event.get('name')}")
+        elif t == "ToolResult":
+            content = event.get("content") or ""
+            if content:
+                click.echo("\n" + content)
+        elif t == "ExecSessionOutput":
+            # Human mode: decode base64 for display
+            import base64
+            b64 = event.get("data_b64") or ""
+            try:
+                chunk = base64.b64decode(b64)
+                try:
+                    click.echo(chunk.decode('utf-8'), nl=False)
+                except Exception:
+                    # If not valid UTF-8, print as latin-1 fallback
+                    click.echo(chunk.decode('latin-1', errors='replace'), nl=False)
+            except Exception:
+                pass
+        elif t == "task_complete":
+            click.echo("\n\n---\n" + (event.get("final_text") or ""))
+
+
+@cli.command(name="exec-stdin")
+@click.option("--session-id", required=True, help="Persistent exec session id")
+@click.option("--data", help="Data to write (default: read from stdin)")
+@click.pass_context
+async def exec_stdin(ctx, session_id: str, data: Optional[str]):
+    """Write to stdin of a persistent exec session (same-process only)."""
+    config = ctx.obj["config"]
+    from .core.orchestrator import CodexOrchestrator
+    orch = CodexOrchestrator(config)
+    await orch.initialize()
+    try:
+        if data is None:
+            data = sys.stdin.read()
+        res = await orch.execute_builtin_tool("write_stdin", {"session_id": session_id, "data": data})
+        if not res.get("success"):
+            click.echo("Failed to write to stdin", err=True)
+            sys.exit(1)
+    finally:
+        await orch.cleanup()
+
+
+@cli.command(name="exec-stdin-remote")
+@click.option("--session-id", required=True, help="Persistent exec session id")
+@click.option("--data", help="Data to write (default: read from stdin)")
+def exec_stdin_remote(session_id: str, data: Optional[str]):
+    """Write to stdin of a persistent exec session via local mux (cross-process)."""
+    try:
+        if data is None:
+            data = sys.stdin.read()
+        import json as _json
+        import socket, base64
+        # Read mux port
+        from .auth.store import codex_home_dir
+        p = codex_home_dir() / "execmux.json"
+        cfg = _json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
+        port = int(cfg.get('port', 0))
+        token = cfg.get('token')
+        if port <= 0:
+            click.echo("Exec mux not running.", err=True)
+            sys.exit(1)
+        req = {
+            "op": "write_stdin",
+            "session_id": session_id,
+            "data_b64": base64.b64encode((data or "").encode('utf-8')).decode('ascii'),
+            "token": token,
+        }
+        with socket.create_connection(("127.0.0.1", port), timeout=3.0) as s:
+            s.sendall(_json.dumps(req).encode('utf-8'))
+            s.shutdown(socket.SHUT_WR)
+            resp = s.recv(65536)
+        out = _json.loads(resp.decode('utf-8'))
+        if not out.get("ok"):
+            click.echo(f"Error: {out.get('error')}", err=True)
+            sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 @cli.command(name="apply-patch")
 @click.option("--file", "patch_file", type=click.Path(exists=True), help="Patch file path (defaults to stdin)")
@@ -550,6 +780,20 @@ async def serve(ctx, host, port):
         await server.stop(0.5)
 
 
+@cli.command(name="mcp")
+@click.pass_context
+async def mcp_server(ctx):
+    """Run the MCP server over stdio (tools: codex, codex-reply)."""
+    config = ctx.obj["config"]
+    from .mcp.server import CodexMCPServer
+
+    srv = CodexMCPServer(config)
+    try:
+        await srv.run_stdio()
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     """Main entry point"""
     # Run async commands
@@ -568,6 +812,8 @@ def main():
     cli.commands["exec-stream"].callback = run_async(cli.commands["exec-stream"].callback)
     cli.commands["apply-patch"].callback = run_async(cli.commands["apply-patch"].callback)
     cli.commands["search"].callback = run_async(cli.commands["search"].callback)
+    if "mcp" in cli.commands:
+        cli.commands["mcp"].callback = run_async(cli.commands["mcp"].callback)
     cli.commands["history"].callback = run_async(cli.commands["history"].callback)
     cli.commands["chat"].callback = run_async(cli.commands["chat"].callback)
     cli.commands["events"].callback = run_async(cli.commands["events"].callback)

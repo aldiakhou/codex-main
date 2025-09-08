@@ -31,6 +31,9 @@ from ..patch.applier import PatchManager, PatchConfig, Patch, PatchParser
 from ..exec_policy.engine import PolicyManager, ExecutionContext, PolicyEvaluation, PolicyDecision
 from ..approval.system import ApprovalManager, ApprovalContext, ApprovalLevel, ApprovalStatus
 from ..mcp.tool_registry import ToolRegistry, ToolInfo
+from .exec_session import ExecSessionManager
+from .exec_mux import LocalExecMux
+from .turn_diff_tracker import build_snapshot as td_snapshot, diff_snapshots as td_diff
 from ..utils.history import append_event
 from ..utils.events import EventBus
 
@@ -83,11 +86,23 @@ class CodexOrchestrator:
         self.patch_manager = PatchManager()
         self.policy_manager = PolicyManager()
         self.approval_manager = ApprovalManager()
+        self._exec_sessions = ExecSessionManager()
         
-        # Sandbox configuration
+        # Sandbox configuration (map config.sandbox_mode)
+        default_level = SandboxLevel.WORKSPACE
+        enabled = config.enable_sandbox
+        mode = getattr(config, 'sandbox_mode', 'workspace')
+        if isinstance(mode, str):
+            m = mode.lower().replace('_', '-')
+            if m in ("read-only", "readonly", "read_only"):
+                default_level = SandboxLevel.READ_ONLY
+            elif m in ("workspace-write", "workspace", "workspace_write"):
+                default_level = SandboxLevel.WORKSPACE
+            elif m in ("danger-full-access", "danger", "danger_full_access"):
+                enabled = False
         self.sandbox_config = SandboxConfig(
-            enabled=config.enable_sandbox,
-            default_level=SandboxLevel.WORKSPACE,
+            enabled=enabled,
+            default_level=default_level,
             strict_mode=True
         )
         self.sandbox_executor = SandboxExecutor(self.sandbox_config)
@@ -140,6 +155,33 @@ class CodexOrchestrator:
         
         self._initialized = True
         logger.info("Codex orchestrator initialized successfully")
+
+        # Start local exec multiplexer (cross-process control)
+        try:
+            enable_mux = True
+            if hasattr(self.config, 'enable_exec_mux'):
+                enable_mux = bool(getattr(self.config, 'enable_exec_mux'))
+            if enable_mux:
+                async def _write_cb(session_id: str, data: bytes):
+                    # Use write_stdin path (binary-safe)
+                    await self._exec_sessions.write_stdin(session_id, data.decode(errors='ignore'))
+
+                async def _stop_cb(session_id: str):
+                    await self._exec_sessions.stop_session(session_id)
+
+                import secrets
+                token = getattr(self.config, 'exec_mux_token', None) or secrets.token_urlsafe(24)
+                self._exec_mux = LocalExecMux(_write_cb, _stop_cb, token=token)
+                port = await self._exec_mux.start()
+                try:
+                    # Persist port+token to ~/.codex/execmux.json
+                    from ..auth.store import codex_home_dir
+                    p = codex_home_dir() / "execmux.json"
+                    p.write_text(json.dumps({"port": port, "token": token}), encoding='utf-8')
+                except Exception:
+                    pass
+        except Exception:
+            pass
     
     async def _initialize_llm_clients(self) -> None:
         """Initialize LLM clients based on configuration"""
@@ -152,7 +194,8 @@ class CodexOrchestrator:
                 model=getattr(self.config, 'openai_model', 'gpt-4'),
                 api_key=api_key,
                 max_tokens=getattr(self.config, 'max_tokens', 4096),
-                temperature=getattr(self.config, 'temperature', 0.7)
+                temperature=getattr(self.config, 'temperature', 0.7),
+                use_responses_api=getattr(self.config, 'openai_use_responses_api', False),
             )
             self.llm_manager.add_client("openai", create_llm_client(openai_config), is_default=True)
         
@@ -265,6 +308,14 @@ class CodexOrchestrator:
                     if chunk.content:
                         content_accum = chunk.content
                         yield {"type": "delta", "content": content_accum, "step": step}
+                    # Propagate reasoning deltas when available
+                    if getattr(chunk, "reasoning_raw_delta", None):
+                        yield {"type": "reasoning_raw_delta", "content": chunk.reasoning_raw_delta, "step": step}
+                    if getattr(chunk, "reasoning_delta", None):
+                        yield {"type": "reasoning_delta", "content": chunk.reasoning_delta, "step": step}
+                    # Propagate tool result deltas from provider, when available
+                    if getattr(chunk, "tool_result_delta", None):
+                        yield {"type": "tool_result", "content": chunk.tool_result_delta, "step": step}
                 if not tool_calls:
                     # No tools requested => done
                     yield {"content": content_accum, "tool_calls": []}
@@ -275,6 +326,8 @@ class CodexOrchestrator:
                 if response.content:
                     yield {"content": response.content, "step": step}
                     final_response = response.content
+                if getattr(response, "tool_result_delta", None):
+                    yield {"type": "tool_result", "content": response.tool_result_delta, "step": step}
                 if not response.tool_calls:
                     yield {"content": response.content, "usage": response.usage, "tool_calls": []}
                     break
@@ -316,6 +369,11 @@ class CodexOrchestrator:
 
                 if stream:
                     # notify UI about tool end and publish event
+                    # also surface tool result payload for consumers
+                    try:
+                        yield {"type": "tool_result", "name": tool_name, "content": tool_output_text}
+                    except Exception:
+                        pass
                     yield {"type": "tool_end", "name": tool_name}
                     try:
                         await self.events.publish("tool_end", name=tool_name)
@@ -355,6 +413,24 @@ class CodexOrchestrator:
             # Get session
             session = self.get_session(session_id) if session_id else None
             working_dir = cwd or (session.working_directory if session else str(Path.cwd()))
+
+            # Take a pre-exec snapshot to compute a TurnDiff afterwards
+            try:
+                ignore = list(getattr(self.config, 'diff_ignore', []))
+                # Merge language-specific ignores
+                langs = getattr(self.config, 'project_languages', []) or []
+                lang_map = getattr(self.config, 'diff_ignore_by_language', {}) or {}
+                for lang in langs:
+                    ignore.extend(lang_map.get(lang, []))
+                pre_snapshot = td_snapshot(
+                    working_dir,
+                    ignore=ignore,
+                    hash_limit_bytes=getattr(self.config, 'diff_hash_limit_bytes', 128 * 1024),
+                    max_files=getattr(self.config, 'diff_max_files', 5000),
+                    file_size_limit_bytes=getattr(self.config, 'diff_file_size_limit_bytes', 10 * 1024 * 1024),
+                )
+            except Exception:
+                pre_snapshot = None
 
             # Create execution context
             context = ExecutionContext(
@@ -426,6 +502,26 @@ class CodexOrchestrator:
                 policy=sandbox_policy
             )
             
+            # Emit a post-exec TurnDiff if possible
+            try:
+                if pre_snapshot is not None:
+                    ignore = list(getattr(self.config, 'diff_ignore', []))
+                    langs = getattr(self.config, 'project_languages', []) or []
+                    lang_map = getattr(self.config, 'diff_ignore_by_language', {}) or {}
+                    for lang in langs:
+                        ignore.extend(lang_map.get(lang, []))
+                    post_snapshot = td_snapshot(
+                        working_dir,
+                        ignore=ignore,
+                        hash_limit_bytes=getattr(self.config, 'diff_hash_limit_bytes', 128 * 1024),
+                        max_files=getattr(self.config, 'diff_max_files', 5000),
+                        file_size_limit_bytes=getattr(self.config, 'diff_file_size_limit_bytes', 10 * 1024 * 1024),
+                    )
+                    diff = td_diff(pre_snapshot, post_snapshot)
+                    await self.events.publish("turn_diff", files=diff)
+            except Exception:
+                pass
+
             op_result = OperationResult(
                 operation=CodexOperation.COMMAND,
                 success=result.get("success", False),
@@ -718,6 +814,39 @@ class CodexOrchestrator:
             except Exception:
                 pass
             result = await self.patch_manager.apply_patch_text(patch_text, patch_root)
+            # Publish a minimal TurnDiff summary for UI
+            try:
+                files = []
+                if patch_obj:
+                    for fp in patch_obj.patches:
+                        path_new = (fp.new_path or "").strip()
+                        path_old = (fp.old_path or "").strip()
+                        added = 0
+                        removed = 0
+                        for h in fp.hunks:
+                            for ln in h.lines:
+                                if ln.startswith('+') and not ln.startswith('+++'):
+                                    added += 1
+                                elif ln.startswith('-') and not ln.startswith('---'):
+                                    removed += 1
+                        status = "modified"
+                        if fp.operation.name.lower() == "add":
+                            status = "added"
+                        elif fp.operation.name.lower() == "delete":
+                            status = "deleted"
+                        elif fp.operation.name.lower() == "move" or (path_old and path_new and path_old != path_new):
+                            status = "renamed"
+                        files.append({
+                            "path": path_new or path_old,
+                            "status": status,
+                            "from": path_old if status == "renamed" else None,
+                            "to": path_new if status == "renamed" else None,
+                            "added": added,
+                            "removed": removed,
+                        })
+                await self.events.publish("turn_diff", files=files)
+            except Exception:
+                pass
             try:
                 await self.events.publish("patch_end", call_id=call_id, success=result.success)
             except Exception:
@@ -861,6 +990,42 @@ class CodexOrchestrator:
             }
         ))
         tools.append(LLMTool(
+            name="exec_start",
+            description="Start a persistent exec session (interactive process)",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "array", "items": {"type": "string"}},
+                    "cwd": {"type": "string"},
+                    "env": {"type": "object"}
+                },
+                "required": ["command"]
+            }
+        ))
+        tools.append(LLMTool(
+            name="write_stdin",
+            description="Write data to a persistent exec session's stdin",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "data": {"type": "string"}
+                },
+                "required": ["session_id", "data"]
+            }
+        ))
+        tools.append(LLMTool(
+            name="exec_stop",
+            description="Stop a persistent exec session",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"}
+                },
+                "required": ["session_id"]
+            }
+        ))
+        tools.append(LLMTool(
             name="apply_patch",
             description="Apply a unified diff patch to the workspace (approval may be required)",
             parameters={
@@ -961,6 +1126,13 @@ class CodexOrchestrator:
             pass
         
         self._initialized = False
+        # Stop local mux
+        try:
+            if hasattr(self, '_exec_mux') and self._exec_mux:
+                await self._exec_mux.stop()
+                self._exec_mux = None
+        except Exception:
+            pass
         logger.info("Codex orchestrator cleaned up")
 
     async def execute_builtin_tool(self, name: str, arguments: Dict[str, Any], session_id: Optional[str] = None) -> Dict[str, Any]:
@@ -996,4 +1168,55 @@ class CodexOrchestrator:
                 raise ValueError("update_plan.steps must be a list of step dicts")
             self.shared_plan = steps
             return {"success": True, "plan": self.shared_plan}
+        if name == "exec_start":
+            # start persistent exec session
+            cmd = arguments.get("command") or []
+            if not isinstance(cmd, list) or not all(isinstance(x, str) for x in cmd):
+                raise ValueError("exec_start.command must be a list of strings")
+            # publish exec session output to event bus
+            def _on_output(stream: str, data: bytes):
+                try:
+                    import base64
+                    b64 = base64.b64encode(data).decode('ascii')
+                    asyncio.create_task(self.events.publish(
+                        "exec_session_output",
+                        session_id=session_id or "",
+                        stream=stream,
+                        data_b64=b64,
+                    ))
+                except Exception:
+                    pass
+
+            sid = await self._exec_sessions.start_session(
+                cmd,
+                session_id=session_id,
+                cwd=arguments.get("cwd"),
+                env=arguments.get("env"),
+                on_output=_on_output,
+            )
+            # notify bus
+            try:
+                await self.events.publish("exec_session_started", session_id=sid)
+            except Exception:
+                pass
+            return {"success": True, "session_id": sid}
+        if name == "write_stdin":
+            sid = arguments.get("session_id")
+            data = arguments.get("data")
+            if not sid or not isinstance(data, str):
+                raise ValueError("write_stdin requires session_id and text data")
+            await self._exec_sessions.write_stdin(sid, data)
+            return {"success": True}
+        if name == "exec_stop":
+            sid = arguments.get("session_id")
+            if not sid:
+                raise ValueError("exec_stop requires session_id")
+            await self._exec_sessions.stop_session(sid)
+            try:
+                await self.events.publish("exec_session_stopped", session_id=sid)
+            except Exception:
+                pass
+            return {"success": True}
         raise ValueError(f"Unknown built-in tool: {name}")
+
+    # removed old snapshot/diff helpers; using turn_diff_tracker now
