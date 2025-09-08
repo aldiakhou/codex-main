@@ -7,6 +7,7 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
+from PySide6.QtGui import QIcon
 import re
 from typing import Dict, Any
 
@@ -118,8 +119,6 @@ class WebBridge(QObject):
             return json.dumps({"ok": True, "items": items})
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
-
-    
 
     @Slot(result=str)
     def detect_codex_path(self) -> str:
@@ -364,24 +363,36 @@ class WebBridge(QObject):
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
 
-    @Slot(result=str)
-    def detect_codex_path(self) -> str:
-        try:
-            cm = get_config_manager()
-            p = cm.get_codex_path()
-            return json.dumps({"ok": bool(p), "codex_path": p})
-        except Exception as e:
-            return json.dumps({"ok": False, "error": str(e)})
 
-    @Slot(result=str)
-    def browse_for_codex(self) -> str:
+class WindowBridge(QObject):
+    """Expose basic window controls to the Web UI via QWebChannel."""
+    def __init__(self, window: QMainWindow):
+        super().__init__()
+        self._win = window
+
+    @Slot()
+    def minimize(self):
         try:
-            path, _ = QFileDialog.getOpenFileName(None, "Select Codex executable", "", "Executable (*.exe);;All Files (*)")
-            if not path:
-                return json.dumps({"ok": False, "cancelled": True})
-            return json.dumps({"ok": True, "codex_path": path})
-        except Exception as e:
-            return json.dumps({"ok": False, "error": str(e)})
+            self._win.showMinimized()
+        except Exception:
+            pass
+
+    @Slot()
+    def maximize_restore(self):
+        try:
+            if self._win.isMaximized():
+                self._win.showNormal()
+            else:
+                self._win.showMaximized()
+        except Exception:
+            pass
+
+    @Slot()
+    def close(self):
+        try:
+            self._win.close()
+        except Exception:
+            pass
 
 
 class MainWindow(QMainWindow):
@@ -409,12 +420,25 @@ class MainWindow(QMainWindow):
         self.channel = QWebChannel(self.webview.page())
         self.bridge = WebBridge(self.backend)
         self.channel.registerObject("backend", self.bridge)
+        # Window control bridge
+        self.window_bridge = WindowBridge(self)
+        self.channel.registerObject("window", self.window_bridge)
         self.webview.page().setWebChannel(self.channel)
 
         # Load UI assets
         assets_dir = Path(__file__).parent / "assets"
         index_html = assets_dir / "index.html"
         self.webview.load(QUrl.fromLocalFile(str(index_html.resolve())))
+
+        # Set window icon (SVG)
+        try:
+            icon_path = assets_dir / "img" / "aiw_icon.svg"
+            if icon_path.exists():
+                app_icon = QIcon(str(icon_path))
+                self.setWindowIcon(app_icon)
+                QApplication.instance().setWindowIcon(app_icon)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

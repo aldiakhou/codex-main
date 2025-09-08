@@ -17,8 +17,9 @@
   </head>
   <body>
     <div class="aurora-background"></div>
-    <header class="app-header h-16 px-4 flex items-center justify-between shadow">
+    <header class="app-header h-16 px-4 flex items-center justify-between shadow select-none">
       <div class="flex items-center gap-3">
+        <img src="./img/aiw_icon.svg" alt="AIW" class="w-6 h-6 rounded" />
         <div class="font-bold text-lg gradient-text">AI Agent Workbench</div>
         <div id="statusDot" class="status-dot status-disconnected"></div>
         <div id="statusText" class="text-sm text-soft">Disconnected</div>
@@ -29,6 +30,10 @@
         <button id="loginBtn" class="btn btn-success" title="Login"><i data-lucide="log-in" class="w-4 h-4"></i></button>
         <button id="themeToggle" class="btn btn-ghost" title="Toggle theme"><i data-lucide="sun" class="w-4 h-4"></i></button>
         <button id="settingsBtn" class="btn btn-ghost" title="Settings"><i data-lucide="settings" class="w-4 h-4"></i></button>
+        <div class="w-px h-6 mx-1" style="background: var(--border)"></div>
+        <button id="winMin" class="btn btn-ghost" title="Minimize"><i data-lucide="minus" class="w-4 h-4"></i></button>
+        <button id="winMax" class="btn btn-ghost" title="Maximize"><i data-lucide="square" class="w-4 h-4"></i></button>
+        <button id="winClose" class="btn btn-ghost" title="Close"><i data-lucide="x" class="w-4 h-4"></i></button>
       </div>
     </header>
 

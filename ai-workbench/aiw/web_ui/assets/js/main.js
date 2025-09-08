@@ -357,6 +357,10 @@
     const start = App.qs('#startBtn'); if (start) start.onclick = () => App.backend.start_backend();
     const stop = App.qs('#stopBtn'); if (stop) stop.onclick = () => App.backend.stop_backend();
     const login = App.qs('#loginBtn'); if (login) login.onclick = () => App.backend.login('');
+    // Window controls
+    const wmin = App.qs('#winMin'); if (wmin) wmin.onclick = () => { try { App.window && App.window.minimize(); } catch {} };
+    const wmax = App.qs('#winMax'); if (wmax) wmax.onclick = () => { try { App.window && App.window.maximize_restore(); } catch {} };
+    const wclose = App.qs('#winClose'); if (wclose) wclose.onclick = () => { try { App.window && App.window.close(); } catch {} };
     const refreshTools = App.qs('#refreshTools'); if (refreshTools) refreshTools.onclick = () => {
       if (App._toolsRefreshing) return;
       App._toolsRefreshing = true;

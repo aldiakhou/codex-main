@@ -17,6 +17,8 @@ window.App = window.App || {};
       bindBackend(channel.objects.backend);
       // Default to disconnected until backend reports otherwise
       App.status('disconnected');
+      // Window controls
+      try { App.window = channel.objects.window; } catch {}
     });
   };
 })();
