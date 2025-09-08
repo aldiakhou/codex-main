@@ -5,7 +5,7 @@ Core client implementation for Codex Python
 import asyncio
 import json
 import structlog
-from typing import Dict, List, Optional, Any, Union, AsyncIterator
+from typing import Dict, List, Optional, Any, Union, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from mcp import ClientSession
@@ -249,7 +249,7 @@ class CodexClient:
         self._initialized = False
         
         logger.info("Codex client closed")
-    
+
     @asynccontextmanager
     async def session(self) -> AsyncIterator["CodexClient"]:
         """Context manager for client session"""
@@ -280,10 +280,81 @@ class CodexClient:
         overall_status = "healthy" if healthy_count == len(self._sessions) else "degraded"
         if healthy_count == 0:
             overall_status = "unhealthy"
-        
+
         return {
             "status": overall_status,
             "healthy_servers": healthy_count,
             "total_servers": len(self._sessions),
             "servers": servers_status
         }
+
+    # --- Notifications (best-effort) ---
+    async def progress_events(
+        self,
+        kinds: Optional[List[str]] = None,
+        server_name: Optional[str] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Yield notifications/progress events if the client SDK exposes a notification hook.
+
+        This is best-effort; if the underlying ClientSession does not support notification
+        subscriptions, this async generator will yield nothing.
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        sessions: Dict[str, ClientSession] = (
+            {server_name: self._sessions[server_name]}
+            if server_name and server_name in self._sessions
+            else self._sessions
+        )
+
+        queue: asyncio.Queue = asyncio.Queue()
+
+        # Try to register a notification handler for each session.
+        unregisters: List[Callable[[], None]] = []
+
+        def _make_handler(server: str):
+            def _handler(*args, **kwargs):
+                # Try to extract method/params heuristically
+                method = kwargs.get("method") or kwargs.get("name") or None
+                params = kwargs.get("params") or (args[0] if args else None)
+                payload = params if isinstance(params, dict) else {"value": params}
+                payload = payload or {}
+                # Expect { kind, ... }
+                if kinds and payload.get("kind") not in kinds:
+                    return
+                try:
+                    queue.put_nowait({"server": server, **payload})
+                except Exception:
+                    pass
+
+            return _handler
+
+        for name, sess in sessions.items():
+            handler = _make_handler(name)
+            # Attempt multiple common SDK patterns
+            unregister = None
+            try:
+                if hasattr(sess, "on_notification"):
+                    # Newer SDKs may support method + callback
+                    sess.on_notification("notifications/progress", handler)  # type: ignore[arg-type]
+                    unregister = lambda s=sess: None
+                elif hasattr(sess, "add_notification_handler"):
+                    sess.add_notification_handler("notifications/progress", handler)  # type: ignore[attr-defined]
+                    unregister = lambda s=sess: None
+            except Exception:
+                unregister = None
+
+            if unregister:
+                unregisters.append(unregister)
+
+        try:
+            while True:
+                ev = await queue.get()
+                yield ev
+        finally:
+            for un in unregisters:
+                try:
+                    un()
+                except Exception:
+                    pass

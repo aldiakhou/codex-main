@@ -38,6 +38,22 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
+def _should_color(ctx) -> bool:
+    mode = (ctx.obj or {}).get("color_mode", "auto")
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    # auto
+    try:
+        import os, sys
+        if os.getenv("NO_COLOR"):
+            return False
+        return sys.stdout.isatty()
+    except Exception:
+        return False
+
+
 @click.group()
 @click.option("--config", "-c", type=click.Path(exists=True), help="Configuration file path")
 @click.option("--override", "-o", multiple=True, help="Override config key=value (supports dotted paths)")
@@ -47,8 +63,15 @@ logger = structlog.get_logger(__name__)
     type=click.Choice(["read-only", "workspace-write", "danger-full-access"], case_sensitive=False),
     help="Select sandbox policy (overrides config)",
 )
+@click.option(
+    "--color",
+    type=click.Choice(["always", "never", "auto"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help="Color settings for CLI output",
+)
 @click.pass_context
-def cli(ctx, config, override, log_level, sandbox):
+def cli(ctx, config, override, log_level, sandbox, color):
     """Cadenza - Model Context Protocol Client"""
     ctx.ensure_object(dict)
     
@@ -86,15 +109,6 @@ def cli(ctx, config, override, log_level, sandbox):
     if config:
         cfg = Config.from_file(config)
         cfg2 = _apply_overrides(cfg, override)
-        if sandbox:
-            # Map CLI sandbox flag to config
-            cfg2.enable_sandbox = sandbox.lower() != "danger-full-access"
-            cfg2.sandbox_mode = {
-                "read-only": "read-only",
-                "workspace-write": "workspace",
-                "danger-full-access": "danger-full-access",
-            }[sandbox.lower()]
-        ctx.obj["config"] = cfg2
     else:
         # Try to load from default locations
         default_paths = [
@@ -102,7 +116,7 @@ def cli(ctx, config, override, log_level, sandbox):
             "codex-config.json",
             Path.home() / ".codex" / "config.json",
         ]
-        
+
         config_obj = None
         for path in default_paths:
             if Path(path).exists():
@@ -111,20 +125,36 @@ def cli(ctx, config, override, log_level, sandbox):
                     break
                 except Exception as e:
                     logger.warning("Failed to load config file", path=path, error=str(e))
-        
+
         if config_obj is None:
             # Fall back to environment variables
             config_obj = Config.from_env()
-        
+
         cfg2 = _apply_overrides(config_obj, override)
-        if sandbox:
-            cfg2.enable_sandbox = sandbox.lower() != "danger-full-access"
-            cfg2.sandbox_mode = {
-                "read-only": "read-only",
-                "workspace-write": "workspace",
-                "danger-full-access": "danger-full-access",
-            }[sandbox.lower()]
-        ctx.obj["config"] = cfg2
+
+    if sandbox:
+        # Map CLI sandbox flag to config
+        cfg2.enable_sandbox = sandbox.lower() != "danger-full-access"
+        cfg2.sandbox_mode = {
+            "read-only": "read-only",
+            "workspace-write": "workspace",
+            "danger-full-access": "danger-full-access",
+        }[sandbox.lower()]
+
+    ctx.obj["config"] = cfg2
+    ctx.obj["color_mode"] = (color or "auto").lower()
+    # Apply color env hints for click and downstream tools
+    try:
+        import os
+        cm = ctx.obj["color_mode"]
+        if cm == "never":
+            os.environ["NO_COLOR"] = "1"
+            os.environ["CLICOLOR"] = "0"
+        elif cm == "always":
+            os.environ["CLICOLOR_FORCE"] = "1"
+            os.environ["CLICOLOR"] = "1"
+    except Exception:
+        pass
 
 
 @cli.command()
@@ -212,56 +242,159 @@ async def list_tools(ctx, server):
 @click.option("--env", multiple=True, help="Environment VAR=VALUE (repeat)")
 @click.pass_context
 async def exec(ctx, cmd, cwd, env):
-    """Execute a command with approval/sandboxing."""
+    """Execute a command via MCP exec tool (approval by default)."""
     config = ctx.obj["config"]
     env_dict = {}
     for kv in env:
         if "=" in kv:
             k, v = kv.split("=", 1)
             env_dict[k] = v
-    from .core.orchestrator import CodexOrchestrator
-    orch = CodexOrchestrator(config)
-    await orch.initialize()
+    # Prefer MCP; fallback to orchestrator
     try:
-        res = await orch.execute_command(list(cmd), cwd=cwd, env=env_dict)
-        click.echo(res.result.get("stdout", ""), nl=False)
-        if res.result.get("stderr"):
-            click.echo(res.result["stderr"], err=True)
-        sys.exit(0 if res.success else 1)
-    finally:
-        await orch.cleanup()
+        async with CodexClient(config) as client:
+            args = {
+                "command": list(cmd),
+                "cwd": cwd,
+                "env": env_dict,
+                "stream": False,
+                "requireApproval": True,
+            }
+            result = await client.call_tool("exec", args)
+            sc = getattr(result, "structured_content", None) or getattr(result, "structuredContent", None)
+            if sc:
+                rc = int(sc.get("returncode") or 0)
+                out = sc.get("stdout") or ""
+                err = sc.get("stderr") or ""
+                if out:
+                    click.echo(out, nl=False)
+                if rc != 0 and err:
+                    click.echo(err, err=True)
+                sys.exit(0 if rc == 0 else 1)
+            # Fallback to text block
+            from mcp.types import TextContent  # type: ignore
+            txts = [c for c in (result.content or []) if isinstance(c, TextContent)]
+            if txts:
+                click.echo(txts[0].text or "", nl=False)
+            sys.exit(0)
+    except Exception:
+        from .core.orchestrator import CodexOrchestrator
+        orch = CodexOrchestrator(config)
+        await orch.initialize()
+        try:
+            res = await orch.execute_command(list(cmd), cwd=cwd, env=env_dict)
+            click.echo(res.result.get("stdout", ""), nl=False)
+            if res.result.get("stderr"):
+                click.echo(res.result["stderr"], err=True)
+            sys.exit(0 if res.success else 1)
+        finally:
+            await orch.cleanup()
 
 
 @cli.command(name="exec-stream")
 @click.argument("cmd", nargs=-1, required=True)
 @click.option("--cwd", type=click.Path(), help="Working directory")
 @click.option("--env", multiple=True, help="Environment VAR=VALUE (repeat)")
+@click.option("--interval", type=float, default=0.25, help="Poll interval when using MCP pull stream")
 @click.pass_context
-async def exec_stream(ctx, cmd, cwd, env):
-    """Stream command output live."""
+async def exec_stream(ctx, cmd, cwd, env, interval):
+    """Stream command output live via MCP notifications (preferred) or polling fallback; else local streaming."""
     config = ctx.obj["config"]
     env_dict = {}
     for kv in env:
         if "=" in kv:
             k, v = kv.split("=", 1)
             env_dict[k] = v
-    from .core.orchestrator import CodexOrchestrator
-    orch = CodexOrchestrator(config)
-    await orch.initialize()
     try:
-        async for item in orch.execute_command_stream(list(cmd), cwd=cwd, env=env_dict):
-            if item.get("type") == "delta":
-                if item.get("stream") == "stdout":
-                    click.echo(item.get("data", b"").decode(errors="ignore"), nl=False)
-                else:
-                    click.echo(item.get("data", b"").decode(errors="ignore"), nl=False, err=True)
-            elif item.get("type") == "error":
-                click.echo(f"Error: {item['message']}", err=True)
-                sys.exit(1)
-            elif item.get("type") == "result":
-                sys.exit(0 if item.get("returncode", 1) == 0 else 1)
-    finally:
-        await orch.cleanup()
+        async with CodexClient(config) as client:
+            # Start streaming exec on server
+            args = {
+                "command": list(cmd),
+                "cwd": cwd,
+                "env": env_dict,
+                "stream": True,
+                "requireApproval": True,
+            }
+            result = await client.call_tool("exec", args)
+            sc = getattr(result, "structured_content", None) or getattr(result, "structuredContent", None)
+            req_id = sc.get("request_id") if sc else None
+            if not req_id:
+                raise RuntimeError("failed to start exec stream")
+            # Try notifications/progress first
+            async def try_push(timeout: float = 1.0) -> bool:
+                try:
+                    first = True
+                    async for ev in client.progress_events(kinds=["codex.exec.delta", "codex.exec.completed"]):
+                        if first:
+                            # Allow a short warm-up window for availability
+                            first = False
+                        kind = ev.get("kind") or ev.get("type")
+                        if ev.get("request_id") != req_id:
+                            continue
+                        if kind == "codex.exec.delta":
+                            import base64
+                            data_b64 = ev.get("data_b64") or ""
+                            try:
+                                b = base64.b64decode(data_b64)
+                            except Exception:
+                                b = b""
+                            if (ev.get("stream") or "stdout") == "stderr":
+                                click.echo(b.decode("utf-8", errors="ignore"), nl=False, err=True)
+                            else:
+                                click.echo(b.decode("utf-8", errors="ignore"), nl=False)
+                        elif kind == "codex.exec.completed":
+                            rc = ev.get("returncode")
+                            sys.exit(0 if (rc is None or int(rc) == 0) else 1)
+                    return False
+                except Exception:
+                    return False
+
+            used_push = await try_push()
+            if not used_push:
+                # Fallback to polling
+                import base64
+                while True:
+                    polled = await client.call_tool("codex-exec-poll", {"request_id": req_id, "max_chunks": 100})
+                    sc2 = getattr(polled, "structured_content", None) or getattr(polled, "structuredContent", None)
+                    for ch in sc2.get("chunks", []) or []:
+                        data_b64 = ch.get("data_b64") or ""
+                        stream = ch.get("stream") or "stdout"
+                        try:
+                            b = base64.b64decode(data_b64)
+                        except Exception:
+                            b = b""
+                        if stream == "stderr":
+                            try:
+                                click.echo(b.decode("utf-8", errors="ignore"), nl=False, err=True)
+                            except Exception:
+                                pass
+                        else:
+                            try:
+                                click.echo(b.decode("utf-8", errors="ignore"), nl=False)
+                            except Exception:
+                                pass
+                    if sc2.get("completed"):
+                        rc = sc2.get("returncode")
+                        sys.exit(0 if (rc is None or int(rc) == 0) else 1)
+                    await asyncio.sleep(interval)
+    except Exception:
+        # Fallback: local orchestrator streaming
+        from .core.orchestrator import CodexOrchestrator
+        orch = CodexOrchestrator(config)
+        await orch.initialize()
+        try:
+            async for item in orch.execute_command_stream(list(cmd), cwd=cwd, env=env_dict):
+                if item.get("type") == "delta":
+                    if item.get("stream") == "stdout":
+                        click.echo(item.get("data", b"").decode(errors="ignore"), nl=False)
+                    else:
+                        click.echo(item.get("data", b"").decode(errors="ignore"), nl=False, err=True)
+                elif item.get("type") == "error":
+                    click.echo(f"Error: {item['message']}", err=True)
+                    sys.exit(1)
+                elif item.get("type") == "result":
+                    sys.exit(0 if item.get("returncode", 1) == 0 else 1)
+        finally:
+            await orch.cleanup()
 
 
 @cli.command(name="agent-exec")
@@ -269,8 +402,10 @@ async def exec_stream(ctx, cmd, cwd, env):
 @click.option("--json", "json_mode", is_flag=True, help="Emit JSONL events instead of human output")
 @click.option("--cwd", type=click.Path(), help="Working directory for the session")
 @click.option("--session-id", type=str, help="Optional session id (default: auto)")
+@click.option("--image", "images", multiple=True, type=click.Path(exists=True), help="Attach image(s) to the initial prompt (multi-modal)")
+@click.option("--output-last-message", type=click.Path(), help="Write final assistant message to file")
 @click.pass_context
-async def agent_exec(ctx, prompt: Optional[str], json_mode: bool, cwd: Optional[str], session_id: Optional[str]):
+async def agent_exec(ctx, prompt: Optional[str], json_mode: bool, cwd: Optional[str], session_id: Optional[str], images: tuple[str, ...], output_last_message: Optional[str]):
     """Run an agent loop against a PROMPT using the Orchestrator.
 
     Streams assistant deltas and basic tool notifications; prints final result.
@@ -322,8 +457,11 @@ async def agent_exec(ctx, prompt: Optional[str], json_mode: bool, cwd: Optional[
     last_len = 0
     final_text: Optional[str] = None
     try:
-        # Drive the chat loop with streaming
-        async for item in orch.chat([prompt], session_id=sid, stream=True):
+        # Drive the chat loop with streaming (attach images if any)
+        initial_msg = {"role": "user", "content": prompt}
+        if images:
+            initial_msg["images"] = list(images)
+        async for item in orch.chat([initial_msg], session_id=sid, stream=True):
             # Stream deltas
             if isinstance(item, dict) and item.get("type") == "delta":
                 content = item.get("content") or ""
@@ -374,6 +512,12 @@ async def agent_exec(ctx, prompt: Optional[str], json_mode: bool, cwd: Optional[
         final_text = ""
 
     _emit(adapter.task_complete(final_text), json_mode)
+    # Write last message to file if requested
+    if output_last_message:
+        try:
+            Path(output_last_message).write_text(final_text, encoding="utf-8")
+        except Exception:
+            pass
 
 
 def _emit(event: dict, json_mode: bool) -> None:
@@ -476,26 +620,24 @@ def exec_stdin_remote(session_id: str, data: Optional[str]):
 @click.option("--root", "root_path", type=click.Path(), help="Patch root path")
 @click.pass_context
 async def apply_patch_cmd(ctx, patch_file, root_path):
-    """Apply a unified diff patch (reads stdin if --file is not given)."""
+    """Apply a unified diff patch via MCP (reads stdin if --file not given)."""
     config = ctx.obj["config"]
-    patch_text = ""
-    if patch_file:
-        patch_text = Path(patch_file).read_text(encoding="utf-8")
-    else:
-        patch_text = sys.stdin.read()
-    from .core.orchestrator import CodexOrchestrator
-    orch = CodexOrchestrator(config)
-    await orch.initialize()
+    patch_text = Path(patch_file).read_text(encoding="utf-8") if patch_file else sys.stdin.read()
     try:
-        res = await orch.apply_patch(patch_text, root_path=root_path)
-        if res.success:
-            click.echo("Patch applied successfully")
-            sys.exit(0)
-        else:
-            click.echo(f"Patch failed: {res.error}")
-            sys.exit(1)
-    finally:
-        await orch.cleanup()
+        async with CodexClient(config) as client:
+            args = {"patch": patch_text, "root": root_path, "requireApproval": True}
+            result = await client.call_tool("apply_patch", args)
+            sc = getattr(result, "structured_content", None) or getattr(result, "structuredContent", None)
+            ok = bool(sc.get("success")) if sc else True
+            if ok:
+                click.echo("Patch applied successfully")
+                sys.exit(0)
+            else:
+                click.echo("Patch failed", err=True)
+                sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.command()
@@ -709,9 +851,11 @@ async def export_config(ctx, output_file):
 
 @cli.command()
 @click.argument("prompt", nargs=-1, required=True)
+@click.option("--image", "images", multiple=True, type=click.Path(exists=True), help="Attach image(s) to the initial prompt")
+@click.option("--output-last-message", type=click.Path(), help="Write final assistant message to file")
 @click.option("--stream/--no-stream", default=True, help="Stream responses")
 @click.pass_context
-async def chat(ctx, prompt, stream):
+async def chat(ctx, prompt, images, output_last_message, stream):
     """Chat with LLM (uses built-in tool loop)."""
     config = ctx.obj["config"]
     from .core.orchestrator import CodexOrchestrator
@@ -719,7 +863,10 @@ async def chat(ctx, prompt, stream):
     await orch.initialize()
     try:
         text = " ".join(prompt)
-        gen = orch.chat([{"role": "user", "content": text}], stream=stream)
+        msg = {"role": "user", "content": text}
+        if images:
+            msg["images"] = list(images)
+        gen = orch.chat([msg], stream=stream)
 
         if stream:
             printed = 0
@@ -751,6 +898,11 @@ async def chat(ctx, prompt, stream):
                         final = content
             if final:
                 click.secho(final, fg="green")
+            if output_last_message and final:
+                try:
+                    Path(output_last_message).write_text(final, encoding="utf-8")
+                except Exception:
+                    pass
     finally:
         await orch.cleanup()
 
@@ -794,6 +946,78 @@ async def mcp_server(ctx):
         pass
 
 
+@cli.command(name="proto")
+@click.argument("prompt", required=False)
+@click.option("--cwd", type=click.Path(), help="Working directory for the session")
+@click.option("--stdin", "stdin_mode", is_flag=True, help="Read protocol submissions from stdin (JSONL)")
+@click.pass_context
+async def proto(ctx, prompt: Optional[str], cwd: Optional[str], stdin_mode: bool):
+    """Run protocol stream: emit codex-protocol events to stdout as JSONL.
+
+    If --stdin is used, reads submissions from stdin. Otherwise uses PROMPT or reads a single prompt from stdin.
+    """
+    config = ctx.obj["config"]
+    if stdin_mode:
+        from .protocol.stream import run_protocol_stdin
+        await run_protocol_stdin(config, cwd=cwd)
+        return
+    if not prompt:
+        try:
+            data = sys.stdin.read()
+            prompt = (data or "").strip()
+        except Exception:
+            prompt = ""
+    if not prompt:
+        click.echo("No prompt provided. Pass PROMPT or pipe to stdin.", err=True)
+        raise SystemExit(1)
+
+    from .protocol.stream import run_protocol_stream
+    await run_protocol_stream(prompt, config, cwd=cwd)
+
+
+@cli.command(name="respond-approval")
+@click.argument("request_id", required=True)
+@click.argument("decision", required=True, type=click.Choice(["approved", "denied", "cancelled"], case_sensitive=False))
+@click.option("--responder", type=str, default=None, help="Responder identifier")
+@click.option("--reason", type=str, default=None, help="Optional reason")
+@click.pass_context
+async def respond_approval(ctx, request_id: str, decision: str, responder: Optional[str], reason: Optional[str]):
+    """Respond to a pending approval via MCP."""
+    config = ctx.obj["config"]
+    async with CodexClient(config) as client:
+        args = {"request_id": request_id, "decision": decision.lower(), "responder": responder, "reason": reason}
+        result = await client.call_tool("codex-respond-approval", args)
+        sc = getattr(result, "structured_content", None) or getattr(result, "structuredContent", None)
+        ok = bool(sc.get("updated")) if sc else True
+        click.echo("OK" if ok else "Not updated")
+
+
+@cli.command(name="watch-approvals")
+@click.option("--session-id", help="Filter approvals by session id")
+@click.option("--interval", type=float, default=2.0, help="Polling interval seconds (if server watch unavailable)")
+@click.pass_context
+async def watch_approvals(ctx, session_id: Optional[str], interval: float):
+    """Watch approvals via MCP notifications/progress; fallback to polling."""
+    config = ctx.obj["config"]
+    async with CodexClient(config) as client:
+        # Try server-side watcher (it emits notifications/progress with kind=codex.approvals)
+        try:
+            await client.call_tool("codex-watch-approvals", {"session_id": session_id, "interval_s": interval})
+            click.echo("Watching approvals (notifications/progress)")
+            # In this simple CLI, fall back to polling since we don't hook notifications here
+            raise RuntimeError("notifications not wired; polling instead")
+        except Exception:
+            click.echo("Polling approvals list... Press Ctrl+C to stop")
+            try:
+                while True:
+                    res = await client.call_tool("codex-list-approvals", {"session_id": session_id})
+                    sc = getattr(res, "structured_content", None) or getattr(res, "structuredContent", None)
+                    click.echo(json.dumps(sc or {}))
+                    await asyncio.sleep(interval)
+            except KeyboardInterrupt:
+                pass
+
+
 def main():
     """Main entry point"""
     # Run async commands
@@ -814,6 +1038,12 @@ def main():
     cli.commands["search"].callback = run_async(cli.commands["search"].callback)
     if "mcp" in cli.commands:
         cli.commands["mcp"].callback = run_async(cli.commands["mcp"].callback)
+    if "proto" in cli.commands:
+        cli.commands["proto"].callback = run_async(cli.commands["proto"].callback)
+    if "respond-approval" in cli.commands:
+        cli.commands["respond-approval"].callback = run_async(cli.commands["respond-approval"].callback)
+    if "watch-approvals" in cli.commands:
+        cli.commands["watch-approvals"].callback = run_async(cli.commands["watch-approvals"].callback)
     cli.commands["history"].callback = run_async(cli.commands["history"].callback)
     cli.commands["chat"].callback = run_async(cli.commands["chat"].callback)
     cli.commands["events"].callback = run_async(cli.commands["events"].callback)

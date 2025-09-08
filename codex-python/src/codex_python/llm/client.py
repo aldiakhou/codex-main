@@ -29,6 +29,8 @@ class LLMMessage:
     """Message for LLM conversation"""
     role: str  # "system", "user", "assistant", "tool"
     content: str
+    # Optional list of image file paths to attach (multi-modal)
+    images: Optional[List[str]] = None
     tool_calls: Optional[List[Dict]] = None
     tool_call_id: Optional[str] = None
 
@@ -162,6 +164,20 @@ class LLMClient(ABC):
             raise last_exc
         raise RuntimeError("exhausted retries for stream")
 
+    # Helpers for multi-modal (encode local image path to data URL)
+    @staticmethod
+    def _path_to_data_url(path: str) -> Optional[str]:
+        try:
+            import base64, mimetypes, os
+            if not path:
+                return None
+            mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+            return f"data:{mime};base64,{b64}"
+        except Exception:
+            return None
+
 
 class OpenAIClient(LLMClient):
     """OpenAI API client"""
@@ -188,10 +204,22 @@ class OpenAIClient(LLMClient):
             else:
                 return await self._non_stream_chat_responses(messages, tools=tools)
 
-        # Convert messages to OpenAI format
+        # Convert messages to OpenAI format (multi-modal support via content list)
         openai_messages = []
         for msg in messages:
-            openai_msg = {"role": msg.role, "content": msg.content}
+            content: Union[str, List[Dict[str, Any]]]
+            if msg.images:
+                parts: List[Dict[str, Any]] = []
+                if msg.content:
+                    parts.append({"type": "text", "text": msg.content})
+                for p in (msg.images or []):
+                    data_url = self._path_to_data_url(p)
+                    if data_url:
+                        parts.append({"type": "image_url", "image_url": {"url": data_url}})
+                content = parts if parts else msg.content
+            else:
+                content = msg.content
+            openai_msg = {"role": msg.role, "content": content}
             if msg.tool_calls:
                 openai_msg["tool_calls"] = msg.tool_calls
             if msg.tool_call_id:
@@ -242,13 +270,23 @@ class OpenAIClient(LLMClient):
         ]
 
     async def _non_stream_chat_responses(self, messages: List[LLMMessage], tools: Optional[List[LLMTool]] = None) -> LLMResponse:
+        # Build structured input with multi-modal support
+        input_items: List[Dict[str, Any]] = []
+        for m in messages:
+            if m.images:
+                parts: List[Dict[str, Any]] = []
+                if m.content:
+                    parts.append({"type": "input_text", "text": m.content})
+                for p in (m.images or []):
+                    data_url = self._path_to_data_url(p)
+                    if data_url:
+                        parts.append({"type": "input_image", "image_url": data_url})
+                input_items.append({"role": m.role, "content": parts})
+            else:
+                input_items.append({"role": m.role, "content": m.content})
         payload: Dict[str, Any] = {
             "model": self.config.model,
-            # The Responses API accepts `input` as structured content.
-            # Use a simple mapping of messages -> input array.
-            "input": [
-                {"role": m.role, "content": m.content} for m in messages
-            ],
+            "input": input_items,
         }
         tool_defs = self._responses_tools_payload(tools)
         if tool_defs:
@@ -415,11 +453,8 @@ class OpenAIClient(LLMClient):
                 await cm.__aexit__(None, None, None)
         except Exception as e:
             logger.error("OpenAI Responses (stream) error", error=str(e))
-            # no further yields
-            async def _empty():
-                if False:
-                    yield  # pragma: no cover
-            return _empty()
+            # Stop the async generator on error
+            return
     
     async def _non_stream_chat(self, payload: Dict) -> LLMResponse:
         """Non-streaming chat completion"""
@@ -661,15 +696,22 @@ class OllamaClient(LLMClient):
     ) -> Union[LLMResponse, AsyncIterator[LLMResponse]]:
         """Send chat messages to Ollama"""
         
-        # Convert messages to Ollama format
+        # Convert messages to Ollama format (support images as base64)
         ollama_messages = []
         for msg in messages:
-            if msg.role == "system":
-                ollama_messages.append({"role": "system", "content": msg.content})
-            elif msg.role == "user":
-                ollama_messages.append({"role": "user", "content": msg.content})
-            elif msg.role == "assistant":
-                ollama_messages.append({"role": "assistant", "content": msg.content})
+            m: Dict[str, Any] = {"role": msg.role, "content": msg.content}
+            if msg.images:
+                import base64
+                imgs: List[str] = []
+                for p in msg.images:
+                    try:
+                        with open(p, "rb") as f:
+                            imgs.append(base64.b64encode(f.read()).decode("ascii"))
+                    except Exception:
+                        continue
+                if imgs:
+                    m["images"] = imgs
+            ollama_messages.append(m)
         
         # Prepare request payload
         payload = {

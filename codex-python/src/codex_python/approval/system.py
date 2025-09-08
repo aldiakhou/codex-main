@@ -106,6 +106,10 @@ class ApprovalManager:
         self.auto_approve_cache: Dict[str, datetime] = {}
         self.callbacks: Dict[str, Callable] = {}
         self._listeners: List[Callable[[ApprovalRequest], None]] = []
+        # When False, this manager will not prompt on console; instead it waits for
+        # an external response via respond_to_request().
+        self._interactive: bool = True
+        self._waiting: Dict[str, asyncio.Future] = {}
     
     def add_policy(self, policy: ApprovalPolicy) -> None:
         """Add an approval policy"""
@@ -232,7 +236,25 @@ class ApprovalManager:
                 pass
 
         # Send for approval
-        response = await self._send_for_approval(request)
+        if self._interactive:
+            response = await self._send_for_approval(request)
+        else:
+            # Non-interactive: wait for respond_to_request or timeout
+            loop = asyncio.get_event_loop()
+            fut: asyncio.Future = loop.create_future()
+            self._waiting[request.id] = fut
+            try:
+                response = await asyncio.wait_for(fut, timeout=request.timeout)
+            except asyncio.TimeoutError:
+                response = ApprovalResponse(
+                    request_id=request.id,
+                    status=ApprovalStatus.EXPIRED,
+                    reason="Approval request expired",
+                )
+                # Remove from pending and cleanup waiter
+                if request.id in self.pending_requests:
+                    del self.pending_requests[request.id]
+                self._waiting.pop(request.id, None)
         
         # Cache approval if granted
         if response.status == ApprovalStatus.APPROVED:
@@ -513,6 +535,16 @@ class ApprovalManager:
         """Respond to a pending approval request"""
         
         if request_id not in self.pending_requests:
+            # Resolve any waiter with a CANCELLED status
+            fut = self._waiting.pop(request_id, None)
+            if fut and not fut.done():
+                fut.set_result(
+                    ApprovalResponse(
+                        request_id=request_id,
+                        status=ApprovalStatus.CANCELLED,
+                        reason="Request not found",
+                    )
+                )
             return False
         
         request = self.pending_requests[request_id]
@@ -531,6 +563,10 @@ class ApprovalManager:
         
         # Record in history
         self.approval_history.append(response)
+        # Fulfill any waiter
+        fut = self._waiting.pop(request_id, None)
+        if fut and not fut.done():
+            fut.set_result(response)
         
         # Execute callback if registered
         if request_id in self.callbacks:
@@ -539,6 +575,10 @@ class ApprovalManager:
             del self.callbacks[request_id]
         
         return True
+
+    def set_interactive(self, interactive: bool) -> None:
+        """Enable or disable console prompts; when disabled, wait for external responses."""
+        self._interactive = interactive
     
     def create_session(self, session_id: str) -> None:
         """Create a new approval session"""
