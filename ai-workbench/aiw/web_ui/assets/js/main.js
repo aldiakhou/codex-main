@@ -29,7 +29,7 @@
     App.qs('#composer').value = '';
   }
 
-  function listDir() {
+  function listDir_legacy1() {
     const cwd = App.qs('#cwdInput')?.value.trim() || '';
     App.backend.list_dir(cwd).then((s) => {
       const res = JSON.parse(s);
@@ -40,9 +40,9 @@
       res.items.forEach((it) => {
         const line = document.createElement('div');
         line.className = 'flex gap-2';
-        line.innerHTML = `<span class="${it.is_dir?'text-primary':'text-muted'}">${it.is_dir?'ðŸ“':'ðŸ“„'}</span><button class="text-left hover:underline" title="${it.path}">${it.name}</button>`;
+        line.innerHTML = `<span class="${it.is_dir?'text-primary':'text-muted'}">${it.is_dir?'↪':'📄'}</span><button class="text-left hover:underline" title="${it.path}">${it.name}</button>`;
         line.querySelector('button').onclick = async () => {
-          if (it.is_dir) { App.qs('#cwdInput').value = it.path; listDir(); }
+          if (it.is_dir) { App.qs('#cwdInput').value = it.path; App.listDir(); }
           else { await openFileInEditor(it.path); }
         };
         el.appendChild(line);
@@ -50,8 +50,40 @@
     });
   }
 
+  // Lucide-enhanced workspace listing used by UI triggers
+  App.listDir = function () {
+    const cwd = App.qs('#cwdInput')?.value.trim() || '';
+    App.backend.list_dir(cwd).then((s) => {
+      const res = JSON.parse(s);
+      const el = App.qs('#fsList'); if (!el) return;
+      if (!res.ok) { el.textContent = res.error || 'Failed'; return; }
+      el.innerHTML = '';
+      (res.items || [])
+        .sort((a,b)=> a.is_dir === b.is_dir ? a.name.localeCompare(b.name) : (a.is_dir? -1 : 1))
+        .forEach((it) => {
+          const line = document.createElement('div');
+          line.className = 'flex gap-2 items-center';
+          const icon = document.createElement('i');
+          icon.setAttribute('data-lucide', it.is_dir ? 'folder' : 'file');
+          icon.className = 'w-4 h-4 ' + (it.is_dir ? 'text-violet-400' : 'text-gray-400');
+          const btn = document.createElement('button');
+          btn.className = 'text-left hover:underline truncate';
+          btn.title = it.path;
+          btn.textContent = it.name;
+          btn.onclick = async () => {
+            if (it.is_dir) { App.qs('#cwdInput').value = it.path; App.listDir(); }
+            else { await openFileInEditor(it.path); }
+          };
+          line.appendChild(icon);
+          line.appendChild(btn);
+          el.appendChild(line);
+        });
+      try { if (window.lucide && typeof lucide.createIcons === 'function') { lucide.createIcons(); } } catch {}
+    });
+  }
+
   // Override listDir with a safer DOM construction to avoid unsafe innerHTML
-  function listDir() {
+  function listDir_legacy2() {
     const cwd = App.qs('#cwdInput')?.value.trim() || '';
     App.backend.list_dir(cwd).then((s) => {
       const res = JSON.parse(s);
@@ -71,7 +103,7 @@
           btn.title = it.path;
           btn.textContent = it.name;
           btn.onclick = async () => {
-            if (it.is_dir) { App.qs('#cwdInput').value = it.path; listDir(); }
+            if (it.is_dir) { App.qs('#cwdInput').value = it.path; App.listDir(); }
             else { await openFileInEditor(it.path); }
           };
           line.appendChild(icon);
@@ -305,6 +337,8 @@
     App.log('UI ready');
     App.initChannel();
     App.initSettings();
+    // Render Lucide icons if available
+    try { if (window.lucide && typeof lucide.createIcons === 'function') { lucide.createIcons(); } } catch {}
     // Theme init
     (function initTheme(){
       try {
@@ -351,7 +385,7 @@
     const refreshHistory = App.qs('#refreshHistory'); if (refreshHistory) refreshHistory.onclick = () => App.backend.get_history();
     const sendBtn = App.qs('#sendBtn'); if (sendBtn) sendBtn.onclick = send;
     const interruptBtn = App.qs('#interruptBtn'); if (interruptBtn) interruptBtn.onclick = () => App.backend.interrupt();
-    const refreshFs = App.qs('#refreshFs'); if (refreshFs) refreshFs.onclick = () => whenBackendReady(listDir);
+    const refreshFs = App.qs('#refreshFs'); if (refreshFs) refreshFs.onclick = () => whenBackendReady(App.listDir);
     const togglePreview = App.qs('#togglePreview'); if (togglePreview) togglePreview.onclick = () => { const box=App.qs('#editorPreviewCenter'); if (box) box.classList.toggle('hidden'); };
     const saveFile = App.qs('#saveFile'); if (saveFile) saveFile.onclick = async () => {
       try {
@@ -389,7 +423,7 @@
       finally { if (saveModal) { saveModal.classList.add('hidden'); saveModal.classList.remove('flex'); } App._pendingSave = null; }
     };
     if (saveCancelBtn) saveCancelBtn.onclick = () => { if (saveModal) { saveModal.classList.add('hidden'); saveModal.classList.remove('flex'); } App._pendingSave = null; };
-    bindApprovals(); whenBackendReady(listDir);
+    bindApprovals(); whenBackendReady(App.listDir);
     // Restore recent tabs
     whenBackendReady(async () => {
       try {
@@ -508,10 +542,16 @@
           parts[leftIdx+1] = `${newCenter}px`;
           setCols(parts[0], parts[1], parts[2]);
         };
-        const onUp = ()=>{ document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); saveCols(); };
+        const onUp = ()=>{
+          document.removeEventListener('pointermove', onMove);
+          document.removeEventListener('pointerup', onUp);
+          try { resizer.classList.remove('resizing'); document.body.style.cursor = 'default'; } catch {}
+          saveCols();
+        };
         resizer.addEventListener('pointerdown', (e)=>{
           const cols = window.getComputedStyle(grid).gridTemplateColumns.split(' 6px ');
           startX = e.clientX; startLeft = cols[leftIdx].replace('px',''); startCenter = cols[leftIdx+1].replace('px','');
+          try { resizer.classList.add('resizing'); document.body.style.cursor = 'col-resize'; } catch {}
           document.addEventListener('pointermove', onMove); document.addEventListener('pointerup', onUp);
         });
       }
@@ -540,4 +580,3 @@
     })();
   });
 })();
-

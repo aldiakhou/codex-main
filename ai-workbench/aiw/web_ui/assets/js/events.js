@@ -45,6 +45,7 @@
         break;
       case 'exec_approval_request':
         App.qs('#execPreview').textContent = `$ cd ${e.cwd}\n$ ` + (e.command || []).join(' ');
+        try { App.ui.addToolCall && App.ui.addToolCall('Exec Command', `$ cd ${e.cwd}\n$ ${(e.command||[]).join(' ')}`); } catch {}
         App._execEventId = e.id; App.ui.show('#execModal');
         break;
       case 'apply_patch_approval_request': {
@@ -57,6 +58,7 @@
           });
         }
         App.qs('#patchPreview').textContent = preview || '(no changes)';
+        try { App.ui.addToolCall && App.ui.addToolCall('Apply Patch', (preview||'').slice(0, 1000)); } catch {}
         App._patchEventId = e.id; App.ui.show('#patchModal');
         break; }
       case 'patch_apply_begin':

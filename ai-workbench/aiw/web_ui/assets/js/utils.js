@@ -34,14 +34,38 @@
         return;
       }
       const row = document.createElement('div');
-      row.className = 'flex gap-2';
+      row.className = 'flex items-start gap-3 ' + (role === 'user' ? 'justify-end' : '');
       const bubble = document.createElement('div');
-      bubble.className = 'rounded px-3 py-2 max-w-[90%] whitespace-pre-wrap ' + (role === 'user' ? 'bg-surface-2' : 'bg-surface-2');
+      bubble.className = 'rounded-lg p-3 text-sm max-w-[90%] whitespace-pre-wrap ' + (role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai');
       bubble.textContent = text;
       row.appendChild(bubble);
       wrap.appendChild(row);
       wrap.scrollTop = wrap.scrollHeight;
       App._lastAssistant = role === 'assistant' ? { body: bubble, isLive: true } : null;
+    },
+    addToolCall(title, preText) {
+      const wrap = qs('#chat'); if (!wrap) return;
+      const row = document.createElement('div');
+      row.className = 'flex items-start gap-3';
+      const container = document.createElement('div');
+      container.className = 'w-full';
+      const card = document.createElement('div');
+      card.className = 'glass-panel rounded-lg overflow-hidden text-sm';
+      const head = document.createElement('div');
+      head.className = 'p-2 bg-black/20 flex items-center gap-2';
+      head.innerHTML = '<i data-lucide="cog" class="w-4 h-4 text-green-400 animate-spin" style="animation-duration: 3s;"></i>'+
+        '<span class="font-semibold text-green-400">Tool Call:</span>'+
+        `<span>${title || ''}</span>`;
+      const body = document.createElement('div');
+      body.className = 'p-3 bg-black/20 text-xs text-gray-300';
+      const pre = document.createElement('pre');
+      pre.className = 'mt-2 p-2 bg-black/30 rounded-md whitespace-pre-wrap';
+      const code = document.createElement('code');
+      code.textContent = String(preText || '');
+      pre.appendChild(code); body.appendChild(pre);
+      card.appendChild(head); card.appendChild(body); container.appendChild(card); row.appendChild(container);
+      wrap.appendChild(row); wrap.scrollTop = wrap.scrollHeight;
+      try { if (window.lucide && typeof lucide.createIcons === 'function') { lucide.createIcons(); } } catch {}
     },
     endAssistantLive() { if (App._lastAssistant) App._lastAssistant.isLive = false; },
     setDiff(diff) { const el = qs('#diffView'); if (el) el.textContent = diff || ''; },

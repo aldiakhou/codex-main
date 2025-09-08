@@ -8,25 +8,27 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./css/theme.css" />
     <script src="./js/vendor/cytoscape.min.js"></script>
     <script src="./js/vendor/mermaid.min.js"></script>
     <script src="./js/vendor/monaco/min/vs/loader.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
   </head>
   <body>
+    <div class="aurora-background"></div>
     <header class="app-header h-16 px-4 flex items-center justify-between shadow">
       <div class="flex items-center gap-3">
-        <div class="font-bold text-lg">AI Workbench</div>
+        <div class="font-bold text-lg gradient-text">AI Agent Workbench</div>
         <div id="statusDot" class="status-dot status-disconnected"></div>
         <div id="statusText" class="text-sm text-soft">Disconnected</div>
       </div>
       <div class="flex items-center gap-2">
-        <button id="startBtn" class="btn btn-ghost">Start</button>
-        <button id="stopBtn" class="btn btn-ghost">Stop</button>
-        <button id="loginBtn" class="btn btn-success">Login</button>
-        <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">Theme</button>
-        <button id="settingsBtn" class="btn btn-ghost">Settings</button>
+        <button id="startBtn" class="btn btn-ghost" title="Start"><i data-lucide="play" class="w-4 h-4"></i></button>
+        <button id="stopBtn" class="btn btn-ghost" title="Stop"><i data-lucide="square" class="w-4 h-4"></i></button>
+        <button id="loginBtn" class="btn btn-success" title="Login"><i data-lucide="log-in" class="w-4 h-4"></i></button>
+        <button id="themeToggle" class="btn btn-ghost" title="Toggle theme"><i data-lucide="sun" class="w-4 h-4"></i></button>
+        <button id="settingsBtn" class="btn btn-ghost" title="Settings"><i data-lucide="settings" class="w-4 h-4"></i></button>
       </div>
     </header>
 
@@ -80,44 +82,76 @@
         <div id="chatPane" class="flex-1 scroll p-0 flex flex-col">
           <div id="chat" class="flex-1 scroll p-4 space-y-3"></div>
           <div class="border-t p-3 bg-surface-2">
-            <div class="grid grid-cols-2 gap-2 mb-2 text-xs">
-              <div class="flex gap-2">
-                <select id="approvalSelect" class="border rounded px-2 py-1">
-                  <option value="on-request">Approval: on-request</option>
-                  <option value="untrusted">Approval: untrusted</option>
-                  <option value="on-failure">Approval: on-failure</option>
-                  <option value="never">Approval: never</option>
-                </select>
-                <select id="sandboxSelect" class="border rounded px-2 py-1">
-                  <option value="read-only">Sandbox: read-only</option>
-                  <option value="workspace-write">Sandbox: workspace-write</option>
-                  <option value="danger-full-access">Sandbox: danger-full-access</option>
-                </select>
-              </div>
-              <div class="flex gap-2 justify-end">
-                <select id="modelSelect" class="border rounded px-2 py-1">
-                  <option value="gpt-5">Model: gpt-5</option>
-                </select>
-                <select id="effortSelect" class="border rounded px-2 py-1">
-                  <option value="minimal">Effort: minimal</option>
-                  <option value="low">Effort: low</option>
-                  <option selected value="medium">Effort: medium</option>
-                  <option value="high">Effort: high</option>
-                </select>
-                <select id="summarySelect" class="border rounded px-2 py-1">
-                  <option value="auto">Summary: auto</option>
-                  <option value="concise">Summary: concise</option>
-                  <option value="detailed">Summary: detailed</option>
-                  <option value="none">Summary: none</option>
-                </select>
+            <!-- Compact parameter controls -->
+            <div class="mb-2">
+              <div class="bg-black/20 border border-white/10 rounded-lg p-2">
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div class="flex flex-wrap gap-2 items-center">
+                    <div class="flex items-center gap-1">
+                      <i data-lucide="shield" class="w-3.5 h-3.5 text-violet-300"></i>
+                      <select id="approvalSelect" class="bg-transparent border border-white/10 rounded px-2 py-1">
+                        <option value="on-request">on-request</option>
+                        <option value="untrusted">untrusted</option>
+                        <option value="on-failure">on-failure</option>
+                        <option value="never">never</option>
+                      </select>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <i data-lucide="box" class="w-3.5 h-3.5 text-violet-300"></i>
+                      <select id="sandboxSelect" class="bg-transparent border border-white/10 rounded px-2 py-1">
+                        <option value="read-only">read-only</option>
+                        <option value="workspace-write">workspace-write</option>
+                        <option value="danger-full-access">danger-full-access</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap gap-2 items-center justify-end">
+                    <div class="flex items-center gap-1">
+                      <i data-lucide="cpu" class="w-3.5 h-3.5 text-violet-300"></i>
+                      <select id="modelSelect" class="bg-transparent border border-white/10 rounded px-2 py-1">
+                        <option value="gpt-5">gpt-5</option>
+                      </select>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <i data-lucide="activity" class="w-3.5 h-3.5 text-violet-300"></i>
+                      <select id="effortSelect" class="bg-transparent border border-white/10 rounded px-2 py-1">
+                        <option value="minimal">minimal</option>
+                        <option value="low">low</option>
+                        <option selected value="medium">medium</option>
+                        <option value="high">high</option>
+                      </select>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <i data-lucide="file-text" class="w-3.5 h-3.5 text-violet-300"></i>
+                      <select id="summarySelect" class="bg-transparent border border-white/10 rounded px-2 py-1">
+                        <option value="auto">auto</option>
+                        <option value="concise">concise</option>
+                        <option value="detailed">detailed</option>
+                        <option value="none">none</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            <textarea id="composer" class="w-full border rounded p-2 mono" rows="3" placeholder="Describe your task..."></textarea>
-            <div class="flex gap-2 mt-2 justify-between">
-              <div class="text-xs text-muted" id="tokenInfo">Tokens: 0</div>
-              <div class="flex gap-2">
-                <button id="interruptBtn" class="px-3 py-1.5 btn-muted rounded">Stop</button>
-                <button id="sendBtn" class="btn btn-primary">Send</button>
+            <div class="bg-black/20 border border-white/10 rounded-lg p-2">
+              <div class="flex items-center space-x-2 text-gray-400 mb-2">
+                <button class="p-1 hover:bg-white/10 rounded" title="Bold"><i data-lucide="bold" class="w-4 h-4"></i></button>
+                <button class="p-1 hover:bg-white/10 rounded" title="Italic"><i data-lucide="italic" class="w-4 h-4"></i></button>
+                <button class="p-1 hover:bg-white/10 rounded" title="Code"><i data-lucide="code-2" class="w-4 h-4"></i></button>
+                <button class="p-1 hover:bg-white/10 rounded" title="List"><i data-lucide="list" class="w-4 h-4"></i></button>
+              </div>
+              <div class="flex items-end">
+                <textarea id="composer" class="flex-1 bg-transparent text-gray-200 placeholder-gray-500 focus:outline-none resize-none" rows="2" placeholder="Describe your task or ask a question..."></textarea>
+                <button id="sendBtn" class="ml-2 p-2 text-white bg-violet-600 rounded-md hover:bg-violet-500 transition-colors flex items-center" title="Send">
+                  <i data-lucide="send" class="w-4 h-4"></i>
+                </button>
+              </div>
+              <div class="flex gap-2 mt-2 justify-between">
+                <div class="text-xs text-muted" id="tokenInfo">Tokens: 0</div>
+                <div class="flex gap-2">
+                  <button id="interruptBtn" class="px-3 py-1.5 btn-muted rounded">Stop</button>
+                </div>
               </div>
             </div>
           </div>
