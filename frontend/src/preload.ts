@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('aiw', {
   patchApproval: (id: string, decision: string) => ipcRenderer.invoke('aiw:patchApproval', id, decision),
   setCodexPath: (codexPath: string) => ipcRenderer.invoke('aiw:setCodexPath', codexPath),
   getHistory: () => ipcRenderer.invoke('aiw:getHistory'),
+  listMcpTools: () => ipcRenderer.invoke('aiw:listMcpTools'),
+  upsertMcpServer: (server: { name: string; command: string; args?: string[]; env?: Record<string,string>}) => ipcRenderer.invoke('aiw:upsertMcpServer', server),
+  removeMcpServer: (name: string) => ipcRenderer.invoke('aiw:removeMcpServer', name),
+  restart: () => ipcRenderer.invoke('aiw:restartBackend'),
+  getMcpServers: () => ipcRenderer.invoke('aiw:getMcpServers'),
   onEvent: (cb: (e: any) => void) => {
     const listener = (_: any, payload: any) => cb(payload);
     ipcRenderer.on('aiw:event', listener);

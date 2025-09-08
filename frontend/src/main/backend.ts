@@ -124,6 +124,14 @@ export class BackendService extends EventEmitter {
     } catch {}
   }
 
+  async restart() {
+    const codexPath = this.codexPath;
+    const profile = this.profile;
+    try { this.stop(); } catch {}
+    await new Promise((r) => setTimeout(r, 200));
+    await this.start({ codexPath, profile });
+  }
+
   private send(submission: any): boolean {
     if (!this.proc || !this.running || !this.proc.stdin.writable) {
       this.emit('error', 'Backend not running');
@@ -247,6 +255,67 @@ export class BackendService extends EventEmitter {
       this.emit('error', `Failed to save config: ${String(e)}`);
       return false;
     }
+  }
+
+  public upsertMcpServer(server: MCPServer): boolean {
+    try {
+      const cfgDir = path.join(os.homedir(), '.ai-workbench');
+      const cfgPath = path.join(cfgDir, 'config.json');
+      let data: AppConfig = {};
+      if (fs.existsSync(cfgPath)) {
+        try { data = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch { data = {}; }
+      }
+      if (!data.mcp_servers) data.mcp_servers = {} as any;
+      data.mcp_servers![server.name] = {
+        name: server.name,
+        command: server.command,
+        args: server.args || [],
+        env: server.env || {},
+      } as any;
+      fs.mkdirSync(cfgDir, { recursive: true });
+      fs.writeFileSync(cfgPath, JSON.stringify(data, null, 2), 'utf8');
+      this.emit('log', `Saved MCP server '${server.name}' to ${cfgPath}`);
+      return true;
+    } catch (e) {
+      this.emit('error', `Failed to save MCP server: ${String(e)}`);
+      return false;
+    }
+  }
+
+  public removeMcpServer(name: string): boolean {
+    try {
+      const cfgDir = path.join(os.homedir(), '.ai-workbench');
+      const cfgPath = path.join(cfgDir, 'config.json');
+      if (!fs.existsSync(cfgPath)) return true;
+      const data: AppConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      if (data.mcp_servers && data.mcp_servers[name]) {
+        delete data.mcp_servers[name];
+        fs.writeFileSync(cfgPath, JSON.stringify(data, null, 2), 'utf8');
+        this.emit('log', `Removed MCP server '${name}' from ${cfgPath}`);
+      }
+      return true;
+    } catch (e) {
+      this.emit('error', `Failed to remove MCP server: ${String(e)}`);
+      return false;
+    }
+  }
+
+  public getMcpServers(): Record<string, MCPServer> {
+    try {
+      const cfgDir = path.join(os.homedir(), '.ai-workbench');
+      const cfgPath = path.join(cfgDir, 'config.json');
+      if (!fs.existsSync(cfgPath)) return {};
+      const data: AppConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      return (data.mcp_servers as any) || {};
+    } catch (e) {
+      this.emit('error', `Failed to read MCP servers: ${String(e)}`);
+      return {};
+    }
+  }
+
+  // --- MCP tools ----------------------------------------------------------
+  listMcpTools(): boolean {
+    return this.send({ id: `list_mcp_tools_${Date.now()}`, op: { type: 'list_mcp_tools' } });
   }
 
   private async autoDetectCodexPath(): Promise<string | undefined> {

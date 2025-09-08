@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useBackend } from '../contexts/BackendContext';
 
 const ChatControls: React.FC = () => {
-  const { chatParams, setChatParams, getHistory } = useBackend();
+  const { chatParams, setChatParams, getHistory, tokenUsage } = useBackend();
   const [open, setOpen] = useState(true);
 
   return (
@@ -10,7 +10,6 @@ const ChatControls: React.FC = () => {
       <div className="flex items-center justify-between mb-2">
         <div className="text-sm text-[var(--text-secondary)]">Chat Parameters</div>
         <div className="flex items-center gap-2">
-          <button className="text-xs px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={() => getHistory()}>Load History</button>
           <button className="text-xs px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show'}</button>
         </div>
       </div>
@@ -62,6 +61,20 @@ const ChatControls: React.FC = () => {
           <div className="flex items-center gap-2 col-span-2 md:col-span-3 mt-1">
             <input id="showReasoning" type="checkbox" checked={chatParams.showReasoning} onChange={(e)=>setChatParams({showReasoning:e.target.checked})} />
             <label htmlFor="showReasoning" className="text-xs text-[var(--text-tertiary)]">Show reasoning in chat</label>
+          </div>
+          <div className="col-span-2 md:col-span-3 mt-2">
+            <div className="text-xs text-[var(--text-tertiary)] mb-1">Token Usage {tokenUsage?.context_window ? `(context ${tokenUsage.context_window})` : ''}</div>
+            <div className="w-full h-2 bg-[var(--bg-tertiary)] rounded overflow-hidden">
+              {(() => {
+                const total = tokenUsage?.total_tokens || 0;
+                const cw = tokenUsage?.context_window || 0;
+                const usedPct = cw ? Math.min(100, Math.max(0, Math.round((total / cw) * 100))) : 0;
+                return <div className="h-full bg-[var(--accent)]" style={{ width: `${usedPct}%` }}></div>;
+              })()}
+            </div>
+            <div className="text-2xs text-[var(--text-tertiary)] mt-1">
+              in: {tokenUsage?.input_tokens ?? 0} | out: {tokenUsage?.output_tokens ?? 0} | total: {tokenUsage?.total_tokens ?? 0}
+            </div>
           </div>
         </div>
       )}

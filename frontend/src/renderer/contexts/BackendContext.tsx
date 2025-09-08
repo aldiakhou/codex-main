@@ -23,6 +23,8 @@ type BackendContextType = {
   logs: string[];
   lastEvent: any | null;
   messages: { id: string; role: 'assistant' | 'reasoning' | 'system' | 'tool' | 'user'; text: string }[];
+  draftMessage: string;
+  setDraftMessage: (v: string) => void;
   chatParams: {
     model: string;
     approval_policy: 'untrusted' | 'on-failure' | 'on-request' | 'never';
@@ -45,7 +47,27 @@ type BackendContextType = {
   patchApprovalRequest: PatchApprovalRequest | null;
   clearApprovals: () => void;
   lastError?: string | null;
+  tokenUsage?: { input_tokens: number; cached_input_tokens?: number; output_tokens: number; reasoning_output_tokens?: number; total_tokens: number; context_window?: number };
+  toolCalls: Array<{
+    call_id: string;
+    kind: 'exec' | 'mcp';
+    name?: string;
+    command?: string[];
+    cwd?: string;
+    status: 'running' | 'done';
+    exit_code?: number;
+    started_at: number;
+    ended_at?: number;
+    stdout: string;
+    stderr: string;
+    formatted_output?: string;
+  }>;
   getHistory: () => Promise<boolean>;
+  mcpTools: Record<string, any>;
+  refreshMcpTools: () => Promise<boolean>;
+  mcpServers: Record<string, { name: string; command: string; args?: string[]; env?: Record<string,string> }>;
+  refreshMcpServers: () => Promise<Record<string, any>>;
+  serverErrors: Record<string, string>;
 };
 
 const BackendContext = createContext<BackendContextType | undefined>(undefined);
@@ -66,6 +88,12 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [execApprovalRequest, setExecApprovalRequest] = useState<ExecApprovalRequest | null>(null);
   const [patchApprovalRequest, setPatchApprovalRequest] = useState<PatchApprovalRequest | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [draftMessage, setDraftMessage] = useState<string>('');
+  const [tokenUsage, setTokenUsage] = useState<BackendContextType['tokenUsage']>();
+  const [toolCalls, setToolCalls] = useState<BackendContextType['toolCalls']>([]);
+  const [mcpTools, setMcpTools] = useState<Record<string, any>>({});
+  const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
+  const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [chatParams, setChatParamsState] = useState<BackendContextType['chatParams']>(() => {
     const saved = localStorage.getItem('chatParams');
     if (saved) {
@@ -102,9 +130,20 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Agent message streaming
         if (type === 'agent_message') {
           const text = e.msg?.message ?? '';
-          const id = e.id || `msg_${Date.now()}`;
-          streamingAssistantRef.current = null;
-          if (text) setMessages((prev) => [...prev, { id, role: 'assistant', text }]);
+          if (!text) return;
+          // If we were streaming deltas, update that message instead of appending a new one
+          const cur = streamingAssistantRef.current;
+          if (cur) {
+            const cid = cur.id;
+            setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text } : m)));
+            streamingAssistantRef.current = null;
+          } else {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === 'assistant' && last.text === text) return prev; // de-dupe
+              return [...prev, { id: e.id || `msg_${Date.now()}`, role: 'assistant', text }];
+            });
+          }
           return;
         }
         if (type === 'agent_message_delta') {
@@ -123,7 +162,15 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         if (type === 'agent_reasoning') {
           const text = e.msg?.text ?? '';
-          if (text) setMessages((prev) => [...prev, { id: e.id || `rsn_${Date.now()}`, role: 'reasoning', text }]);
+          if (!text) return;
+          const cur = streamingReasoningRef.current;
+          if (cur) {
+            const cid = cur.id;
+            setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text } : m)));
+            streamingReasoningRef.current = null;
+          } else {
+            setMessages((prev) => [...prev, { id: e.id || `rsn_${Date.now()}`, role: 'reasoning', text }]);
+          }
           return;
         }
         if (type === 'agent_reasoning_delta') {
@@ -140,39 +187,78 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text: cur!.text } : m)));
           return;
         }
+        if (type === 'token_count') {
+          const tu = e.msg || {};
+          setTokenUsage((prev) => ({
+            input_tokens: tu.input_tokens ?? prev?.input_tokens ?? 0,
+            cached_input_tokens: tu.cached_input_tokens ?? prev?.cached_input_tokens,
+            output_tokens: tu.output_tokens ?? prev?.output_tokens ?? 0,
+            reasoning_output_tokens: tu.reasoning_output_tokens ?? prev?.reasoning_output_tokens,
+            total_tokens: tu.total_tokens ?? prev?.total_tokens ?? 0,
+            context_window: prev?.context_window,
+          }));
+          return;
+        }
         if (type === 'session_configured') {
           const model = e.msg?.model || '';
           setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Connected. Model: ${model}` }]);
           return;
         }
         if (type === 'task_started') {
+          const cw = e.msg?.model_context_window;
+          if (cw) setTokenUsage((prev) => ({ ...(prev || { input_tokens:0, output_tokens:0, total_tokens:0 }), context_window: cw }));
           setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task started` }]);
           return;
         }
         if (type === 'task_complete') {
-          const last = e.msg?.last_agent_message ? `: ${e.msg.last_agent_message}` : '';
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task complete${last}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task complete.` }]);
           return;
         }
         if (type === 'mcp_tool_call_begin') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
+          const call_id = e.msg?.call_id || e.id || `mcp_${Date.now()}`;
+          setToolCalls((prev) => [{ call_id, kind: 'mcp', name, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
           setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call begin: ${name}` }]);
           return;
         }
         if (type === 'mcp_tool_call_end') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
+          const call_id = e.msg?.call_id || e.id || '';
+          setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now() } : tc));
           setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call end: ${name}` }]);
           return;
         }
         if (type === 'exec_command_begin') {
           const cmd = (e.msg?.command || []).join(' ');
           const cwd = e.msg?.cwd || '';
+          const call_id = e.msg?.call_id || e.id || `exec_${Date.now()}`;
+          setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
           setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exec: ${cmd}\ncwd: ${cwd}` }]);
+          return;
+        }
+        if (type === 'exec_command_output_delta') {
+          const call_id = e.msg?.call_id || '';
+          const stream = e.msg?.stream || 'stdout';
+          const chunk = e.msg?.chunk;
+          let text = '';
+          try {
+            if (typeof chunk === 'string') {
+              const bin = atob(chunk);
+              const bytes = new Uint8Array(bin.length);
+              for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+              text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+            }
+          } catch { text = ''; }
+          if (text) {
+            setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, stdout: stream === 'stdout' ? (tc.stdout + text) : tc.stdout, stderr: stream === 'stderr' ? (tc.stderr + text) : tc.stderr } : tc));
+          }
           return;
         }
         if (type === 'exec_command_end') {
           const code = e.msg?.exit_code;
           const out = e.msg?.formatted_output || e.msg?.stdout || '';
+          const call_id = e.msg?.call_id || e.id || '';
+          setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now(), exit_code: code, formatted_output: out, stdout: tc.stdout || (e.msg?.stdout || ''), stderr: tc.stderr || (e.msg?.stderr || '') } : tc));
           setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exit ${code}\n${out}` }]);
           return;
         }
@@ -215,6 +301,11 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           } catch {}
           return;
         }
+        if (type === 'mcp_list_tools_response') {
+          const tools = e.msg?.tools || {};
+          setMcpTools(tools || {});
+          return;
+        }
         if (type === 'exec_approval_request' || type === 'execApprovalRequest') {
           setExecApprovalRequest({
             id: e.id || '',
@@ -243,7 +334,21 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       })
     );
-    unsub.current.push(window.aiw.onError((m) => { setLastError(m); setLogs((prev) => [...prev.slice(-400), `ERROR: ${m}`]); setMessages((prev)=>[...prev,{id:`err_${Date.now()}`, role:'system', text:`Error: ${m}` }]); }));
+    unsub.current.push(window.aiw.onError((m) => {
+      setLastError(m);
+      setLogs((prev) => [...prev.slice(-400), `ERROR: ${m}`]);
+      try {
+        const re1 = /MCP client for `([^`]+)` failed to start: (.*)/i;
+        const re2 = /MCP client for '([^']+)' failed to start: (.*)/i;
+        const re3 = /failed to start mcp server[:\s]+(\w+).*?:\s+(.*)/i;
+        const m1 = re1.exec(m) || re2.exec(m) || re3.exec(m);
+        if (m1) {
+          const name = m1[1]; const msg = m1[2] || m;
+          setServerErrors((prev) => ({ ...prev, [name]: msg }));
+        }
+      } catch {}
+      setMessages((prev)=>[...prev,{id:`err_${Date.now()}`, role:'system', text:`Error: ${m}` }]);
+    }));
 
     // start backend on mount (with stored codexPath if available)
     const saved = localStorage.getItem('codexPath') || undefined;
@@ -276,8 +381,14 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
     logs,
     lastEvent,
     messages,
+    draftMessage,
+    setDraftMessage,
     chatParams,
     setChatParams,
+    tokenUsage,
+    toolCalls,
+    mcpServers,
+    serverErrors,
     start: (opts) => window.aiw.start(opts),
     stop: () => window.aiw.stop(),
     login: (apiKey?: string) => window.aiw.login(apiKey),
@@ -310,7 +421,14 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
     },
     lastError,
     getHistory: async () => window.aiw.getHistory(),
-  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams]);
+    mcpTools,
+    refreshMcpTools: async () => window.aiw.listMcpTools(),
+    refreshMcpServers: async () => {
+      const cfg = await window.aiw.getMcpServers();
+      setMcpServers(cfg || {});
+      return cfg;
+    },
+  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams, draftMessage, tokenUsage, toolCalls, mcpTools, mcpServers, serverErrors]);
 
   return <BackendContext.Provider value={api}>{children}</BackendContext.Provider>;
 };

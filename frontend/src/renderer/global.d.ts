@@ -20,6 +20,11 @@ declare global {
       patchApproval: (id: string, decision: string) => Promise<boolean>;
       setCodexPath: (codexPath: string) => Promise<boolean>;
       getHistory: () => Promise<boolean>;
+      listMcpTools: () => Promise<boolean>;
+      upsertMcpServer: (server: { name: string; command: string; args?: string[]; env?: Record<string,string>}) => Promise<boolean>;
+      removeMcpServer: (name: string) => Promise<boolean>;
+      restart: () => Promise<void>;
+      getMcpServers: () => Promise<Record<string, { name: string; command: string; args?: string[]; env?: Record<string,string> }>>;
       onEvent: (cb: (e: any) => void) => () => void;
       onStatus: (cb: (s: string) => void) => () => void;
       onLog: (cb: (m: string) => void) => () => void;

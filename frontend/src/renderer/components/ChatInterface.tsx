@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { useBackend } from '../contexts/BackendContext';
+import ChatControls from './ChatControls';
 
 const ChatInterface: React.FC = () => {
-  const [message, setMessage] = useState('');
-  const { status, userTurn, login, start, logs } = useBackend();
+  const { status, userTurn, login, start, logs, draftMessage, setDraftMessage, chatParams } = useBackend();
   const connected = status === 'connected';
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const text = message.trim();
+    const text = (draftMessage || '').trim();
     if (!text) return;
-    setMessage('');
+    setDraftMessage('');
     await userTurn(text);
   };
 
@@ -30,11 +31,27 @@ const ChatInterface: React.FC = () => {
           </div>
         </div>
         <form onSubmit={handleSubmit}>
+          {/* Parameter bar inside composer */}
+          <div className="flex items-center flex-wrap gap-2 mb-2 text-xs">
+            <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Model: <strong className="ml-1">{chatParams.model}</strong></div>
+            <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Sandbox: <strong className="ml-1">{chatParams.sandbox_mode}</strong></div>
+            <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Effort: <strong className="ml-1">{chatParams.effort}</strong></div>
+            <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Approval: <strong className="ml-1">{chatParams.approval_policy}</strong></div>
+            {chatParams.cwd ? (
+              <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">cwd: <strong className="ml-1">{chatParams.cwd}</strong></div>
+            ) : null}
+            <button type="button" className="ml-auto px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)]" onClick={()=>setShowAdvanced(v=>!v)}>{showAdvanced ? 'Hide' : 'Edit'}</button>
+          </div>
+          {showAdvanced && (
+            <div className="mb-2 border border-[var(--border)] rounded-lg bg-[var(--bg-secondary)]">
+              <ChatControls />
+            </div>
+          )}
           <div className="relative">
             <input
               type="text"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              value={draftMessage}
+              onChange={(e) => setDraftMessage(e.target.value)}
               placeholder={connected ? 'Delegate a task to Nexus AI...' : 'Starting backend...'}
               className="w-full bg-[var(--bg-tertiary)] rounded-lg py-3 pl-4 pr-12 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] border border-[var(--border)]"
               disabled={false}

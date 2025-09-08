@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js';
 
 const ChatMessages: React.FC = () => {
-  const { messages, chatParams } = useBackend();
+  const { messages, chatParams, setDraftMessage } = useBackend();
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -18,9 +18,13 @@ const ChatMessages: React.FC = () => {
     <div className="max-w-4xl mx-auto px-4 py-2 space-y-4 overflow-y-auto" style={{ maxHeight: '40vh' }}>
       {filtered.map((m) => (
         <div key={m.id} className={`rounded-lg p-3 border ${m.role === 'reasoning' ? 'bg-yellow-500/10 border-yellow-500/30' : m.role === 'tool' ? 'bg-blue-500/10 border-blue-500/30' : m.role === 'system' ? 'bg-gray-500/10 border-gray-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border)]'}`}>
-          <div className="text-xs text-[var(--text-tertiary)] mb-1 uppercase tracking-wide flex items-center gap-2">
+          <div className="text-xs text-[var(--text-tertiary)] mb-1 uppercase tracking-wide flex items-center gap-2 justify-between">
             <span className={`inline-block w-2 h-2 rounded-full ${m.role === 'assistant' ? 'bg-violet-400' : m.role === 'reasoning' ? 'bg-yellow-400' : m.role === 'tool' ? 'bg-blue-400' : m.role === 'user' ? 'bg-green-400' : 'bg-gray-400'}`} />
-            <span>{m.role}</span>
+            <span className="mr-auto ml-2">{m.role}</span>
+            <div className="flex gap-2">
+              <button className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-2xs" onClick={async ()=>{ try { await navigator.clipboard.writeText(m.text); } catch {} }}>Copy</button>
+              <button className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-2xs" onClick={()=> setDraftMessage(prev => (prev ? prev+"\n\n" : '') + '> ' + m.text.replace(/\n/g,'\n> ') )}>Reply</button>
+            </div>
           </div>
           <div className="prose prose-invert max-w-none text-[var(--text-primary)]">
             <ReactMarkdown

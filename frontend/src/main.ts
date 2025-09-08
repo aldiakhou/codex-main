@@ -24,6 +24,11 @@ const wireBackendIpc = () => {
   ipcMain.handle('aiw:patchApproval', (_e, id: string, decision: string) => backend.patchApproval(id, decision));
   ipcMain.handle('aiw:setCodexPath', (_e, codexPath: string) => backend.saveCodexPath(codexPath));
   ipcMain.handle('aiw:getHistory', () => backend.getHistory());
+  ipcMain.handle('aiw:listMcpTools', () => backend.listMcpTools());
+  ipcMain.handle('aiw:upsertMcpServer', (_e, server) => backend.upsertMcpServer(server));
+  ipcMain.handle('aiw:removeMcpServer', (_e, name: string) => backend.removeMcpServer(name));
+  ipcMain.handle('aiw:restartBackend', () => backend.restart());
+  ipcMain.handle('aiw:getMcpServers', () => backend.getMcpServers());
 
   const send = (ch: string, payload: any) => {
     if (mainWindow) mainWindow.webContents.send(ch, payload);
