@@ -376,11 +376,27 @@
       let lastX = 0, lastY = 0, dragging = false;
       const isInteractive = (el)=> !!el && (el.closest('button,select,input,textarea,a,[role="button"]'));
       const onMove = (e)=>{ if (!dragging) return; const dx = e.screenX - lastX, dy = e.screenY - lastY; lastX = e.screenX; lastY = e.screenY; try { App.window && App.window.move_by(dx, dy); } catch {} };
-      const onUp = ()=>{ dragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = ''; };
+      const onUp = ()=>{
+        if (!dragging) return;
+        dragging = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        // Snap to edges if near
+        try {
+          const margin = 24;
+          const sw = (window.screen && window.screen.availWidth) || window.innerWidth;
+          const sh = (window.screen && window.screen.availHeight) || window.innerHeight;
+          if (lastX <= margin) { App.window && App.window.snap('left'); }
+          else if (lastX >= sw - margin) { App.window && App.window.snap('right'); }
+          else if (lastY <= margin) { App.window && App.window.snap('maximize'); }
+        } catch {}
+      };
       dragHost.addEventListener('mousedown', (e)=>{
         if (isInteractive(e.target)) return; // don't start drag from controls
         dragging = true; lastX = e.screenX; lastY = e.screenY; document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); document.body.style.cursor = 'move';
       });
+      dragHost.addEventListener('dblclick', (e)=>{ if (isInteractive(e.target)) return; try { App.window && App.window.maximize_restore(); } catch {} });
     }
 
     // Install window edge resizers for frameless mode
@@ -398,7 +414,7 @@
       ];
       const make = (cfg)=>{
         const el = document.createElement('div');
-        el.dataset.edge = cfg.edge; el.id = cfg.id; el.style.position='fixed'; el.style.zIndex='80'; el.style.userSelect='none'; el.style.touchAction='none'; el.style.background='transparent';
+        el.dataset.edge = cfg.edge; el.id = cfg.id; el.className = 'window-resizer'; el.style.position='fixed'; el.style.zIndex='80'; el.style.userSelect='none'; el.style.touchAction='none'; el.style.background='transparent';
         Object.assign(el.style, cfg.style);
         const onMove = (e)=>{ const dx = e.screenX - (el._lastX||e.screenX); const dy = e.screenY - (el._lastY||e.screenY); el._lastX = e.screenX; el._lastY = e.screenY; try { App.window && App.window.resize_edge(cfg.edge, dx, dy); } catch {} };
         const onUp = ()=>{ document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = ''; };

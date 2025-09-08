@@ -440,6 +440,29 @@ class WindowBridge(QObject):
         except Exception:
             pass
 
+    @Slot(str)
+    def snap(self, where: str):
+        """Snap window to screen regions (left/right halves, maximize)."""
+        try:
+            screen = QApplication.primaryScreen()
+            if not screen:
+                return
+            ag = screen.availableGeometry()
+            if not ag:
+                return
+            where = (where or '').lower()
+            if where == 'left':
+                self._win.setGeometry(ag.x(), ag.y(), int(ag.width() / 2), ag.height())
+            elif where == 'right':
+                self._win.setGeometry(ag.x() + int(ag.width() / 2), ag.y(), int(ag.width() / 2), ag.height())
+            elif where in ('top', 'maximize'):
+                # maximize to available geometry (taskbar-aware)
+                self._win.setGeometry(ag.x(), ag.y(), ag.width(), ag.height())
+            elif where == 'restore':
+                self._win.showNormal()
+        except Exception:
+            pass
+
 
 class MainWindow(QMainWindow):
     def __init__(self):

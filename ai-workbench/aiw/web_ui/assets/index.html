@@ -14,6 +14,23 @@
     <script src="./js/vendor/mermaid.min.js"></script>
     <script src="./js/vendor/monaco/min/vs/loader.js"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>
+      // Filter noisy console warnings from third-party libs
+      (function(){
+        const _warn = console.warn;
+        console.warn = function(){
+          try {
+            const msg = arguments && arguments[0];
+            if (typeof msg === 'string') {
+              if (msg.includes("cdn.tailwindcss.com should not be used in production")) return;
+              if (msg.includes("Duplicate definition of module 'vs/editor/editor.main'")) return;
+            }
+          } catch {}
+          return _warn.apply(console, arguments);
+        };
+      })();
+    </script>
+    <script src="./js/vendor/lucide-lite.js"></script>
   </head>
   <body>
     <div class="aurora-background"></div>
