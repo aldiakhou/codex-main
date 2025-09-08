@@ -1,4 +1,4 @@
-window.App = window.App || {};
+﻿window.App = window.App || {};
 (function () {
   const show = (id) => { const el = App.qs(id); if (!el) return; el.classList.remove('hidden'); el.classList.add('flex'); };
   const hide = (id) => { const el = App.qs(id); if (!el) return; el.classList.add('hidden'); el.classList.remove('flex'); };
@@ -79,7 +79,7 @@ window.App = window.App || {};
       App._renderServersData = { servers: servers||{}, errors: errors||{} };
       const entries = Object.entries(servers || {});
       if (!entries.length) {
-        wrap.innerHTML = '<div class="text-xs text-gray-500 p-2">No servers configured.</div>';
+        wrap.innerHTML = '<div class="text-xs text-muted p-2">No servers configured.</div>';
         return;
       }
       entries.forEach(([name, s]) => {
@@ -96,12 +96,12 @@ window.App = window.App || {};
         <div class="col-span-2 truncate" title="${(s.args||[]).join(' ')}">${(s.args||[]).join(' ')}</div>
         <div class="col-span-1 truncate" title="${Object.keys(s.env||{}).join(', ')}">${Object.keys(s.env||{}).length} env</div>
         <div class="col-span-1 text-right space-x-2">
-          <button class="text-blue-600 hover:underline" data-act="edit">Edit</button>
-          <button class="text-red-600 hover:underline" data-act="remove">Remove</button>
+          <button class="text-primary hover:underline" data-act="edit">Edit</button>
+          <button class="text-danger hover:underline" data-act="remove">Remove</button>
         </div>`;
       if (err) {
         const warn = document.createElement('div');
-        warn.className = 'col-span-7 text-[11px] text-red-600 mt-1 truncate';
+        warn.className = 'col-span-7 text-[11px] text-danger mt-1 truncate';
         warn.textContent = `Error: ${err}`;
         row.appendChild(warn);
       }
@@ -125,15 +125,15 @@ window.App = window.App || {};
       const cmdVal = s?.command || '';
       const argsVal = (s?.args||[]).map(a => (a.includes(' ') ? '"'+a+'"' : a)).join(' ');
       const envVal = Object.entries(s?.env||{}).map(([k,v]) => `${k}=${v}`).join(';');
-      row.classList.add('bg-yellow-50');
+      row.classList.add('bg-highlight');
       row.innerHTML = `
         <div class="col-span-1"><input class="border rounded px-1 py-0.5 w-full" value="${nameVal}" placeholder="name" /></div>
         <div class="col-span-2"><input class="border rounded px-1 py-0.5 w-full" value="${cmdVal}" placeholder="command" /></div>
         <div class="col-span-2"><input class="border rounded px-1 py-0.5 w-full" value="${argsVal}" placeholder="args (space-separated)" /></div>
         <div class="col-span-1"><input class="border rounded px-1 py-0.5 w-full" value="${envVal}" placeholder="KEY=VAL;KEY2=VAL2" /></div>
         <div class="col-span-1 text-right space-x-2">
-          <button class="px-2 py-0.5 bg-emerald-600 text-white rounded" data-act="save">Save</button>
-          <button class="px-2 py-0.5 bg-gray-200 rounded" data-act="cancel">Cancel</button>
+          <button class="px-2 py-0.5 btn btn-success" data-act="save">Save</button>
+          <button class="px-2 py-0.5 btn btn-muted" data-act="cancel">Cancel</button>
         </div>`;
       const inputs = row.querySelectorAll('input');
       const nameInput = inputs[0], cmdInput = inputs[1], argsInput = inputs[2], envInput = inputs[3];
@@ -165,7 +165,7 @@ window.App = window.App || {};
     const addBtn = App.qs('#addServerBtn'); if (addBtn) addBtn.onclick = async () => {
       const wrap = App.qs('#serversList'); if (!wrap) return;
       const temp = document.createElement('div');
-      temp.className = 'grid grid-cols-7 gap-2 items-center text-xs p-2 border-b bg-yellow-50';
+      temp.className = 'grid grid-cols-7 gap-2 items-center text-xs p-2 border-b bg-highlight';
       wrap.prepend(temp);
       App._editServerRow(temp, '', { command: '', args: [], env: {} });
     };
@@ -176,3 +176,5 @@ window.App = window.App || {};
     };
   };
 })();
+
+

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -9,81 +9,77 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-      html, body { height: 100%; }
-      body { font-family: 'Inter', sans-serif; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }
-      .scroll { overflow: auto; }
-      .pane { height: calc(100vh - 64px); }
-      /* Make CodeMirror stretch to parent height */
-      #editorMountCenter, #graphMount { height: 100%; }
-      .CodeMirror { height: 100% !important; }
-    </style>
-    <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
-    <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+    <link rel="stylesheet" href="./css/theme.css" />
+    <script src="./js/vendor/cytoscape.min.js"></script>
+    <script src="./js/vendor/mermaid.min.js"></script>
+    <script src="./js/vendor/monaco/min/vs/loader.js"></script>
   </head>
-  <body class="bg-gray-50">
-    <header class="h-16 px-4 bg-indigo-600 text-white flex items-center justify-between shadow">
+  <body>
+    <header class="app-header h-16 px-4 flex items-center justify-between shadow">
       <div class="flex items-center gap-3">
         <div class="font-bold text-lg">AI Workbench</div>
-        <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-red-400"></div>
-        <div id="statusText" class="text-sm opacity-90">Disconnected</div>
+        <div id="statusDot" class="status-dot status-disconnected"></div>
+        <div id="statusText" class="text-sm text-soft">Disconnected</div>
       </div>
       <div class="flex items-center gap-2">
-        <button id="startBtn" class="px-3 py-1.5 bg-white/20 rounded hover:bg-white/30">Start</button>
-        <button id="stopBtn" class="px-3 py-1.5 bg-white/20 rounded hover:bg-white/30">Stop</button>
-        <button id="loginBtn" class="px-3 py-1.5 bg-emerald-500 rounded hover:bg-emerald-600">Login</button>
-        <button id="settingsBtn" class="px-3 py-1.5 bg-white/20 rounded hover:bg-white/30">Settings</button>
+        <button id="startBtn" class="btn btn-ghost">Start</button>
+        <button id="stopBtn" class="btn btn-ghost">Stop</button>
+        <button id="loginBtn" class="btn btn-success">Login</button>
+        <button id="themeToggle" class="btn btn-ghost" title="Toggle theme">Theme</button>
+        <button id="settingsBtn" class="btn btn-ghost">Settings</button>
       </div>
     </header>
 
-    <main class="grid grid-cols-12 gap-3 p-3">
+    <main id="mainGrid" class="grid gap-3 p-3 relative" style="grid-template-columns: var(--left, 1fr) 6px var(--center, 2fr) 6px var(--right, 1fr);">
       <!-- Sidebar -->
-      <aside class="col-span-3 bg-white rounded shadow pane p-3 flex flex-col">
+      <aside class="surface pane p-3 flex flex-col" style="grid-column: 1;">
         <div class="text-sm font-semibold mb-2">Repository</div>
         <div class="flex items-center gap-2 mb-2">
           <input id="cwdInput" class="w-full border rounded px-2 py-1 text-sm" placeholder="Working directory" />
-          <button id="refreshFs" class="px-2 py-1 text-sm bg-gray-100 rounded">List</button>
+          <button id="refreshFs" class="px-2 py-1 text-sm btn-muted rounded">List</button>
         </div>
-        <div id="fsList" class="scroll flex-1 text-sm mono border rounded p-2 bg-gray-50"></div>
+        <div id="fsList" class="scroll flex-1 text-sm mono border rounded p-2 bg-surface-2"></div>
         <div class="text-sm font-semibold mt-3 mb-2">Tools</div>
         <div class="grid grid-cols-2 gap-2 text-sm">
-          <label class="flex items-center gap-2"><input id="toolWebSearch" type="checkbox" class="accent-indigo-600"/> Web search</label>
-          <label class="flex items-center gap-2"><input id="toolLocalDocs" type="checkbox" class="accent-indigo-600"/> Local docs</label>
-          <label class="flex items-center gap-2"><input id="toolMcp" type="checkbox" class="accent-indigo-600"/> MCP</label>
+          <label class="flex items-center gap-2"><input id="toolWebSearch" type="checkbox"/> Web search</label>
+          <label class="flex items-center gap-2"><input id="toolLocalDocs" type="checkbox"/> Local docs</label>
+          <label class="flex items-center gap-2"><input id="toolMcp" type="checkbox"/> MCP</label>
         </div>
         <div class="text-sm font-semibold mt-3 mb-1">Servers</div>
-        <div id="serverStatus" class="scroll mono text-xs h-24 border rounded p-2 bg-gray-50"></div>
-        <div id="logs" class="scroll mono text-xs mt-3 h-32 border rounded p-2 bg-gray-50"></div>
+        <div id="serverStatus" class="scroll mono text-xs h-24 border rounded p-2 bg-surface-2"></div>
+        <div id="logs" class="scroll mono text-xs mt-3 h-32 border rounded p-2 bg-surface-2"></div>
         <div class="mt-3">
           <div class="flex items-center justify-between mb-2 gap-2">
             <div class="text-sm font-semibold">MCP Tools</div>
             <input id="toolFilter" class="flex-1 border rounded px-2 py-1 text-xs" placeholder="Filter tools..." />
-            <button id="refreshTools" class="px-2 py-1 text-xs bg-gray-100 rounded">Refresh</button>
+            <button id="refreshTools" class="px-2 py-1 text-xs btn-muted rounded">Refresh</button>
           </div>
-          <div id="mcpTools" class="scroll h-40 border rounded p-2 bg-gray-50 text-sm"></div>
+          <div id="mcpTools" class="scroll h-40 border rounded p-2 bg-surface-2 text-sm"></div>
         </div>
       </aside>
 
+      <!-- Resizer between left and center -->
+      <div id="resizerLeft" class="resizer" style="grid-column: 2;"></div>
+
       <!-- Center: Chat / Graph / Code tabs -->
-      <section class="col-span-6 bg-white rounded shadow pane p-0 flex flex-col">
-        <div class="border-b px-3 pt-2 bg-gray-50 flex items-center gap-2">
-          <button id="tabChat" class="px-2 py-1 text-sm rounded bg-indigo-600 text-white">Chat</button>
-          <button id="tabGraph" class="px-2 py-1 text-sm rounded bg-gray-200">Graph</button>
-          <button id="tabCode" class="px-2 py-1 text-sm rounded bg-gray-200">Code</button>
+      <section class="surface pane p-0 flex flex-col" style="grid-column: 3;">
+        <div class="border-b px-3 pt-2 bg-surface-2 flex items-center gap-2">
+          <button id="tabChat" class="px-2 py-1 text-sm rounded tab-active">Chat</button>
+          <button id="tabGraph" class="px-2 py-1 text-sm rounded tab-inactive">Graph</button>
+          <button id="tabCode" class="px-2 py-1 text-sm rounded tab-inactive">Code</button>
           <div class="flex-1"></div>
           <input id="graphSearch" class="hidden border rounded px-2 py-1 text-xs" placeholder="Search graph..." />
           <select id="graphLayout" class="hidden border rounded px-2 py-1 text-xs">
             <option value="cose">cose</option>
             <option value="breadthfirst">breadthfirst</option>
           </select>
-          <button id="graphFit" class="hidden px-2 py-1 text-xs bg-gray-100 rounded">Fit</button>
-          <button id="refreshGraph" class="hidden px-2 py-1 text-xs bg-gray-100 rounded">Refresh</button>
+          <button id="graphFit" class="hidden px-2 py-1 text-xs btn-muted rounded">Fit</button>
+          <button id="refreshGraph" class="hidden px-2 py-1 text-xs btn-muted rounded">Refresh</button>
         </div>
         <!-- Chat pane -->
         <div id="chatPane" class="flex-1 scroll p-0 flex flex-col">
           <div id="chat" class="flex-1 scroll p-4 space-y-3"></div>
-          <div class="border-t p-3 bg-gray-50">
+          <div class="border-t p-3 bg-surface-2">
             <div class="grid grid-cols-2 gap-2 mb-2 text-xs">
               <div class="flex gap-2">
                 <select id="approvalSelect" class="border rounded px-2 py-1">
@@ -118,10 +114,10 @@
             </div>
             <textarea id="composer" class="w-full border rounded p-2 mono" rows="3" placeholder="Describe your task..."></textarea>
             <div class="flex gap-2 mt-2 justify-between">
-              <div class="text-xs text-gray-500" id="tokenInfo">Tokens: 0</div>
+              <div class="text-xs text-muted" id="tokenInfo">Tokens: 0</div>
               <div class="flex gap-2">
-                <button id="interruptBtn" class="px-3 py-1.5 bg-gray-200 rounded">Stop</button>
-                <button id="sendBtn" class="px-3 py-1.5 bg-indigo-600 text-white rounded">Send</button>
+                <button id="interruptBtn" class="px-3 py-1.5 btn-muted rounded">Stop</button>
+                <button id="sendBtn" class="btn btn-primary">Send</button>
               </div>
             </div>
           </div>
@@ -131,118 +127,136 @@
           <div id="graphMount" class="w-full h-full"></div>
         </div>
         <!-- Code pane -->
-        <div id="codePane" class="hidden flex-1 p-3 bg-white">
+         <div id="codePane" class="hidden flex-1 p-3 surface">
           <div class="flex flex-col w-full h-full min-h-0">
             <div class="flex items-center gap-2 mb-2">
               <div id="codeTabs" class="flex items-center gap-1 overflow-x-auto flex-1"></div>
-              <button id="togglePreview" class="px-2 py-1 text-xs bg-gray-100 rounded">Preview</button>
-              <button id="saveWithApproval" class="px-2 py-1 text-xs bg-amber-600 text-white rounded">Save (Approve)</button>
-              <button id="saveFile" class="px-2 py-1 text-xs bg-emerald-600 text-white rounded">Save</button>
+              <button id="togglePreview" class="px-2 py-1 text-xs btn-muted rounded">Preview</button>
+              <button id="saveWithApproval" class="px-2 py-1 text-xs btn-warning rounded">Save (Approve)</button>
+              <button id="saveFile" class="px-2 py-1 text-xs btn-success rounded">Save</button>
             </div>
             <div class="flex-1 min-h-0 flex flex-col">
               <div id="editorMountCenter" class="flex-1 border rounded mb-2"></div>
-              <div id="editorPreviewCenter" class="hidden scroll border rounded p-2 bg-gray-50 text-xs" style="max-height: 30%;"></div>
+              <div id="editorPreviewCenter" class="hidden scroll border rounded p-2 bg-surface-2 text-xs" style="max-height: 30%;"></div>
+              <div id="statusBar" class="mt-2 text-xs text-muted flex justify-between">
+                <div id="statusPath" class="truncate"></div>
+                <div id="statusInfo"></div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       <!-- Side panels -->
-      <section class="col-span-3 pane flex flex-col gap-3">
-        <div class="flex-1 bg-white rounded shadow p-3 flex flex-col">
-          <div class="text-sm font-semibold mb-2">Live Diff</div>
-          <pre id="diffView" class="mono text-xs scroll flex-1 bg-gray-50 border rounded p-2"></pre>
+      <!-- Resizer between center and right -->
+      <div id="resizerRight" class="resizer" style="grid-column: 4;"></div>
+
+      <section class="pane flex flex-col gap-3" style="grid-column: 5;">
+        <div class="flex-1 surface p-3 flex flex-col">
+          <div class="panel-header mb-2">Live Diff</div>
+          <pre id="diffView" class="mono text-xs scroll flex-1 bg-surface-2 border rounded p-2"></pre>
         </div>
-        <div class="h-48 bg-white rounded shadow p-3 flex flex-col">
-          <div class="text-sm font-semibold mb-2">Command Output</div>
-          <pre id="terminal" class="mono text-xs scroll flex-1 bg-black text-green-200 rounded p-2"></pre>
+        <div class="h-48 surface p-3 flex flex-col">
+          <div class="panel-header mb-2">Command Output</div>
+          <pre id="terminal" class="mono text-xs scroll flex-1 terminal rounded p-2"></pre>
         </div>
-        <div class="h-48 bg-white rounded shadow p-3 flex flex-col">
-          <div class="text-sm font-semibold mb-2">Backlinks</div>
-          <div id="backlinksPanel" class="text-xs scroll flex-1 border rounded p-2 bg-gray-50"></div>
+        <div class="h-48 surface p-3 flex flex-col">
+          <div class="panel-header mb-2">Backlinks</div>
+          <div id="backlinksPanel" class="text-xs scroll flex-1 border rounded p-2 bg-surface-2"></div>
         </div>
-        <div class="h-56 bg-white rounded shadow p-3 flex flex-col">
-          <div class="text-sm font-semibold mb-2">Plan & History</div>
-          <div id="plan" class="text-xs scroll flex-1 border rounded p-2 mb-2 bg-gray-50"></div>
+        <div class="h-56 surface p-3 flex flex-col">
+          <div class="panel-header mb-2">Plan & History</div>
+          <div id="plan" class="text-xs scroll flex-1 border rounded p-2 mb-2 bg-surface-2"></div>
           <div class="flex justify-between items-center mb-1">
             <div class="text-sm">History</div>
-            <button id="refreshHistory" class="px-2 py-1 text-xs bg-gray-100 rounded">Refresh</button>
+            <button id="refreshHistory" class="px-2 py-1 text-xs btn-muted rounded">Refresh</button>
           </div>
-          <pre id="historyPanel" class="mono text-xs scroll h-24 bg-gray-50 border rounded p-2"></pre>
+          <pre id="historyPanel" class="mono text-xs scroll h-24 bg-surface-2 border rounded p-2"></pre>
         </div>
         <!-- Removed side Code Viewer; editor now lives in Code tab -->
       </section>
     </main>
 
     <!-- Exec Approval Modal -->
-    <div id="execModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
-      <div class="bg-white rounded shadow w-[600px] p-4">
+    <div id="execModal" class="overlay hidden fixed inset-0 items-center justify-center">
+      <div class="surface w-[600px] p-4">
         <div class="font-semibold mb-2">Approve Command</div>
-        <pre id="execPreview" class="mono text-xs bg-gray-50 p-2 border rounded"></pre>
+        <pre id="execPreview" class="mono text-xs bg-surface-2 p-2 border rounded"></pre>
         <div class="mt-3 flex gap-2 justify-end">
-          <button data-decision="approved" class="px-3 py-1.5 bg-emerald-600 text-white rounded">Approve</button>
-          <button data-decision="approved_for_session" class="px-3 py-1.5 bg-emerald-700 text-white rounded">Approve for Session</button>
-          <button data-decision="denied" class="px-3 py-1.5 bg-gray-200 rounded">Deny</button>
-          <button data-decision="abort" class="px-3 py-1.5 bg-red-600 text-white rounded">Abort</button>
+          <button data-decision="approved" class="px-3 py-1.5 btn-success rounded">Approve</button>
+          <button data-decision="approved_for_session" class="px-3 py-1.5 btn-success rounded">Approve for Session</button>
+          <button data-decision="denied" class="px-3 py-1.5 btn-muted rounded">Deny</button>
+          <button data-decision="abort" class="px-3 py-1.5 btn-danger rounded">Abort</button>
         </div>
       </div>
     </div>
 
     <!-- Save Approval Modal -->
-    <div id="saveModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
-      <div class="bg-white rounded shadow w-[800px] p-4">
+    <div id="saveModal" class="overlay hidden fixed inset-0 items-center justify-center">
+      <div class="surface w-[800px] p-4">
         <div class="font-semibold mb-2">Save Changes (Approval)</div>
-        <div class="text-xs text-gray-600 mb-2" id="saveMeta"></div>
-        <pre id="savePreview" class="mono text-xs bg-gray-50 p-2 border rounded h-72 scroll"></pre>
+        <div class="text-xs text-muted mb-2" id="saveMeta"></div>
+        <pre id="savePreview" class="mono text-xs bg-surface-2 p-2 border rounded h-72 scroll"></pre>
         <div class="mt-3 flex gap-2 justify-end">
-          <button id="saveApproveBtn" class="px-3 py-1.5 bg-emerald-600 text-white rounded">Approve & Save</button>
-          <button id="saveCancelBtn" class="px-3 py-1.5 bg-gray-200 rounded">Cancel</button>
+          <button id="saveApproveBtn" class="px-3 py-1.5 btn-success rounded">Approve & Save</button>
+          <button id="saveCancelBtn" class="px-3 py-1.5 btn-muted rounded">Cancel</button>
         </div>
       </div>
     </div>
 
+    <!-- Command Palette -->
+    <div id="cmdOverlay" class="overlay hidden fixed inset-0 items-start justify-center p-10" style="z-index: 60;">
+      <div id="cmdBox" class="surface w-[720px] max-w-[92vw] p-3">
+        <input id="cmdInput" class="w-full border rounded px-3 py-2 mb-2" placeholder="Type a command or file... (Ctrl/Cmd+K)" />
+        <div id="cmdResults" class="max-h-[50vh] overflow-auto text-sm"></div>
+      </div>
+    </div>
+
+    <!-- Toasts -->
+    <div id="toasts" class="fixed top-3 right-3 flex flex-col gap-2" style="z-index:70;"></div>
+
     <!-- Patch Approval Modal -->
-    <div id="patchModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
-      <div class="bg-white rounded shadow w-[800px] p-4">
+    <div id="patchModal" class="overlay hidden fixed inset-0 items-center justify-center">
+      <div class="surface w-[800px] p-4">
         <div class="font-semibold mb-2">Approve Patch</div>
-        <pre id="patchPreview" class="mono text-xs bg-gray-50 p-2 border rounded h-72 scroll"></pre>
+        <pre id="patchPreview" class="mono text-xs bg-surface-2 p-2 border rounded h-72 scroll"></pre>
         <div class="mt-3 flex gap-2 justify-end">
-          <button data-decision="approved" class="px-3 py-1.5 bg-emerald-600 text-white rounded">Approve</button>
-          <button data-decision="approved_for_session" class="px-3 py-1.5 bg-emerald-700 text-white rounded">Approve for Session</button>
-          <button data-decision="denied" class="px-3 py-1.5 bg-gray-200 rounded">Deny</button>
-          <button data-decision="abort" class="px-3 py-1.5 bg-red-600 text-white rounded">Abort</button>
+          <button data-decision="approved" class="px-3 py-1.5 btn-success rounded">Approve</button>
+          <button data-decision="approved_for_session" class="px-3 py-1.5 btn-success rounded">Approve for Session</button>
+          <button data-decision="denied" class="px-3 py-1.5 btn-muted rounded">Deny</button>
+          <button data-decision="abort" class="px-3 py-1.5 btn-danger rounded">Abort</button>
         </div>
       </div>
     </div>
 
     <!-- Settings Modal -->
-    <div id="settingsModal" class="hidden fixed inset-0 bg-black/40 items-center justify-center">
-      <div class="bg-white rounded shadow w-[600px] p-4">
+    <div id="settingsModal" class="overlay hidden fixed inset-0 items-center justify-center">
+      <div class="surface w-[600px] p-4">
         <div class="font-semibold mb-2">Settings</div>
         <div class="space-y-3 text-sm">
           <div>
-            <label class="block text-gray-700 mb-1">Codex Path</label>
+            <label class="block text-muted mb-1">Codex Path</label>
             <div class="flex gap-2">
               <input id="setCodexPath" class="flex-1 border rounded px-2 py-1" placeholder="codex or full path" />
-              <button id="browseCodex" class="px-2 py-1 bg-gray-100 rounded">Browse</button>
-              <button id="detectCodex" class="px-2 py-1 bg-gray-100 rounded">Detect</button>
+              <button id="browseCodex" class="px-2 py-1 btn-muted rounded">Browse</button>
+              <button id="detectCodex" class="px-2 py-1 btn-muted rounded">Detect</button>
             </div>
           </div>
           <div>
-            <label class="block text-gray-700 mb-1">Profile (optional)</label>
+            <label class="block text-muted mb-1">Profile (optional)</label>
             <input id="setProfile" class="w-full border rounded px-2 py-1" placeholder="profile name" />
           </div>
           <div class="grid grid-cols-3 gap-2">
             <div>
-              <label class="block text-gray-700 mb-1">Timeout (s)</label>
+              <label class="block text-muted mb-1">Timeout (s)</label>
               <input id="setTimeout" type="number" class="w-full border rounded px-2 py-1" min="30" />
             </div>
             <div>
-              <label class="block text-gray-700 mb-1">Max retries</label>
+              <label class="block text-muted mb-1">Max retries</label>
               <input id="setRetries" type="number" class="w-full border rounded px-2 py-1" min="0" />
             </div>
             <div>
-              <label class="block text-gray-700 mb-1">Log level</label>
+              <label class="block text-muted mb-1">Log level</label>
               <select id="setLogLevel" class="w-full border rounded px-2 py-1">
                 <option>info</option>
                 <option>debug</option>
@@ -256,8 +270,8 @@
           <div class="flex items-center justify-between mb-2">
             <div class="font-semibold">MCP Servers</div>
             <div class="flex gap-2">
-              <button id="addServerBtn" class="px-2 py-1 text-xs bg-gray-100 rounded">Add</button>
-              <button id="applyServersBtn" class="px-2 py-1 text-xs bg-indigo-600 text-white rounded">Apply & Restart</button>
+              <button id="addServerBtn" class="px-2 py-1 text-xs btn-muted rounded">Add</button>
+              <button id="applyServersBtn" class="px-2 py-1 text-xs btn btn-primary">Apply & Restart</button>
             </div>
           </div>
           <div id="serversList" class="max-h-40 overflow-auto border rounded">
@@ -265,16 +279,13 @@
           </div>
         </div>
         <div class="mt-4 flex gap-2 justify-end">
-          <button id="settingsCancel" class="px-3 py-1.5 bg-gray-200 rounded">Cancel</button>
-          <button id="settingsSave" class="px-3 py-1.5 bg-indigo-600 text-white rounded">Save</button>
+          <button id="settingsCancel" class="px-3 py-1.5 btn-muted rounded">Cancel</button>
+          <button id="settingsSave" class="px-3 py-1.5 btn btn-primary">Save</button>
         </div>
       </div>
     </div>
     <!-- CodeMirror 5 (from CDN; optional) -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/markdown/markdown.min.js"></script>
+    <!-- Monaco uses AMD loader; CodeMirror removed -->
     <script>
       // Offline Tailwind fallback: if window.tailwind is not present, inject local CSS
       window.addEventListener('DOMContentLoaded', function(){
@@ -295,3 +306,7 @@
     <script src="./js/main.js"></script>
   </body>
   </html>
+
+
+
+

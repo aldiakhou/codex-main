@@ -1,4 +1,4 @@
-window.App = window.App || {};
+﻿window.App = window.App || {};
 (function () {
   function decodeChunk(chunk) {
     if (Array.isArray(chunk)) {
@@ -82,7 +82,7 @@ window.App = window.App || {};
           const item = document.createElement('div');
           item.className = 'flex items-center justify-between text-sm py-1 border-b last:border-0';
           item.innerHTML = `<div class="truncate pr-2" title="${name}">${name}</div>`+
-            `<button class="px-2 py-0.5 bg-gray-100 rounded hover:bg-gray-200" data-tool="${name}">Prompt</button>`;
+            `<button class="px-2 py-0.5 btn-muted" data-tool="${name}">Prompt</button>`;
           item.querySelector('button').onclick = () => {
             const prompt = `Please use the MCP tool \`${name}\` with appropriate parameters to accomplish the task.`;
             App.ui.addMsg('user', prompt);
@@ -121,3 +121,4 @@ window.App = window.App || {};
     }
   };
 })();
+

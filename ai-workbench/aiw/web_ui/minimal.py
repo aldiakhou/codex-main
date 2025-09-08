@@ -8,7 +8,6 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
 import re
-from pathlib import Path
 from typing import Dict, Any
 
 # Support direct run and package run
@@ -120,28 +119,7 @@ class WebBridge(QObject):
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
 
-    # --- Settings / Config -------------------------------------------------
-    @Slot(result=str)
-    def get_backend_config(self) -> str:
-        try:
-            cfg = get_config_manager().config
-            data = cfg.backend.model_dump()
-            return json.dumps({"ok": True, "backend": data})
-        except Exception as e:
-            return json.dumps({"ok": False, "error": str(e)})
-
-    @Slot(str, result=str)
-    def set_backend_config(self, payload: str) -> str:
-        try:
-            data = json.loads(payload)
-            allowed = {k: v for k, v in data.items() if k in {"codex_path", "profile", "timeout", "max_retries", "log_level"}}
-            if not allowed:
-                return json.dumps({"ok": False, "error": "no valid keys"})
-            cm = get_config_manager()
-            cm.update_backend_config(**allowed)
-            return json.dumps({"ok": True})
-        except Exception as e:
-            return json.dumps({"ok": False, "error": str(e)})
+    
 
     @Slot(result=str)
     def detect_codex_path(self) -> str:
@@ -155,7 +133,9 @@ class WebBridge(QObject):
     @Slot(result=str)
     def browse_for_codex(self) -> str:
         try:
-            path, _ = QFileDialog.getOpenFileName(None, "Select Codex executable", "", "Executable (*.exe);;All Files (*)")
+            # Use platform-appropriate filter: Windows shows .exe, others show all files
+            filter_str = "Executable (*.exe);;All Files (*)" if sys.platform.startswith('win') else "All Files (*)"
+            path, _ = QFileDialog.getOpenFileName(None, "Select Codex executable", "", filter_str)
             if not path:
                 return json.dumps({"ok": False, "cancelled": True})
             return json.dumps({"ok": True, "codex_path": path})
@@ -309,6 +289,24 @@ class WebBridge(QObject):
             return json.dumps({"ok": True, "files": files, "last": get_config_manager().get_last_active_file()})
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
+
+    # --- Layout state (resizable panes) ------------------------------------
+    @Slot(result=str)
+    def get_layout_state(self) -> str:
+        try:
+            st = get_config_manager().get_layout_state() or {}
+            return json.dumps({"ok": True, "state": st})
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+
+    @Slot(str)
+    def set_layout_state(self, payload: str):
+        try:
+            data = json.loads(payload)
+            if isinstance(data, dict):
+                get_config_manager().set_layout_state(data)
+        except Exception:
+            pass
 
     # --- MCP Servers management -------------------------------------------
     @Slot(result=str)

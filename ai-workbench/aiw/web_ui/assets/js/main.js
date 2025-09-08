@@ -1,4 +1,4 @@
-window.App = window.App || {};
+﻿window.App = window.App || {};
 (function () {
   // Utility: run a callback once the backend bridge is ready
   function whenBackendReady(cb) {
@@ -40,13 +40,44 @@ window.App = window.App || {};
       res.items.forEach((it) => {
         const line = document.createElement('div');
         line.className = 'flex gap-2';
-        line.innerHTML = `<span class="${it.is_dir?'text-indigo-600':'text-gray-600'}">${it.is_dir?'📁':'📄'}</span><button class="text-left hover:underline" title="${it.path}">${it.name}</button>`;
+        line.innerHTML = `<span class="${it.is_dir?'text-primary':'text-muted'}">${it.is_dir?'ðŸ“':'ðŸ“„'}</span><button class="text-left hover:underline" title="${it.path}">${it.name}</button>`;
         line.querySelector('button').onclick = async () => {
           if (it.is_dir) { App.qs('#cwdInput').value = it.path; listDir(); }
           else { await openFileInEditor(it.path); }
         };
         el.appendChild(line);
       });
+    });
+  }
+
+  // Override listDir with a safer DOM construction to avoid unsafe innerHTML
+  function listDir() {
+    const cwd = App.qs('#cwdInput')?.value.trim() || '';
+    App.backend.list_dir(cwd).then((s) => {
+      const res = JSON.parse(s);
+      const el = App.qs('#fsList'); if (!el) return;
+      if (!res.ok) { el.textContent = res.error || 'Failed'; return; }
+      el.innerHTML = '';
+      res.items
+        .sort((a,b)=> a.is_dir === b.is_dir ? a.name.localeCompare(b.name) : (a.is_dir? -1 : 1))
+        .forEach((it) => {
+          const line = document.createElement('div');
+          line.className = 'flex gap-2 items-center';
+          const icon = document.createElement('span');
+          icon.className = it.is_dir ? 'text-primary' : 'text-muted';
+          icon.textContent = it.is_dir ? 'ðŸ“' : 'ðŸ“„';
+          const btn = document.createElement('button');
+          btn.className = 'text-left hover:underline truncate';
+          btn.title = it.path;
+          btn.textContent = it.name;
+          btn.onclick = async () => {
+            if (it.is_dir) { App.qs('#cwdInput').value = it.path; listDir(); }
+            else { await openFileInEditor(it.path); }
+          };
+          line.appendChild(icon);
+          line.appendChild(btn);
+          el.appendChild(line);
+        });
     });
   }
 
@@ -71,7 +102,7 @@ window.App = window.App || {};
     mount.innerHTML = '';
     if (typeof cytoscape === 'undefined') {
       const msg = document.createElement('div');
-      msg.className = 'p-4 text-sm text-red-600';
+      msg.className = 'p-4 text-sm text-danger';
       msg.textContent = 'Cytoscape library not loaded. Check network and try again.';
       mount.appendChild(msg);
       return;
@@ -116,21 +147,50 @@ window.App = window.App || {};
       // Switch to Code tab to edit
       const tabCodeBtn = App.qs('#tabCode'); if (tabCodeBtn) tabCodeBtn.click();
       const mount = App.qs('#editorMountCenter');
-      if (!window._cm) {
-        try { window._cm = CodeMirror(mount, { value: text, lineNumbers: true, mode: guessMode(path) }); }
-        catch { mount.textContent = text; }
-      } else { window._cm.setValue(text); window._cm.setOption('mode', guessMode(path)); }
-      if (window._cm && window._cm.setSize) { window._cm.setSize(null, '100%'); }
-      App.state = App.state || {}; App.state.currentFile = path;
-      ensureCodeTab(path);
-      updateMermaidPreview(text);
-      if (window._cm) {
-        if (window._cm._debouncedPrev) clearTimeout(window._cm._debouncedPrev);
-        window._cm.on('change', () => {
-          if (window._cm._debouncedPrev) clearTimeout(window._cm._debouncedPrev);
-          window._cm._debouncedPrev = setTimeout(() => updateMermaidPreview(window._cm.getValue()), 300);
-        });
+      const lang = guessMode(path);
+      function createEditor(){
+        if (!window._monacoEditor) {
+          window._monacoModels = window._monacoModels || {};
+          const uri = monaco.Uri.file(path);
+          let model = monaco.editor.getModel(uri);
+          if (!model) model = monaco.editor.createModel(text, lang, uri);
+          window._monacoModels[path] = model;
+          window._monacoEditor = monaco.editor.create(mount, {
+            model,
+            theme: document.body.classList.contains('theme-dark') ? 'vs-dark' : 'vs',
+            automaticLayout: true,
+            fontSize: 13,
+            minimap: { enabled: false },
+          });
+          window._monacoEditor.onDidChangeCursorPosition(() => updateStatusBar(path));
+          window._monacoEditor.onDidChangeModelContent(() => {
+            if (window._mermaidTimer) clearTimeout(window._mermaidTimer);
+            window._mermaidTimer = setTimeout(()=> updateMermaidPreview(window._monacoEditor.getValue()), 300);
+          });
+        } else {
+          const uri = monaco.Uri.file(path);
+          let model = monaco.editor.getModel(uri);
+          if (!model) model = monaco.editor.createModel(text, lang, uri);
+          window._monacoEditor.setModel(model);
+        }
+        App.state = App.state || {}; App.state.currentFile = path;
+        ensureCodeTab(path);
+        updateStatusBar(path);
+        updateMermaidPreview(window._monacoEditor.getValue());
       }
+      // Load Monaco via AMD loader (local path if available, else CDN)
+      if (typeof monaco === 'undefined') {
+        if (typeof require !== 'undefined') {
+          try { require.config({ paths: { 'vs': './js/vendor/monaco/min/vs' } }); } catch {}
+          try { require(['vs/editor/editor.main'], createEditor); }
+          catch (e) {
+            try { require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } }); } catch {}
+            require(['vs/editor/editor.main'], createEditor);
+          }
+        } else {
+          mount.textContent = text;
+        }
+      } else { createEditor(); }
     } catch (e) { App.log('Editor error: ' + e); }
   }
 
@@ -144,10 +204,10 @@ window.App = window.App || {};
     panel.innerHTML = '';
     const mk = (title, items) => {
       const h = document.createElement('div'); h.className = 'font-semibold mb-1'; h.textContent = title; panel.appendChild(h);
-      if (!items.length) { const em=document.createElement('div'); em.className='text-gray-500 mb-2'; em.textContent='(none)'; panel.appendChild(em); return; }
+      if (!items.length) { const em=document.createElement('div'); em.className='text-muted mb-2'; em.textContent='(none)'; panel.appendChild(em); return; }
       items.forEach(p => {
         const row = document.createElement('div'); row.className='truncate mb-1 flex items-center gap-2';
-        const btn = document.createElement('button'); btn.className='text-indigo-600 hover:underline text-left truncate'; btn.textContent = p.split(/[\\/]/).pop(); btn.title = p; btn.onclick = () => openFileInEditor(p);
+        const btn = document.createElement('button'); btn.className='text-primary hover:underline text-left truncate'; btn.textContent = p.split(/[\\/]/).pop(); btn.title = p; btn.onclick = () => openFileInEditor(p);
         row.appendChild(btn); panel.appendChild(row);
       });
     };
@@ -176,15 +236,45 @@ window.App = window.App || {};
     const newLines = (newText||'').split('\n');
     const minus = oldLines.map(l => '-' + l).join('\n');
     const plus = newLines.map(l => '+' + l).join('\n');
-    return *** Begin Patch\n*** Update File: \n@@\n\n\n*** End Patch;
-  }function guessMode(path) {
+    return `*** Begin Patch\n*** Update File: ${rel}\n@@\n${minus}\n${plus}\n*** End Patch`;
+  }
+  function guessMode(path) {
     const p = (path||'').toLowerCase();
     if (p.endsWith('.md') || p.endsWith('.markdown')) return 'markdown';
-    if (p.endsWith('.ts') || p.endsWith('.tsx')) return 'javascript';
+    if (p.endsWith('.ts') || p.endsWith('.tsx')) return 'typescript';
     if (p.endsWith('.js') || p.endsWith('.mjs') || p.endsWith('.cjs')) return 'javascript';
     if (p.endsWith('.json')) return {name:'javascript', json:true};
     if (p.endsWith('.sh') || p.endsWith('.bash')) return 'shell';
+    if (p.endsWith('.py')) return 'python';
+    if (p.endsWith('.yml') || p.endsWith('.yaml')) return 'yaml';
+    if (p.endsWith('.toml')) return 'toml';
+    if (p.endsWith('.ini') || p.endsWith('.cfg')) return 'ini';
+    if (p.endsWith('.html') || p.endsWith('.htm')) return 'html';
+    if (p.endsWith('.css')) return 'css';
+    if (p.endsWith('.xml')) return 'xml';
+    if (p.endsWith('.rs')) return 'rust';
+    if (p.endsWith('.go')) return 'go';
+    if (p.endsWith('.java')) return 'java';
+    if (p.endsWith('.kt') || p.endsWith('.kts')) return 'kotlin';
+    if (p.endsWith('.cs')) return 'csharp';
+    if (p.endsWith('.php')) return 'php';
+    if (p.endsWith('.rb')) return 'ruby';
+    if (p.endsWith('.sql')) return 'sql';
+    if (p.endsWith('.ps1')) return 'powershell';
     return 'markdown';
+  }
+
+  function updateStatusBar(path) {
+    const p = App.qs('#statusPath'); const i = App.qs('#statusInfo');
+    if (p) p.textContent = path || '';
+    if (i && window._monacoEditor) {
+      const pos = window._monacoEditor.getPosition();
+      const model = window._monacoEditor.getModel();
+      let eol = model && model.getEOL && model.getEOL();
+      eol = eol === '\r\n' ? 'CRLF' : 'LF';
+      const lang = model && model.getLanguageId ? model.getLanguageId() : 'text';
+      i.textContent = `Ln ${pos.lineNumber}, Col ${pos.column} â€¢ ${lang} â€¢ ${eol}`;
+    }
   }
 
   // --- Code tabs & Save ---------------------------------------------------
@@ -196,16 +286,16 @@ window.App = window.App || {};
     if (!existing) {
       const pill = document.createElement('div');
       pill.dataset.path = path;
-      pill.className = 'flex items-center gap-1 px-2 py-1 rounded bg-gray-100 cursor-pointer hover:bg-gray-200';
-      pill.innerHTML = `<span class="truncate max-w-[200px]" title="${path}">${title}</span><button class="text-gray-500 hover:text-red-600" title="Close" data-close>×</button>`;
+      pill.className = 'flex items-center gap-1 px-2 py-1 rounded bg-surface-2 cursor-pointer';
+      pill.innerHTML = `<span class="truncate max-w-[200px]" title="${path}">${title}</span><button class="text-muted hover:text-danger" title="Close" data-close>Ã—</button>`;
       pill.onclick = (e) => { if ((e.target).dataset.close) return; openFileInEditor(path); };
       pill.querySelector('[data-close]').onclick = (e) => { e.stopPropagation(); pill.remove(); if (App.state.currentFile === path) App.state.currentFile = null; };
       tabs.appendChild(pill);
     }
     // Activate current
-    tabs.querySelectorAll('[data-path]').forEach(el => el.classList.remove('bg-indigo-600','text-white'));
+    tabs.querySelectorAll('[data-path]').forEach(el => el.classList.remove('tab-active'));
     existing = Array.from(tabs.querySelectorAll('[data-path]')).find(e => e.dataset.path === path);
-    if (existing) existing.classList.add('bg-indigo-600','text-white');
+    if (existing) existing.classList.add('tab-active');
     // persist recent
     try { App.backend.add_recent_file(path); } catch {}
   }
@@ -215,6 +305,21 @@ window.App = window.App || {};
     App.log('UI ready');
     App.initChannel();
     App.initSettings();
+    // Theme init
+    (function initTheme(){
+      try {
+        const stored = localStorage.getItem('aiw_theme');
+        let theme = stored || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.body.classList.toggle('theme-dark', theme === 'dark');
+        const btn = App.qs('#themeToggle'); if (btn) btn.onclick = () => {
+          const cur = document.body.classList.contains('theme-dark') ? 'dark' : 'light';
+          const next = cur === 'dark' ? 'light' : 'dark';
+          document.body.classList.toggle('theme-dark', next === 'dark');
+          localStorage.setItem('aiw_theme', next);
+          try { App.applyAutoContrast && App.applyAutoContrast(); } catch {}
+        };
+      } catch {}
+    })();
     const start = App.qs('#startBtn'); if (start) start.onclick = () => App.backend.start_backend();
     const stop = App.qs('#stopBtn'); if (stop) stop.onclick = () => App.backend.stop_backend();
     const login = App.qs('#loginBtn'); if (login) login.onclick = () => App.backend.login('');
@@ -222,7 +327,7 @@ window.App = window.App || {};
       if (App._toolsRefreshing) return;
       App._toolsRefreshing = true;
       refreshTools.disabled = true;
-      refreshTools.textContent = 'Refreshing…';
+      refreshTools.textContent = 'Refreshingâ€¦';
       refreshTools.classList.add('opacity-50','cursor-not-allowed');
       try { App.backend.list_mcp_tools(); } catch { /* noop */ }
     };
@@ -234,7 +339,7 @@ window.App = window.App || {};
         const item = document.createElement('div');
         item.className = 'flex items-center justify-between text-sm py-1 border-b last:border-0';
         item.innerHTML = `<div class=\"truncate pr-2\" title=\"${name}\">${name}</div>`+
-          `<button class=\"px-2 py-0.5 bg-gray-100 rounded hover:bg-gray-200\" data-tool=\"${name}\">Prompt</button>`;
+          `<button class=\"px-2 py-0.5 btn-muted\" data-tool=\"${name}\">Prompt</button>`;
         item.querySelector('button').onclick = () => {
           const prompt = `Please use the MCP tool \`${name}\` with appropriate parameters to accomplish the task.`;
           App.ui.addMsg('user', prompt);
@@ -251,12 +356,39 @@ window.App = window.App || {};
     const saveFile = App.qs('#saveFile'); if (saveFile) saveFile.onclick = async () => {
       try {
         const path = App.state?.currentFile; if (!path) { App.log('No file selected'); return; }
-        const content = window._cm ? window._cm.getValue() : '';
+        const content = window._monacoEditor ? window._monacoEditor.getValue() : '';
         const res = JSON.parse(await App.backend.write_file(path, content));
         if (res.ok) App.log('Saved: ' + path); else App.log('Save failed: ' + (res.error||'unknown'));
       } catch (e) { App.log('Save error: ' + e); }
     };
     const saveWithApproval = App.qs('#saveWithApproval'); if (saveWithApproval) saveWithApproval.onclick = () => App.openSaveApproval && App.openSaveApproval();
+    const saveApproveBtn = App.qs('#saveApproveBtn');
+    const saveCancelBtn = App.qs('#saveCancelBtn');
+    const saveMeta = App.qs('#saveMeta');
+    const saveModal = App.qs('#saveModal');
+    App.openSaveApproval = async function() {
+      try {
+        const path = App.state?.currentFile; if (!path) { App.log('No file selected'); return; }
+        const oldRes = JSON.parse(await App.backend.read_file(path));
+        if (!oldRes.ok) { App.log('Read failed: ' + (oldRes.error||'unknown')); return; }
+        const oldText = oldRes.content || '';
+        const newText = window._monacoEditor ? window._monacoEditor.getValue() : '';
+        const patch = buildApplyPatch(path, oldText, newText);
+        App._pendingSave = { path, newText };
+        if (saveMeta) saveMeta.textContent = path;
+        const box = App.qs('#savePreview'); if (box) box.textContent = patch;
+        if (saveModal) { saveModal.classList.remove('hidden'); saveModal.classList.add('flex'); }
+      } catch (e) { App.log('Save (approval) error: ' + e); }
+    };
+    if (saveApproveBtn) saveApproveBtn.onclick = async () => {
+      try {
+        const p = App._pendingSave; if (!p) return;
+        const res = JSON.parse(await App.backend.write_file(p.path, p.newText));
+        if (res.ok) App.toast ? App.toast('Saved: ' + p.path) : App.log('Saved: ' + p.path); else App.toast ? App.toast('Save failed: ' + (res.error||'unknown')) : App.log('Save failed');
+      } catch (e) { App.toast ? App.toast('Save error: ' + e) : App.log('Save error: ' + e); }
+      finally { if (saveModal) { saveModal.classList.add('hidden'); saveModal.classList.remove('flex'); } App._pendingSave = null; }
+    };
+    if (saveCancelBtn) saveCancelBtn.onclick = () => { if (saveModal) { saveModal.classList.add('hidden'); saveModal.classList.remove('flex'); } App._pendingSave = null; };
     bindApprovals(); whenBackendReady(listDir);
     // Restore recent tabs
     whenBackendReady(async () => {
@@ -283,26 +415,26 @@ window.App = window.App || {};
     if (tabChat && tabGraph && tabCode && chatPane && graphPane && codePane) {
       tabChat.onclick = () => {
         App.log('Switching to Chat');
-        tabChat.classList.add('bg-indigo-600','text-white'); tabChat.classList.remove('bg-gray-200');
-        tabGraph.classList.remove('bg-indigo-600','text-white'); tabGraph.classList.add('bg-gray-200');
-        tabCode.classList.remove('bg-indigo-600','text-white'); tabCode.classList.add('bg-gray-200');
+      tabChat.classList.add('tab-active'); tabChat.classList.remove('tab-inactive');
+      tabGraph.classList.remove('tab-active'); tabGraph.classList.add('tab-inactive');
+      tabCode.classList.remove('tab-active'); tabCode.classList.add('tab-inactive');
         chatPane.classList.remove('hidden'); graphPane.classList.add('hidden'); codePane.classList.add('hidden');
         [refreshGraph, graphSearch, graphLayout, graphFit].forEach(el => el && el.classList.add('hidden'));
       };
       tabGraph.onclick = () => {
         App.log('Switching to Graph');
-        tabGraph.classList.add('bg-indigo-600','text-white'); tabGraph.classList.remove('bg-gray-200');
-        tabChat.classList.remove('bg-indigo-600','text-white'); tabChat.classList.add('bg-gray-200');
-        tabCode.classList.remove('bg-indigo-600','text-white'); tabCode.classList.add('bg-gray-200');
+      tabGraph.classList.add('tab-active'); tabGraph.classList.remove('tab-inactive');
+      tabChat.classList.remove('tab-active'); tabChat.classList.add('tab-inactive');
+      tabCode.classList.remove('tab-active'); tabCode.classList.add('tab-inactive');
         chatPane.classList.add('hidden'); graphPane.classList.remove('hidden'); codePane.classList.add('hidden');
         [refreshGraph, graphSearch, graphLayout, graphFit].forEach(el => el && el.classList.remove('hidden'));
         whenBackendReady(buildGraph);
       };
       tabCode.onclick = () => {
         App.log('Switching to Code');
-        tabCode.classList.add('bg-indigo-600','text-white'); tabCode.classList.remove('bg-gray-200');
-        tabChat.classList.remove('bg-indigo-600','text-white'); tabChat.classList.add('bg-gray-200');
-        tabGraph.classList.remove('bg-indigo-600','text-white'); tabGraph.classList.add('bg-gray-200');
+      tabCode.classList.add('tab-active'); tabCode.classList.remove('tab-inactive');
+      tabChat.classList.remove('tab-active'); tabChat.classList.add('tab-inactive');
+      tabGraph.classList.remove('tab-active'); tabGraph.classList.add('tab-inactive');
         chatPane.classList.add('hidden'); graphPane.classList.add('hidden'); codePane.classList.remove('hidden');
         [refreshGraph, graphSearch, graphLayout, graphFit].forEach(el => el && el.classList.add('hidden'));
       };
@@ -318,6 +450,94 @@ window.App = window.App || {};
         });
       };
     }
+
+    // Resizers: persist left/center/right widths
+    (function initResizers(){
+      const grid = App.qs('#mainGrid'); if (!grid) return;
+      function setCols(l,c,r){ grid.style.gridTemplateColumns = `${l} 6px ${c} 6px ${r}`; }
+      function columnGapPx(){ const cs = window.getComputedStyle(grid); const g = parseFloat(cs.columnGap||'0'); return isNaN(g)?0:g; }
+      function availablePx(){
+        const resizers = 12; // two resizers
+        const gaps = columnGapPx() * 4; // five tracks -> four gaps
+        return Math.max(0, grid.clientWidth - resizers - gaps);
+      }
+      function normalizePxColumns(){
+        const parts = grid.style.gridTemplateColumns.split(' 6px ');
+        if (parts.length!==3) return;
+        const toPx = (v)=> v.endsWith('px') ? parseFloat(v) : NaN;
+        let L = toPx(parts[0]), C = toPx(parts[1]), R = toPx(parts[2]);
+        if ([L,C,R].some(x=>isNaN(x))) return; // only normalize px-defined layouts
+        const minL = 240, minC = 480, minR = 260;
+        const avail = availablePx();
+        const total = L + C + R;
+        if (total <= 0 || avail <= 0) return;
+        let scale = avail / total;
+        let l = Math.max(minL, Math.round(L * scale));
+        let c = Math.max(minC, Math.round(C * scale));
+        let r = Math.max(minR, Math.round(R * scale));
+        let sum = l + c + r;
+        if (sum > avail) {
+          let over = sum - avail;
+          const trim = (cur, min)=>{ const d = Math.min(over, Math.max(0, cur-min)); over -= d; return cur - d; };
+          c = trim(c, minC);
+          r = trim(r, minR);
+          l = trim(l, minL);
+        }
+        setCols(`${l}px`, `${c}px`, `${r}px`);
+      }
+      function loadCols(){
+        try { App.backend.get_layout_state().then(s=>{ const j=JSON.parse(s); if(j.ok && j.state){ const st=j.state; setCols(st.left||'1fr', st.center||'2fr', st.right||'1fr'); normalizePxColumns(); } else { initPx(); } }); } catch{ initPx(); }
+      }
+      function saveCols(){
+        const parts = grid.style.gridTemplateColumns.split(' 6px ');
+        if (parts.length===3) {
+          const payload = JSON.stringify({ left: parts[0].trim(), center: parts[1].trim(), right: parts[2].trim() });
+          try { App.backend.set_layout_state(payload); } catch{}
+        }
+      }
+      function makeDraggable(resizer, leftIdx){
+        if (!resizer) return;
+        let startX, startLeft, startCenter;
+        const onMove = (e)=>{
+          const dx = e.clientX - startX;
+          const parts = grid.style.gridTemplateColumns.split(' 6px ');
+          const left = parseFloat(startLeft), center = parseFloat(startCenter);
+          const newLeft = Math.max(220, left + dx);
+          const newCenter = Math.max(320, center - dx);
+          parts[leftIdx] = `${newLeft}px`;
+          parts[leftIdx+1] = `${newCenter}px`;
+          setCols(parts[0], parts[1], parts[2]);
+        };
+        const onUp = ()=>{ document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); saveCols(); };
+        resizer.addEventListener('pointerdown', (e)=>{
+          const cols = window.getComputedStyle(grid).gridTemplateColumns.split(' 6px ');
+          startX = e.clientX; startLeft = cols[leftIdx].replace('px',''); startCenter = cols[leftIdx+1].replace('px','');
+          document.addEventListener('pointermove', onMove); document.addEventListener('pointerup', onUp);
+        });
+      }
+      const rl = App.qs('#resizerLeft'); const rr = App.qs('#resizerRight');
+      // Initialize default px widths for smooth dragging, then load saved
+      const initPx = ()=>{
+        const w = availablePx();
+        const minL = 240, minC = 480, minR = 260;
+        let l = Math.max(minL, Math.round(w*0.22));
+        let c = Math.max(minC, Math.round(w*0.56));
+        let r = Math.max(minR, Math.round(w*0.22));
+        let sum = l + c + r;
+        if (sum > w) {
+          let over = sum - w;
+          const trim = (cur, min)=>{ const d = Math.min(over, Math.max(0, cur-min)); over -= d; return cur - d; };
+          c = trim(c, minC);
+          r = trim(r, minR);
+          l = trim(l, minL);
+        }
+        setCols(`${l}px`, `${c}px`, `${r}px`);
+      };
+      initPx(); loadCols();
+      makeDraggable(rl, 0);
+      makeDraggable(rr, 1);
+      window.addEventListener('resize', ()=>{ normalizePxColumns(); saveCols(); });
+    })();
   });
 })();
 

@@ -1,0 +1,103 @@
+/* Centralized theme tokens and UI primitives */
+:root {
+  --bg: #f8fafc;
+  --text: #0f172a;
+  --muted: #64748b;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --border: #e2e8f0;
+  --primary: #4f46e5;
+  --primary-700: #4338ca;
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #e11d48;
+  --shadow: 0 1px 2px rgba(15,23,42,0.06), 0 1px 3px rgba(15,23,42,0.10);
+  --radius: 8px;
+  --terminal-bg: #0b1220;
+  --terminal-fg: #d1fae5;
+  --on-primary: #ffffff;
+  --on-success: #ffffff;
+  --on-warning: #ffffff;
+  --on-danger: #ffffff;
+  --on-accent: #ffffff;
+  --on-surface: var(--text);
+  --overlay: rgba(15,23,42,0.35);
+  --highlight: rgba(217,119,6,0.12); /* based on --warning */
+}
+body.theme-dark {
+  --bg: #0b1220;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --surface: #0f172a;
+  --surface-2: #0b1220;
+  --border: #1e293b;
+  --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 1px 3px rgba(0,0,0,0.45);
+  --terminal-bg: #0a0f1a;
+  --terminal-fg: #a7f3d0;
+  --overlay: rgba(0,0,0,0.4);
+  --highlight: rgba(217,119,6,0.18);
+  --on-primary: #ffffff;
+  --on-success: #ffffff;
+  --on-warning: #ffffff;
+  --on-danger: #ffffff;
+  --on-accent: #ffffff;
+}
+
+html, body { height: 100%; }
+body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); margin: 0; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }
+.scroll { overflow: auto; }
+/* Layout heights: grid fills viewport minus header; panes fill grid */
+#mainGrid { height: calc(100vh - var(--header-h, 64px)); }
+.pane { height: 100%; }
+/* Editors / mounts */
+#editorMountCenter, #graphMount { height: 100%; }
+.CodeMirror { height: 100% !important; }
+
+/* Common surfaces */
+.surface { background: var(--surface) !important; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.bg-surface-2 { background: var(--surface-2) !important; }
+.terminal { background: var(--terminal-bg) !important; color: var(--terminal-fg) !important; }
+.panel-header { color: var(--text); font-weight: 600; font-size: 0.95rem; }
+.resizer { background: var(--border); cursor: col-resize; width: 6px; }
+.resizer:hover { background: #cbd5e1; }
+.app-header { background: var(--primary); color: var(--on-primary); }
+.overlay { background: var(--overlay); }
+.bg-highlight { background: var(--highlight) !important; }
+
+/* Status indicator dots */
+.status-dot { width: 10px; height: 10px; border-radius: 9999px; display: inline-block; background: var(--danger); }
+.status-connected { background: var(--success) !important; }
+.status-connecting { background: var(--warning) !important; }
+.status-disconnected { background: var(--danger) !important; }
+
+/* Buttons */
+.btn { border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+.btn-primary { background: var(--primary); color: var(--on-primary); }
+.btn-primary:hover { background: var(--primary-700); }
+.btn-ghost { background: var(--surface-2); color: #728a0aa6; }
+.btn-muted { background: var(--surface-2); color: var(--text); }
+.btn-success { background: var(--success); color: var(--on-success); }
+.btn-warning { background: var(--warning); color: var(--on-warning); }
+.btn-danger { background: var(--danger); color: var(--on-danger); }
+
+/* Text helpers */
+.text-primary { color: var(--primary) !important; }
+.text-muted { color: var(--muted) !important; }
+.text-danger { color: var(--danger) !important; }
+
+/* Tabs */
+.tab-active { background: var(--primary) !important; color: #fff !important; }
+.tab-inactive { background: var(--surface-2) !important; color: var(--text) !important; }
+
+/* Header-specific tweaks */
+.app-header .btn-ghost { color: var(--on-primary); }
+
+/* Form accents */
+input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
+
+/* Text tokens */
+.text-inverse { color: var(--on-accent) !important; }
+
+/* Soft text utility for secondary text tinting */
+.text-soft { opacity: 0.9; }
