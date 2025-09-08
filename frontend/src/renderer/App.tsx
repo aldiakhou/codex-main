@@ -1,8 +1,13 @@
 import React, { useState } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { BackendProvider } from './contexts/BackendContext';
 import Header from './components/Header';
 import ChatInterface from './components/ChatInterface';
 import DiffModal from './components/DiffModal';
+import SettingsModal from './components/SettingsModal';
+import ExecApprovalModal from './components/ExecApprovalModal';
+import PatchApprovalModal from './components/PatchApprovalModal';
+import ChatMessages from './components/ChatMessages';
 
 // Workspace Components
 import DashboardWorkspace from './components/workspaces/DashboardWorkspace';
@@ -12,13 +17,17 @@ import FilesWorkspace from './components/workspaces/FilesWorkspace';
 import PlannerWorkspace from './components/workspaces/PlannerWorkspace';
 import TerminalWorkspace from './components/workspaces/TerminalWorkspace';
 import ToolsWorkspace from './components/workspaces/ToolsWorkspace';
+import ChatWorkspace from './components/workspaces/ChatWorkspace';
 
 const AppContent: React.FC = () => {
   const [activeWorkspace, setActiveWorkspace] = useState('dashboard');
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const renderWorkspace = () => {
     switch (activeWorkspace) {
+      case 'chat':
+        return <ChatWorkspace />;
       case 'dashboard':
         return <DashboardWorkspace />;
       case 'agents':
@@ -44,6 +53,7 @@ const AppContent: React.FC = () => {
       <Header 
         activeWorkspace={activeWorkspace} 
         onWorkspaceChange={setActiveWorkspace} 
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
       
       {/* Main Content */}
@@ -54,14 +64,14 @@ const AppContent: React.FC = () => {
         </main>
       </div>
       
-      {/* Chat Interface */}
-      <ChatInterface />
-      
-      {/* Diff Modal */}
+      {/* Modals */}
       <DiffModal 
         isOpen={isDiffModalOpen} 
         onClose={() => setIsDiffModalOpen(false)} 
       />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <ExecApprovalModal />
+      <PatchApprovalModal />
     </div>
   );
 };
@@ -69,7 +79,9 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ThemeProvider>
-      <AppContent />
+      <BackendProvider>
+        <AppContent />
+      </BackendProvider>
     </ThemeProvider>
   );
 };

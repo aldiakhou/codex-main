@@ -1,9 +1,14 @@
 import React from 'react';
+import { useBackend } from '../../contexts/BackendContext';
 
 const ToolsWorkspace: React.FC = () => {
+  const { status, logs } = useBackend();
   return (
     <div className="flex-1 p-12 overflow-y-auto">
-      <h1 className="text-2xl font-bold mb-4">Tools & MCP Servers</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold">Tools & MCP Servers</h1>
+        <div className="text-sm text-[var(--text-secondary)]">Backend: {status}</div>
+      </div>
       <p className="text-[var(--text-secondary)] mb-8">
         Connect and manage your AI tools and Model Context Protocol servers.
       </p>
@@ -31,6 +36,14 @@ const ToolsWorkspace: React.FC = () => {
           <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-[var(--warning)] bg-yellow-200">
             Pending
           </span>
+        </div>
+      </div>
+      <div className="mt-8">
+        <h2 className="text-lg font-semibold mb-2">Recent Backend Activity</h2>
+        <div className="border border-[var(--border)] rounded bg-[var(--bg-secondary)] p-2 max-h-48 overflow-auto font-mono text-xs">
+          {logs.slice(-100).map((l, i) => (
+            <div key={i} className="whitespace-pre-wrap">{l}</div>
+          ))}
         </div>
       </div>
     </div>

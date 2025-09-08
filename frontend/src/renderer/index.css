@@ -8,6 +8,10 @@
 @import '@fontsource/inter/600.css';
 @import '@fontsource/inter/700.css';
 @import '@fontsource/inter/800.css';
+/* diff2html styles */
+@import 'diff2html/bundles/css/diff2html.min.css';
+/* highlight.js theme */
+@import 'highlight.js/styles/github-dark.css';
 
 @tailwind base;
 @tailwind components;
@@ -1857,3 +1861,6 @@ body {
     animation: none;
   }
 }
+
+
+

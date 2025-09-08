@@ -1,5 +1,6 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import * as path from 'path';
+import { BackendService } from './main/backend';
 
 // Vite constants declarations
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -10,9 +11,32 @@ if (require('electron-squirrel-startup')) {
   app.quit();
 }
 
+let mainWindow: BrowserWindow | null = null;
+const backend = new BackendService();
+
+const wireBackendIpc = () => {
+  ipcMain.handle('aiw:start', (_e, opts) => backend.start(opts));
+  ipcMain.handle('aiw:stop', () => backend.stop());
+  ipcMain.handle('aiw:login', (_e, apiKey?: string) => backend.login(apiKey));
+  ipcMain.handle('aiw:userTurn', (_e, params) => backend.userTurn(params));
+  ipcMain.handle('aiw:interrupt', () => backend.interrupt());
+  ipcMain.handle('aiw:execApproval', (_e, id: string, decision: string) => backend.execApproval(id, decision));
+  ipcMain.handle('aiw:patchApproval', (_e, id: string, decision: string) => backend.patchApproval(id, decision));
+  ipcMain.handle('aiw:setCodexPath', (_e, codexPath: string) => backend.saveCodexPath(codexPath));
+  ipcMain.handle('aiw:getHistory', () => backend.getHistory());
+
+  const send = (ch: string, payload: any) => {
+    if (mainWindow) mainWindow.webContents.send(ch, payload);
+  };
+  backend.on('event', (e) => send('aiw:event', e));
+  backend.on('status', (s) => send('aiw:status', s));
+  backend.on('log', (m) => send('aiw:log', m));
+  backend.on('error', (m) => send('aiw:error', m));
+};
+
 const createWindow = (): void => {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     height: 900,
     width: 1400,
     webPreferences: {
@@ -45,7 +69,10 @@ const createWindow = (): void => {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow);
+app.on('ready', () => {
+  wireBackendIpc();
+  createWindow();
+});
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

@@ -44,7 +44,11 @@
     "@fontsource/inter": "^5.2.6",
     "@tabler/icons-react": "^3.34.1",
     "electron-squirrel-startup": "^1.0.0",
+    "diff2html": "^3.4.47",
     "framer-motion": "^12.23.12",
+    "react-markdown": "^9.0.3",
+    "remark-gfm": "^4.0.0",
+    "highlight.js": "^11.9.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   }

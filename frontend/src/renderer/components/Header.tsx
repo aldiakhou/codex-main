@@ -6,12 +6,18 @@ import { IconSun, IconMoon, IconSettings } from '@tabler/icons-react';
 interface HeaderProps {
   activeWorkspace: string;
   onWorkspaceChange: (workspaceId: string) => void;
+  onOpenSettings?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange }) => {
+const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onOpenSettings }) => {
   const { theme, toggleTheme } = useTheme();
 
   const workspaces = [
+    { 
+      id: 'chat', 
+      label: 'Chat', 
+      icon: 'M8 10h8M8 14h5M21 12c0 4.418-4.477 8-10 8a11.94 11.94 0 01-4-.7L3 20l.7-3.001A7.96 7.96 0 013 12c0-4.418 4.477-8 10-8s10 3.582 10 8z' 
+    },
     { 
       id: 'dashboard', 
       label: 'Dashboard', 
@@ -164,6 +170,7 @@ const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange }) =
           className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors p-2 rounded-lg glass-button btn-elastic interactive-icon border-gradient-aurora"
           whileHover={{ scale: 1.1, rotate: 90, backgroundColor: 'var(--bg-secondary)' }}
           whileTap={{ scale: 0.9 }}
+          onClick={() => onOpenSettings && onOpenSettings()}
         >
           <IconSettings className="w-6 h-6 text-gradient-cosmic" />
         </motion.button>
