@@ -15,7 +15,7 @@ const ChatMessages: React.FC = () => {
   const filtered = useMemo(() => messages.filter(m => m.role !== 'reasoning' || chatParams.showReasoning), [messages, chatParams.showReasoning]);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-2 space-y-4 overflow-y-auto" style={{ maxHeight: '40vh' }}>
+    <div className="max-w-4xl mx-auto px-4 py-2 space-y-4">
       {filtered.map((m) => (
         <div key={m.id} className={`rounded-lg p-3 border ${m.role === 'reasoning' ? 'bg-yellow-500/10 border-yellow-500/30' : m.role === 'tool' ? 'bg-blue-500/10 border-blue-500/30' : m.role === 'system' ? 'bg-gray-500/10 border-gray-500/30' : 'bg-[var(--bg-secondary)] border-[var(--border)]'}`}>
           <div className="text-xs text-[var(--text-tertiary)] mb-1 uppercase tracking-wide flex items-center gap-2 justify-between">

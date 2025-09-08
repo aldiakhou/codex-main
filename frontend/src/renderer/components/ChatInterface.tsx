@@ -1,11 +1,34 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useBackend } from '../contexts/BackendContext';
 import ChatControls from './ChatControls';
 
 const ChatInterface: React.FC = () => {
-  const { status, userTurn, login, start, logs, draftMessage, setDraftMessage, chatParams } = useBackend();
+  const { status, userTurn, login, start, logs, draftMessage, setDraftMessage, chatParams, setChatParams } = useBackend();
   const connected = status === 'connected';
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showCwdEditor, setShowCwdEditor] = useState(false);
+  const [cwdInput, setCwdInput] = useState<string>(chatParams.cwd || '');
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Keyboard shortcut: Ctrl/Cmd+I focuses composer
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'i')) {
+        e.preventDefault();
+        taRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const modelChipClass = (() => {
+    const m = (chatParams.model || '').toLowerCase();
+    if (m.startsWith('gpt')) return 'bg-violet-500/20 border-violet-500/40 text-violet-200';
+    if (m.startsWith('o')) return 'bg-blue-500/20 border-blue-500/40 text-blue-200';
+    if (m.includes('llama') || m.includes('mistral') || m.includes('gemma')) return 'bg-green-500/20 border-green-500/40 text-green-200';
+    return 'bg-[var(--bg-tertiary)] border-[var(--border)]';
+  })();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,27 +56,66 @@ const ChatInterface: React.FC = () => {
         <form onSubmit={handleSubmit}>
           {/* Parameter bar inside composer */}
           <div className="flex items-center flex-wrap gap-2 mb-2 text-xs">
-            <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Model: <strong className="ml-1">{chatParams.model}</strong></div>
+            <div className={`px-2 py-1 rounded-full border ${modelChipClass} flex items-center gap-2`}>
+              <span>Model:</span>
+              <select
+                value={chatParams.model}
+                onChange={(e)=>setChatParams({ model: e.target.value })}
+                className="bg-transparent border-none outline-none text-[var(--text-primary)] text-xs"
+              >
+                <option value="gpt-5">gpt-5</option>
+                <option value="o3">o3</option>
+                <option value="o4-mini">o4-mini</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+              </select>
+            </div>
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Sandbox: <strong className="ml-1">{chatParams.sandbox_mode}</strong></div>
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Effort: <strong className="ml-1">{chatParams.effort}</strong></div>
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Approval: <strong className="ml-1">{chatParams.approval_policy}</strong></div>
+            {/* Show/Hide Reasoning toggle */}
+            <button
+              type="button"
+              onClick={() => setChatParams({ showReasoning: !chatParams.showReasoning })}
+              className={`px-2 py-1 rounded-full border text-xs ${chatParams.showReasoning ? 'bg-green-500/20 border-green-500/40 text-green-300' : 'bg-[var(--bg-tertiary)] border-[var(--border)] text-[var(--text-secondary)]'}`}
+              title="Toggle reasoning visibility"
+            >
+              Reasoning: <strong className="ml-1">{chatParams.showReasoning ? 'on' : 'off'}</strong>
+            </button>
+
+            {/* CWD chip / editor toggle */}
             {chatParams.cwd ? (
-              <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">cwd: <strong className="ml-1">{chatParams.cwd}</strong></div>
-            ) : null}
+              <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2">
+                <span>cwd: <strong className="ml-1">{chatParams.cwd}</strong></span>
+                <button type="button" className="underline text-[var(--text-secondary)] hover:text-[var(--text-primary)]" onClick={()=>{ setCwdInput(chatParams.cwd || ''); setShowCwdEditor(s=>!s); }}>edit</button>
+                <button type="button" className="underline text-red-400 hover:text-red-300" onClick={()=> setChatParams({ cwd: undefined })}>clear</button>
+              </div>
+            ) : (
+              <button type="button" className="px-2 py-1 rounded-full bg-[var(--bg-secondary)] border border-[var(--border)]" onClick={()=> setShowCwdEditor(s=>!s)}>+ cwd</button>
+            )}
             <button type="button" className="ml-auto px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)]" onClick={()=>setShowAdvanced(v=>!v)}>{showAdvanced ? 'Hide' : 'Edit'}</button>
           </div>
+          {showCwdEditor && (
+            <div className="mb-2 p-2 border border-[var(--border)] rounded bg-[var(--bg-secondary)] flex items-center gap-2">
+              <input value={cwdInput} onChange={(e)=>setCwdInput(e.target.value)} placeholder="Working directory (absolute or project path)" className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-sm" />
+              <button type="button" className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-sm" onClick={()=>{ setChatParams({ cwd: cwdInput || undefined }); setShowCwdEditor(false); }}>Save</button>
+            </div>
+          )}
           {showAdvanced && (
             <div className="mb-2 border border-[var(--border)] rounded-lg bg-[var(--bg-secondary)]">
               <ChatControls />
             </div>
           )}
           <div className="relative">
-            <input
-              type="text"
+            <textarea
+              ref={taRef}
               value={draftMessage}
-              onChange={(e) => setDraftMessage(e.target.value)}
+              onChange={(e) => {
+                setDraftMessage(e.target.value);
+                const el = taRef.current; if (el) { el.style.height = 'auto'; const max = 6 * 24; const h = Math.min(el.scrollHeight, max); el.style.height = h + 'px'; }
+              }}
+              rows={2}
               placeholder={connected ? 'Delegate a task to Nexus AI...' : 'Starting backend...'}
-              className="w-full bg-[var(--bg-tertiary)] rounded-lg py-3 pl-4 pr-12 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] border border-[var(--border)]"
+              className="w-full bg-[var(--bg-tertiary)] rounded-lg py-3 pl-4 pr-12 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] border border-[var(--border)] resize-none leading-6"
               disabled={false}
             />
             <button

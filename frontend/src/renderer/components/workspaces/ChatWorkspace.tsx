@@ -21,7 +21,7 @@ const ChatWorkspace: React.FC = () => {
         <ChatToolCalls />
         <ChatMessages />
       </div>
-      <div className="mt-auto">
+      <div className="mt-6">
         <ChatInterface />
       </div>
     </div>
