@@ -210,14 +210,22 @@
         updateStatusBar(path);
         updateMermaidPreview(window._monacoEditor.getValue());
       }
-      // Load Monaco via AMD loader (local path if available, else CDN)
+      // Load Monaco via AMD loader (local path only) with single-boot guard
       if (typeof monaco === 'undefined') {
         if (typeof require !== 'undefined') {
-          try { require.config({ paths: { 'vs': './js/vendor/monaco/min/vs' } }); } catch {}
-          try { require(['vs/editor/editor.main'], createEditor); }
-          catch (e) {
-            try { require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } }); } catch {}
-            require(['vs/editor/editor.main'], createEditor);
+          if (!window.__monacoConfigured) {
+            try { require.config({ paths: { 'vs': './js/vendor/monaco/min/vs' } }); } catch {}
+            window.__monacoConfigured = true;
+          }
+          const boot = () => { try { createEditor(); } catch(e) { App.log('Editor init error: ' + e); } };
+          if (!window.__monacoLoading) {
+            window.__monacoLoading = true;
+            try { require(['vs/editor/editor.main'], () => { window.__monacoReady = true; boot(); }); }
+            catch(e) { App.log('Monaco require failed: ' + e); }
+          } else if (window.__monacoReady) {
+            boot();
+          } else {
+            const t = setInterval(()=>{ if (window.__monacoReady) { clearInterval(t); boot(); } }, 60);
           }
         } else {
           mount.textContent = text;
@@ -361,6 +369,44 @@
     const wmin = App.qs('#winMin'); if (wmin) wmin.onclick = () => { try { App.window && App.window.minimize(); } catch {} };
     const wmax = App.qs('#winMax'); if (wmax) wmax.onclick = () => { try { App.window && App.window.maximize_restore(); } catch {} };
     const wclose = App.qs('#winClose'); if (wclose) wclose.onclick = () => { try { App.window && App.window.close(); } catch {} };
+
+    // Enable dragging the frameless window by grabbing the app header background
+    const dragHost = App.qs('header.app-header');
+    if (dragHost) {
+      let lastX = 0, lastY = 0, dragging = false;
+      const isInteractive = (el)=> !!el && (el.closest('button,select,input,textarea,a,[role="button"]'));
+      const onMove = (e)=>{ if (!dragging) return; const dx = e.screenX - lastX, dy = e.screenY - lastY; lastX = e.screenX; lastY = e.screenY; try { App.window && App.window.move_by(dx, dy); } catch {} };
+      const onUp = ()=>{ dragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = ''; };
+      dragHost.addEventListener('mousedown', (e)=>{
+        if (isInteractive(e.target)) return; // don't start drag from controls
+        dragging = true; lastX = e.screenX; lastY = e.screenY; document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); document.body.style.cursor = 'move';
+      });
+    }
+
+    // Install window edge resizers for frameless mode
+    (function installWindowResizers(){
+      if (!App.window) return; // wait until channel binds window
+      const edges = [
+        { id:'edge-left',   edge:'left',        style:{ left:'0',   top:'0',    bottom:'0', width:'6px',  cursor:'ew-resize' } },
+        { id:'edge-right',  edge:'right',       style:{ right:'0',  top:'0',    bottom:'0', width:'6px',  cursor:'ew-resize' } },
+        { id:'edge-top',    edge:'top',         style:{ top:'0',    left:'0',   right:'0',  height:'6px', cursor:'ns-resize' } },
+        { id:'edge-bottom', edge:'bottom',      style:{ bottom:'0', left:'0',   right:'0',  height:'6px', cursor:'ns-resize' } },
+        { id:'edge-tl',     edge:'top-left',    style:{ top:'0',    left:'0',   width:'12px', height:'12px', cursor:'nwse-resize' } },
+        { id:'edge-tr',     edge:'top-right',   style:{ top:'0',    right:'0',  width:'12px', height:'12px', cursor:'nesw-resize' } },
+        { id:'edge-bl',     edge:'bottom-left', style:{ bottom:'0', left:'0',   width:'12px', height:'12px', cursor:'nesw-resize' } },
+        { id:'edge-br',     edge:'bottom-right',style:{ bottom:'0', right:'0',  width:'12px', height:'12px', cursor:'nwse-resize' } },
+      ];
+      const make = (cfg)=>{
+        const el = document.createElement('div');
+        el.dataset.edge = cfg.edge; el.id = cfg.id; el.style.position='fixed'; el.style.zIndex='80'; el.style.userSelect='none'; el.style.touchAction='none'; el.style.background='transparent';
+        Object.assign(el.style, cfg.style);
+        const onMove = (e)=>{ const dx = e.screenX - (el._lastX||e.screenX); const dy = e.screenY - (el._lastY||e.screenY); el._lastX = e.screenX; el._lastY = e.screenY; try { App.window && App.window.resize_edge(cfg.edge, dx, dy); } catch {} };
+        const onUp = ()=>{ document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = ''; };
+        el.addEventListener('mousedown', (e)=>{ el._lastX = e.screenX; el._lastY = e.screenY; document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); document.body.style.cursor = cfg.style.cursor; });
+        document.body.appendChild(el);
+      };
+      edges.forEach(make);
+    })();
     const refreshTools = App.qs('#refreshTools'); if (refreshTools) refreshTools.onclick = () => {
       if (App._toolsRefreshing) return;
       App._toolsRefreshing = true;

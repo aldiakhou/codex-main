@@ -2,12 +2,12 @@ import json
 import os
 import sys
 from pathlib import Path
-from PySide6.QtCore import QObject, Signal, Slot, QUrl
+from PySide6.QtCore import QObject, Signal, Slot, QUrl, Qt
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QColor
 import re
 from typing import Dict, Any
 
@@ -394,12 +394,64 @@ class WindowBridge(QObject):
         except Exception:
             pass
 
+    @Slot(int, int)
+    def move_by(self, dx: int, dy: int):
+        try:
+            g = self._win.geometry()
+            self._win.setGeometry(g.x() + int(dx), g.y() + int(dy), g.width(), g.height())
+        except Exception:
+            pass
+
+    @Slot(str, int, int)
+    def resize_edge(self, edge: str, dx: int, dy: int):
+        """Resize window by deltas from the specified edge (left/right/top/bottom and corners)."""
+        try:
+            g = self._win.geometry()
+            x, y, w, h = g.x(), g.y(), g.width(), g.height()
+            dx = int(dx); dy = int(dy)
+            min_w = max(720, self._win.minimumWidth())
+            min_h = max(480, self._win.minimumHeight())
+            edge = str(edge or '').lower()
+            if 'left' in edge:
+                new_x = x + dx
+                new_w = w - dx
+                if new_w < min_w:
+                    new_x = x + (w - min_w)
+                    new_w = min_w
+                x, w = new_x, new_w
+            if 'right' in edge:
+                new_w = w + dx
+                if new_w < min_w:
+                    new_w = min_w
+                w = new_w
+            if 'top' in edge:
+                new_y = y + dy
+                new_h = h - dy
+                if new_h < min_h:
+                    new_y = y + (h - min_h)
+                    new_h = min_h
+                y, h = new_y, new_h
+            if 'bottom' in edge:
+                new_h = h + dy
+                if new_h < min_h:
+                    new_h = min_h
+                h = new_h
+            self._win.setGeometry(x, y, w, h)
+        except Exception:
+            pass
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AI Workbench")
         self.resize(1400, 900)
+        # Frameless window with transparent background for custom chrome
+        try:
+            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+            self.setAttribute(Qt.WA_TranslucentBackground, True)
+        except Exception:
+            pass
 
         cfg = get_config_manager().config
         codex_path = cfg.backend.codex_path or "codex"
@@ -415,6 +467,13 @@ class MainWindow(QMainWindow):
         s.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
         s.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
         s.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
+        # Transparent page background so the app chrome blends
+        try:
+            self.webview.setAttribute(Qt.WA_TranslucentBackground, True)
+            self.webview.setStyleSheet("background: transparent;")
+            self.webview.page().setBackgroundColor(QColor(0, 0, 0, 0))
+        except Exception:
+            pass
 
         # WebChannel
         self.channel = QWebChannel(self.webview.page())
