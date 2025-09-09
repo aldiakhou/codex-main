@@ -15,6 +15,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use codex_mcp_client::McpClient;
+use mcp_types::JSONRPCNotification;
 use mcp_types::ClientCapabilities;
 use mcp_types::Implementation;
 use mcp_types::Tool;
@@ -45,13 +46,29 @@ const LIST_TOOLS_TIMEOUT: Duration = Duration::from_secs(30);
 /// spawned successfully.
 pub type ClientStartErrors = HashMap<String, anyhow::Error>;
 
+fn sanitize_component(input: &str) -> String {
+    // OpenAI tool names must match ^[a-zA-Z0-9_-]+$.
+    // Replace any disallowed character with '_'.
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
 fn qualify_tools(tools: Vec<ToolInfo>) -> HashMap<String, ToolInfo> {
     let mut used_names = HashSet::new();
     let mut qualified_tools = HashMap::new();
     for tool in tools {
+        // Sanitize the tool name component to satisfy OpenAI naming rules.
+        let safe_tool_name = sanitize_component(&tool.tool_name);
         let mut qualified_name = format!(
             "{}{}{}",
-            tool.server_name, MCP_TOOL_NAME_DELIMITER, tool.tool_name
+            tool.server_name, MCP_TOOL_NAME_DELIMITER, safe_tool_name
         );
         if qualified_name.len() > MAX_TOOL_NAME_LENGTH {
             let mut hasher = Sha1::new();
@@ -227,6 +244,16 @@ impl McpConnectionManager {
         self.tools
             .get(tool_name)
             .map(|tool| (tool.server_name.clone(), tool.tool_name.clone()))
+    }
+
+    /// Subscribe to server-initiated MCP notifications from all clients.
+    pub(crate) fn subscribe_notifications(
+        &self,
+    ) -> Vec<tokio::sync::broadcast::Receiver<JSONRPCNotification>> {
+        self.clients
+            .values()
+            .map(|c| c.subscribe_notifications())
+            .collect()
     }
 }
 

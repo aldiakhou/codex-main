@@ -138,7 +138,20 @@ const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
                   <button className="text-2xs underline text-[var(--text-tertiary)]" onClick={()=>toggle(m.id as string)}>{collapse[m.id as string] ? 'Hide thoughts' : 'Show thoughts'}</button>
                   {collapse[m.id as string] && (
                     <div className="mt-1 text-sm">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} linkTarget="_blank" linkRelationship="noreferrer noopener">{m.text}</ReactMarkdown>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a({ href, children, ...props }) {
+                            return (
+                              <a href={href} target="_blank" rel="noreferrer noopener" {...props}>
+                                {children}
+                              </a>
+                            );
+                          },
+                        }}
+                      >
+                        {m.text}
+                      </ReactMarkdown>
                     </div>
                   )}
                 </div>
@@ -146,9 +159,14 @@ const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
                 <div className="prose prose-invert max-w-none text-sm">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
-                    linkTarget="_blank"
-                    linkRelationship="noreferrer noopener"
                     components={{
+                      a({ href, children, ...props }) {
+                        return (
+                          <a href={href} target="_blank" rel="noreferrer noopener" {...props}>
+                            {children}
+                          </a>
+                        );
+                      },
                       code({node, inline, className, children, ...props}) {
                         const txt = String(children || '');
                         const langMatch = /language-(\w+)/.exec(className || '');

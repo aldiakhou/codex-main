@@ -46,6 +46,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::sync::broadcast;
 use tokio::time;
 use tracing::debug;
 use tracing::error;
@@ -76,6 +77,9 @@ pub struct McpClient {
 
     /// Monotonically increasing counter used to generate request IDs.
     id_counter: AtomicI64,
+
+    /// Broadcast channel carrying server-initiated notifications.
+    notify_tx: broadcast::Sender<JSONRPCNotification>,
 }
 
 impl McpClient {
@@ -129,6 +133,9 @@ impl McpClient {
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<JSONRPCMessage>(CHANNEL_CAPACITY);
         let pending: Arc<Mutex<HashMap<i64, PendingSender>>> = Arc::new(Mutex::new(HashMap::new()));
 
+        // Prepare notification channel for server-initiated notifications.
+        let (notify_tx, _notify_rx) = broadcast::channel::<JSONRPCNotification>(CHANNEL_CAPACITY);
+
         // Spawn writer task. It listens on the `outgoing_rx` channel and
         // writes messages to the child's STDIN.
         let writer_handle = {
@@ -159,6 +166,8 @@ impl McpClient {
         let reader_handle = {
             let pending = pending.clone();
             let mut lines = BufReader::new(stdout).lines();
+            // Clone sender for notifications
+            let notify_tx = notify_tx.clone();
 
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -170,9 +179,9 @@ impl McpClient {
                         Ok(JSONRPCMessage::Error(err)) => {
                             Self::dispatch_error(err, &pending).await;
                         }
-                        Ok(JSONRPCMessage::Notification(JSONRPCNotification { .. })) => {
-                            // For now we only log server-initiated notifications.
-                            info!("<- notification: {}", line);
+                        Ok(JSONRPCMessage::Notification(n)) => {
+                            // Broadcast notifications to interested subscribers.
+                            let _ = notify_tx.send(n);
                         }
                         Ok(other) => {
                             // Batch responses and requests are currently not
@@ -198,6 +207,7 @@ impl McpClient {
             outgoing_tx,
             pending,
             id_counter: AtomicI64::new(1),
+            notify_tx,
         })
     }
 
@@ -408,6 +418,11 @@ impl McpClient {
         if let Some(tx) = tx_opt {
             let _ = tx.send(JSONRPCMessage::Error(err));
         }
+    }
+
+    /// Subscribe to server-initiated notifications.
+    pub fn subscribe_notifications(&self) -> broadcast::Receiver<JSONRPCNotification> {
+        self.notify_tx.subscribe()
     }
 }
 

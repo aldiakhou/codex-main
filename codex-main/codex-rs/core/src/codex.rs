@@ -70,6 +70,7 @@ use crate::openai_tools::ToolsConfigParams;
 use crate::openai_tools::get_openai_tools;
 use crate::parse_command::parse_command;
 use crate::plan_tool::handle_update_plan;
+use codex_protocol::plan_tool::UpdatePlanArgs;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageDeltaEvent;
 use crate::protocol::AgentMessageEvent;
@@ -78,27 +79,30 @@ use crate::protocol::AgentReasoningEvent;
 use crate::protocol::AgentReasoningRawContentDeltaEvent;
 use crate::protocol::AgentReasoningRawContentEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
-use crate::protocol::ApplyPatchApprovalRequestEvent;
-use crate::protocol::AskForApproval;
-use crate::protocol::BackgroundEventEvent;
-use crate::protocol::ErrorEvent;
-use crate::protocol::Event;
-use crate::protocol::EventMsg;
-use crate::protocol::ExecApprovalRequestEvent;
-use crate::protocol::ExecCommandBeginEvent;
-use crate::protocol::ExecCommandEndEvent;
-use crate::protocol::FileChange;
-use crate::protocol::InputItem;
-use crate::protocol::ListCustomPromptsResponseEvent;
-use crate::protocol::Op;
-use crate::protocol::PatchApplyBeginEvent;
-use crate::protocol::PatchApplyEndEvent;
-use crate::protocol::ReviewDecision;
-use crate::protocol::SandboxPolicy;
-use crate::protocol::SessionConfiguredEvent;
-use crate::protocol::StreamErrorEvent;
-use crate::protocol::Submission;
-use crate::protocol::TaskCompleteEvent;
+    use crate::protocol::ApplyPatchApprovalRequestEvent;
+    use crate::protocol::PatchApplyBeginEvent;
+    use crate::protocol::PatchApplyEndEvent;
+use base64::Engine as _;
+    use crate::protocol::AskForApproval;
+    use crate::protocol::BackgroundEventEvent;
+    use crate::protocol::ErrorEvent;
+    use crate::protocol::Event;
+    use crate::protocol::EventMsg;
+    use crate::protocol::ExecApprovalRequestEvent;
+    use crate::protocol::ExecCommandBeginEvent;
+    use crate::protocol::ExecCommandEndEvent;
+    use crate::protocol::ExecCommandOutputDeltaEvent;
+    use crate::protocol::ExecOutputStream;
+    use crate::protocol::FileChange;
+    use crate::protocol::InputItem;
+    use crate::protocol::ListCustomPromptsResponseEvent;
+    use crate::protocol::Op;
+    use crate::protocol::ReviewDecision;
+    use crate::protocol::SandboxPolicy;
+    use crate::protocol::SessionConfiguredEvent;
+    use crate::protocol::StreamErrorEvent;
+    use crate::protocol::Submission;
+    use crate::protocol::TaskCompleteEvent;
 use crate::protocol::TurnDiffEvent;
 use crate::protocol::WebSearchBeginEvent;
 use crate::protocol::WebSearchEndEvent;
@@ -489,6 +493,229 @@ impl Session {
                 (McpConnectionManager::default(), Default::default())
             }
         };
+
+        // Subscribe to MCP server notifications and forward a subset to the UI.
+        for mut rx in mcp_connection_manager.subscribe_notifications() {
+            let tx = tx_event.clone();
+            tokio::spawn(async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(n) => {
+                            let method = n.method.clone();
+                            let params = n.params.unwrap_or(serde_json::Value::Null);
+                            // notifications/progress -> BackgroundEvent
+                            if method == "notifications/progress" {
+                                let message = params
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Agent progress update")
+                                    .to_string();
+                                let _ = tx
+                                    .send(Event {
+                                        id: INITIAL_SUBMIT_ID.to_owned(),
+                                        msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                                            message,
+                                        }),
+                                    })
+                                    .await;
+                                continue;
+                            }
+                            // plan_update -> PlanUpdate
+                            if method == "plan_update" {
+                                if let Ok(args) = serde_json::from_value::<UpdatePlanArgs>(params.clone()) {
+                                    let _ = tx
+                                        .send(Event {
+                                            id: INITIAL_SUBMIT_ID.to_owned(),
+                                            msg: EventMsg::PlanUpdate(args),
+                                        })
+                                        .await;
+                                }
+                                continue;
+                            }
+                            // turn_diff -> TurnDiff
+                            if method == "turn_diff" {
+                                if let Some(diff) = params.get("unified_diff").and_then(|v| v.as_str()) {
+                                    let _ = tx
+                                        .send(Event {
+                                            id: INITIAL_SUBMIT_ID.to_owned(),
+                                            msg: EventMsg::TurnDiff(TurnDiffEvent {
+                                                unified_diff: diff.to_string(),
+                                            }),
+                                        })
+                                        .await;
+                                }
+                                continue;
+                            }
+                            // background_event -> BackgroundEvent
+                            if method == "background_event" {
+                                if let Some(msg) = params.get("message").and_then(|v| v.as_str()) {
+                                    let _ = tx
+                                        .send(Event {
+                                            id: INITIAL_SUBMIT_ID.to_owned(),
+                                            msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                                                message: msg.to_string(),
+                                            }),
+                                        })
+                                        .await;
+                                }
+                                continue;
+                            }
+
+                            // exec_approval_request -> ExecApprovalRequestEvent
+                            if method == "exec_approval_request" {
+                                let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let command: Vec<String> = params
+                                    .get("command")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                                    .unwrap_or_default();
+                                let cwd_str = params.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
+                                let cwd = std::path::PathBuf::from(cwd_str);
+                                let reason = params.get("reason").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                // Prefer orchestrator-provided submission_id if present so ExecApproval maps correctly
+                                let sub_id = params
+                                    .get("submission_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| format!("approval_{}", uuid::Uuid::new_v4()));
+                                let _ = tx
+                                    .send(Event {
+                                        id: sub_id,
+                                        msg: EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+                                            call_id,
+                                            command,
+                                            cwd,
+                                            reason,
+                                        }),
+                                    })
+                                    .await;
+                                continue;
+                            }
+
+                            // exec_command_begin -> ExecCommandBeginEvent
+                            if method == "exec_command_begin" {
+                                let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let command: Vec<String> = params
+                                    .get("command")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                                    .unwrap_or_default();
+                                let cwd = std::path::PathBuf::from(params.get("cwd").and_then(|v| v.as_str()).unwrap_or(""));
+                                let sub_id = params
+                                    .get("submission_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| INITIAL_SUBMIT_ID.to_owned());
+                                let ev = ExecCommandBeginEvent { call_id, command, cwd, parsed_cmd: Vec::new() };
+                                let _ = tx.send(Event { id: sub_id, msg: EventMsg::ExecCommandBegin(ev) }).await;
+                                continue;
+                            }
+
+                            // exec_command_output_delta -> ExecCommandOutputDeltaEvent
+                            if method == "exec_command_output_delta" {
+                                let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let stream = match params.get("stream").and_then(|v| v.as_str()).unwrap_or("stdout") {
+                                    "stderr" => ExecOutputStream::Stderr,
+                                    _ => ExecOutputStream::Stdout,
+                                };
+                                let chunk_b64 = params.get("chunk").and_then(|v| v.as_str()).unwrap_or("");
+                                let chunk_bytes = base64::engine::general_purpose::STANDARD.decode(chunk_b64).unwrap_or_default();
+                                let sub_id = params
+                                    .get("submission_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| INITIAL_SUBMIT_ID.to_owned());
+                                let ev = ExecCommandOutputDeltaEvent { call_id, stream, chunk: serde_bytes::ByteBuf::from(chunk_bytes) };
+                                let _ = tx.send(Event { id: sub_id, msg: EventMsg::ExecCommandOutputDelta(ev) }).await;
+                                continue;
+                            }
+
+                            // exec_command_end -> ExecCommandEndEvent
+                            if method == "exec_command_end" {
+                                let call_id = params.get("call_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let stdout = params.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let stderr = params.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let formatted_output = params.get("formatted_output").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let exit_code = params.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                let dur_ms = params.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let sub_id = params
+                                    .get("submission_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| INITIAL_SUBMIT_ID.to_owned());
+                                let ev = ExecCommandEndEvent {
+                                    call_id,
+                                    stdout,
+                                    stderr,
+                                    aggregated_output: String::new(),
+                                    exit_code,
+                                    duration: std::time::Duration::from_millis(dur_ms),
+                                    formatted_output,
+                                };
+                                let _ = tx.send(Event { id: sub_id, msg: EventMsg::ExecCommandEnd(ev) }).await;
+                                continue;
+                            }
+
+                            // apply_patch_approval_request -> ApplyPatchApprovalRequestEvent
+                            if method == "apply_patch_approval_request" {
+                                if let Ok(ev) = serde_json::from_value::<ApplyPatchApprovalRequestEvent>(params.clone()) {
+                                    // Prefer orchestrator-provided submission_id if present so PatchApproval maps correctly
+                                    let sub_id = params
+                                        .get("submission_id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| format!("approval_{}", uuid::Uuid::new_v4()));
+                                    let _ = tx
+                                        .send(Event {
+                                            id: sub_id,
+                                            msg: EventMsg::ApplyPatchApprovalRequest(ev),
+                                        })
+                                        .await;
+                                }
+                                continue;
+                            }
+
+                            // patch_apply_begin -> PatchApplyBeginEvent
+                            if method == "patch_apply_begin" {
+                                if let Ok(ev) = serde_json::from_value::<PatchApplyBeginEvent>(params.clone()) {
+                                    let sub_id = params
+                                        .get("submission_id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| INITIAL_SUBMIT_ID.to_owned());
+                                    let _ = tx
+                                        .send(Event {
+                                            id: sub_id,
+                                            msg: EventMsg::PatchApplyBegin(ev),
+                                        })
+                                        .await;
+                                }
+                                continue;
+                            }
+
+                            // patch_apply_end -> PatchApplyEndEvent
+                            if method == "patch_apply_end" {
+                                if let Ok(ev) = serde_json::from_value::<PatchApplyEndEvent>(params.clone()) {
+                                    let sub_id = params
+                                        .get("submission_id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| INITIAL_SUBMIT_ID.to_owned());
+                                    let _ = tx
+                                        .send(Event {
+                                            id: sub_id,
+                                            msg: EventMsg::PatchApplyEnd(ev),
+                                        })
+                                        .await;
+                                }
+                                continue;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
 
         // Surface individual client start-up failures to the user.
         if !failed_clients.is_empty() {
@@ -1228,13 +1455,65 @@ async fn submission_loop(
                 ReviewDecision::Abort => {
                     sess.interrupt_task();
                 }
-                other => sess.notify_approval(&id, other),
+                other => {
+                    // notify internal waiter
+                    sess.notify_approval(&id, other);
+                    // Broadcast to MCP servers that support agents.approval_decision (best-effort)
+                    let sess2 = sess.clone();
+                    let decision_str = match other {
+                        ReviewDecision::Approved => "approved",
+                        ReviewDecision::ApprovedForSession => "approved_for_session",
+                        ReviewDecision::Denied => "denied",
+                        ReviewDecision::Abort => "abort",
+                    }
+                    .to_string();
+                    tokio::spawn(async move {
+                        let tools = sess2.mcp_connection_manager.list_all_tools();
+                        for (qualified, tool) in tools {
+                            if tool.name == "agents.approval_decision" {
+                                if let Some((server, _tool)) = sess2.mcp_connection_manager.parse_tool_name(&qualified) {
+                                    let args = serde_json::json!({
+                                        "kind": "exec",
+                                        "decision": decision_str,
+                                        "submission_id": id,
+                                    });
+                                    let _ = sess2.mcp_connection_manager.call_tool(&server, &tool.name, Some(args), Some(std::time::Duration::from_secs(10))).await;
+                                }
+                            }
+                        }
+                    });
+                }
             },
             Op::PatchApproval { id, decision } => match decision {
                 ReviewDecision::Abort => {
                     sess.interrupt_task();
                 }
-                other => sess.notify_approval(&id, other),
+                other => {
+                    sess.notify_approval(&id, other);
+                    let sess2 = sess.clone();
+                    let decision_str = match other {
+                        ReviewDecision::Approved => "approved",
+                        ReviewDecision::ApprovedForSession => "approved_for_session",
+                        ReviewDecision::Denied => "denied",
+                        ReviewDecision::Abort => "abort",
+                    }
+                    .to_string();
+                    tokio::spawn(async move {
+                        let tools = sess2.mcp_connection_manager.list_all_tools();
+                        for (qualified, tool) in tools {
+                            if tool.name == "agents.approval_decision" {
+                                if let Some((server, _tool)) = sess2.mcp_connection_manager.parse_tool_name(&qualified) {
+                                    let args = serde_json::json!({
+                                        "kind": "patch",
+                                        "decision": decision_str,
+                                        "submission_id": id,
+                                    });
+                                    let _ = sess2.mcp_connection_manager.call_tool(&server, &tool.name, Some(args), Some(std::time::Duration::from_secs(10))).await;
+                                }
+                            }
+                        }
+                    });
+                }
             },
             Op::AddToHistory { text } => {
                 let id = sess.session_id;

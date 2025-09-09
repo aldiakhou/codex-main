@@ -3,6 +3,7 @@ import sys
 import threading
 import time
 import uuid
+import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
@@ -44,10 +45,106 @@ class Tool:
     title: Optional[str] = None
 
 
+def _state_dir() -> str:
+    home = os.path.expanduser("~")
+    p = os.path.join(home, ".codex", "agents")
+    try:
+        os.makedirs(p, exist_ok=True)
+    except Exception:
+        pass
+    return p
+
+
+def notify(method: str, params: Dict[str, Any]) -> None:
+    # JSON-RPC notification (no id)
+    try:
+        msg = {"jsonrpc": JSONRPC, "method": method, "params": params}
+        write_message(msg)
+    except Exception:
+        pass
+
+
+# ---- Approval state (submission_id mapping) ----
+_APPROVAL_DECISIONS: Dict[str, str] = {}
+_CALL_TO_SUBMISSION: Dict[str, str] = {}
+_APPROVAL_LOCK = threading.Lock()
+
+def _ensure_submission_id_for_call(call_id: str) -> str:
+    with _APPROVAL_LOCK:
+        sid = _CALL_TO_SUBMISSION.get(call_id)
+        if sid:
+            return sid
+        sid = f"sub_{uuid.uuid4().hex[:10]}"
+        _CALL_TO_SUBMISSION[call_id] = sid
+        return sid
+
+def record_approval_decision(submission_id: str, decision: str, call_id: Optional[str] = None) -> None:
+    with _APPROVAL_LOCK:
+        _APPROVAL_DECISIONS[submission_id] = decision
+        if call_id:
+            _CALL_TO_SUBMISSION.setdefault(call_id, submission_id)
+
+def get_submission_id_for_call(call_id: str) -> Optional[str]:
+    with _APPROVAL_LOCK:
+        return _CALL_TO_SUBMISSION.get(call_id)
+
+def wait_for_decision(submission_id: str, timeout_secs: float = 120.0) -> Optional[str]:
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
+        with _APPROVAL_LOCK:
+            d = _APPROVAL_DECISIONS.get(submission_id)
+            if d:
+                return d
+        time.sleep(0.2)
+    return None
+
+
+# ---- Helper notifiers agents can import/use ----
+def exec_approval_request(call_id: str, command: list[str], cwd: str, reason: Optional[str] = None) -> None:
+    submission_id = _ensure_submission_id_for_call(call_id)
+    payload = {"call_id": call_id, "submission_id": submission_id, "command": command, "cwd": cwd}
+    if reason:
+        payload["reason"] = reason
+    notify("exec_approval_request", payload)
+
+
+def exec_command_begin(call_id: str, command: list[str], cwd: str) -> None:
+    notify("exec_command_begin", {"call_id": call_id, "command": command, "cwd": cwd})
+
+
+def exec_command_output_delta(call_id: str, stream: str, chunk_bytes: bytes) -> None:
+    import base64
+    notify("exec_command_output_delta", {"call_id": call_id, "stream": stream, "chunk": base64.b64encode(chunk_bytes).decode("ascii")})
+
+
+def exec_command_end(call_id: str, exit_code: int, stdout: str = "", stderr: str = "", formatted_output: str = "", duration_ms: int = 0) -> None:
+    notify("exec_command_end", {"call_id": call_id, "exit_code": exit_code, "stdout": stdout, "stderr": stderr, "formatted_output": formatted_output, "duration_ms": duration_ms})
+
+
+def apply_patch_approval_request(call_id: str, changes: Dict[str, Any], reason: Optional[str] = None, grant_root: Optional[str] = None) -> None:
+    submission_id = _ensure_submission_id_for_call(call_id)
+    payload: Dict[str, Any] = {"call_id": call_id, "submission_id": submission_id, "changes": changes}
+    if reason:
+        payload["reason"] = reason
+    if grant_root:
+        payload["grant_root"] = grant_root
+    notify("apply_patch_approval_request", payload)
+
+
+def patch_apply_begin(call_id: str, changes: Dict[str, Any], auto_approved: bool = False) -> None:
+    notify("patch_apply_begin", {"call_id": call_id, "auto_approved": bool(auto_approved), "changes": changes})
+
+
+def patch_apply_end(call_id: str, success: bool, stdout: str = "", stderr: str = "") -> None:
+    notify("patch_apply_end", {"call_id": call_id, "success": bool(success), "stdout": stdout, "stderr": stderr})
+
+
 class TaskStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._tasks: Dict[str, Dict[str, Any]] = {}
+        self._snapshot_path = os.path.join(_state_dir(), "tasks.json")
+        self._events_path = os.path.join(_state_dir(), "tasks.jsonl")
 
     def create(self, agent_id: str, goal: str, params: Dict[str, Any]) -> Dict[str, Any]:
         task_id = f"task_{uuid.uuid4().hex[:10]}"
@@ -62,6 +159,8 @@ class TaskStore:
         }
         with self._lock:
             self._tasks[task_id] = task
+            self._persist_event({"type": "create", "task": task})
+            self._persist_snapshot()
         return task
 
     def update(self, task_id: str, **patch: Any) -> None:
@@ -70,6 +169,8 @@ class TaskStore:
             if not t:
                 return
             t.update(patch)
+            self._persist_event({"type": "update", "task_id": task_id, "patch": patch})
+            self._persist_snapshot()
 
     def append_progress(self, task_id: str, message: str, level: str = "info", data: Optional[Dict[str, Any]] = None) -> None:
         entry = {"ts": int(time.time() * 1000), "level": level, "message": message}
@@ -80,6 +181,13 @@ class TaskStore:
             if not t:
                 return
             t.setdefault("progress", []).append(entry)
+            # fire a progress notification (token = task_id)
+            try:
+                notify("notifications/progress", {"progress": float(len(t["progress"])), "progressToken": task_id, "message": message})
+            except Exception:
+                pass
+            self._persist_event({"type": "progress", "task_id": task_id, "entry": entry})
+            self._persist_snapshot()
 
     def get(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -92,7 +200,23 @@ class TaskStore:
             if not t:
                 return False
             t["status"] = "canceled"
+            self._persist_event({"type": "canceled", "task_id": task_id})
+            self._persist_snapshot()
             return True
+
+    def _persist_event(self, obj: Dict[str, Any]) -> None:
+        try:
+            with open(self._events_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _persist_snapshot(self) -> None:
+        try:
+            with open(self._snapshot_path, "w", encoding="utf-8") as f:
+                json.dump(self._tasks, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
 
 TASKS = TaskStore()
@@ -156,22 +280,56 @@ class AgentBridge:
                 agents.append({"id": aid, "name": aid})
         return agents
 
-    def start_task(self, task_id: str, agent_id: str, goal: str, params: Dict[str, Any], cwd: Optional[str]) -> None:
+    def start_task(self, task_id: str, agent_id: str, goal: str, params: Dict[str, Any], cwd: Optional[str], permission_profile: Optional[Dict[str, Any]] = None) -> None:
         ok = self.load()
         if not ok:
-            # Fallback simulated work
+            # Fallback simulated work with plan updates
             def worker():
                 TASKS.update(task_id, status="running", started_at=int(time.time() * 1000))
                 TASKS.append_progress(task_id, "Agent received goal", data={"goal": goal})
-                for step in ["collecting_sources", "extracting_insights", "drafting_report"]:
-                    TASKS.append_progress(task_id, step.replace("_", " ").title())
+                # Initial plan
+                try:
+                    notify("plan_update", {
+                        "explanation": "Simulated task plan",
+                        "plan": [
+                            {"step": "Collect sources", "status": "in_progress"},
+                            {"step": "Extract insights", "status": "pending"},
+                            {"step": "Draft report", "status": "pending"}
+                        ]
+                    })
+                except Exception:
+                    pass
+                steps = [
+                    ("Collect sources", "collecting_sources"),
+                    ("Extract insights", "extracting_insights"),
+                    ("Draft report", "drafting_report"),
+                ]
+                for idx, (title, key) in enumerate(steps):
+                    TASKS.append_progress(task_id, title)
                     time.sleep(0.8)
+                    # Update plan statuses
+                    try:
+                        plan = []
+                        for j, (t2, _k2) in enumerate(steps):
+                            status = "completed" if j < idx else ("in_progress" if j == idx else "pending")
+                            plan.append({"step": t2, "status": status})
+                        notify("plan_update", {"plan": plan})
+                    except Exception:
+                        pass
                 TASKS.update(task_id, status="completed", completed_at=int(time.time() * 1000), result={"summary": f"Task complete: {goal}"})
+                try:
+                    notify("background_event", {"message": f"Agent task {task_id} completed"})
+                except Exception:
+                    pass
             threading.Thread(target=worker, daemon=True).start()
             return
 
         # Real agent execution path
         from core.models import AIAgentRequest  # our shim type
+
+        # Build per-task policy environment
+        stdio_allow = "*" if (permission_profile and any(str(x).startswith("mcp") for x in permission_profile.get("tool_allowlist", []))) else ""
+        http_allow = ""  # tighten by default
 
         async def run_agent_async():
             req = AIAgentRequest(request_id=task_id, text=goal, context=params or {}, cwd=cwd)
@@ -186,7 +344,23 @@ class AgentBridge:
         def runner():
             try:
                 import asyncio
+                # Set policy env for this task
+                old_stdio = os.environ.get("AGENT_ALLOW_MCP_STDIO")
+                old_http = os.environ.get("AGENT_ALLOW_HTTP_PREFIXES")
+                if stdio_allow is not None:
+                    os.environ["AGENT_ALLOW_MCP_STDIO"] = stdio_allow
+                if http_allow is not None:
+                    os.environ["AGENT_ALLOW_HTTP_PREFIXES"] = http_allow
                 asyncio.run(run_agent_async())
+                # Restore
+                if old_stdio is None:
+                    os.environ.pop("AGENT_ALLOW_MCP_STDIO", None)
+                else:
+                    os.environ["AGENT_ALLOW_MCP_STDIO"] = old_stdio
+                if old_http is None:
+                    os.environ.pop("AGENT_ALLOW_HTTP_PREFIXES", None)
+                else:
+                    os.environ["AGENT_ALLOW_HTTP_PREFIXES"] = old_http
             except Exception as e:  # pragma: no cover
                 TASKS.update(task_id, status="failed", error=str(e))
 
@@ -237,6 +411,20 @@ def list_tools() -> Dict[str, Any]:
                 required=["task_id"],
             ),
         ),
+        Tool(
+            name="agents.approval_decision",
+            title="Record Approval Decision",
+            description="Record user approval decision for exec/patch keyed by submission_id or call_id",
+            inputSchema=ToolInputSchema(
+                properties={
+                    "kind": {"type": "string", "enum": ["exec", "patch"], "description": "Decision applies to exec or patch"},
+                    "decision": {"type": "string", "enum": ["approved", "approved_for_session", "denied", "abort"], "description": "User decision"},
+                    "submission_id": {"type": "string"},
+                    "call_id": {"type": "string"},
+                },
+                required=["decision"],
+            ),
+        ),
     ]
     return {
         "jsonrpc": JSONRPC,
@@ -274,8 +462,9 @@ def handle_call(name: str, args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         goal = str(args.get("goal", ""))
         params = args.get("params") or {}
         cwd = args.get("cwd")
+        permission_profile = args.get("permission_profile") or {}
         task = TASKS.create(agent_id, goal, params)
-        BRIDGE.start_task(task["task_id"], agent_id, goal, params, cwd)
+        BRIDGE.start_task(task["task_id"], agent_id, goal, params, cwd, permission_profile)
         return result_text(f"Started task {task['task_id']} on agent {agent_id}")
 
     if name == "agents.task_status":
@@ -297,6 +486,18 @@ def handle_call(name: str, args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         task_id = str(args.get("task_id", ""))
         ok = TASKS.cancel(task_id)
         return result_text(json.dumps({"task_id": task_id, "canceled": bool(ok)}))
+
+    if name == "agents.approval_decision":
+        kind = str(args.get("kind", ""))
+        decision = str(args.get("decision", ""))
+        submission_id = args.get("submission_id") or None
+        call_id = args.get("call_id") or None
+        if call_id and not submission_id:
+            submission_id = get_submission_id_for_call(str(call_id))
+        if isinstance(submission_id, str) and submission_id:
+            record_approval_decision(submission_id, decision, str(call_id) if isinstance(call_id, str) else None)
+            return result_text(json.dumps({"recorded": True, "submission_id": submission_id, "decision": decision, "kind": kind}))
+        return result_text(json.dumps({"recorded": False, "reason": "missing submission_id"}))
 
     return {
         "jsonrpc": JSONRPC,

@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { IconBolt, IconCode, IconFileText, IconActivity, IconPlus, IconSettings } from '@tabler/icons-react';
+import { IconBolt, IconCode, IconFileText, IconActivity, IconPlus, IconSettings, IconList, IconRefresh, IconPlayerPlay } from '@tabler/icons-react';
+import { useBackend } from '../../contexts/BackendContext';
 
 interface Agent {
   id: string;
@@ -73,9 +74,14 @@ const cardVariants = {
 };
 
 const AgentsWorkspace: React.FC = () => {
+  const { userTurn } = useBackend();
   const workforceContainerRef = useRef<HTMLDivElement>(null);
   const [scrollState, setScrollState] = useState({ isAtStart: true, isAtEnd: true });
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
+  const [agentId, setAgentId] = useState('demo_exec_patch');
+  const [goal, setGoal] = useState('Demo exec + patch');
+  const [params, setParams] = useState('{ "demo_exec_patch": true }');
+  const [status, setStatus] = useState('');
 
   const scrollWorkforce = (direction: 'left' | 'right') => {
     if (workforceContainerRef.current) {
@@ -100,6 +106,34 @@ const AgentsWorkspace: React.FC = () => {
     setTimeout(() => setIsCreatingAgent(false), 2000);
   };
 
+  const sendListAgents = async () => {
+    setStatus('Listing agents...');
+    const text = 'Call the MCP tool `agents.list` with {} and show the JSON result.';
+    await userTurn(text);
+    setStatus('List request sent. See Chat for results.');
+  };
+
+  const sendStartTask = async () => {
+    let args: any = {};
+    try { args = JSON.parse(params || '{}'); } catch { args = {}; }
+    const payload = {
+      agent_id: agentId,
+      goal,
+      params: args,
+      permission_profile: { sandbox: 'read-only', approval_policy: 'on-request', tool_allowlist: ['mcp:any'] },
+    } as any;
+    setStatus('Starting task...');
+    const text = [
+      'Call the MCP tool `agents.start_task` with the following JSON arguments:',
+      '```json',
+      JSON.stringify(payload),
+      '```',
+      'Use the tool directly; do not ask for confirmation. Then acknowledge.'
+    ].join('\n');
+    await userTurn(text);
+    setStatus('Task request sent. Watch Chat for approvals and progress.');
+  };
+
   useEffect(() => {
     const container = workforceContainerRef.current;
     if (container) {
@@ -117,6 +151,41 @@ const AgentsWorkspace: React.FC = () => {
 
   return (
     <div className="workspace-layout container-full transition-fade-in bg-gradient-aurora">
+      {/* Minimal Agents Manager controls */}
+      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--bg-secondary)] m-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Agents Manager (Minimal)</h2>
+          <div className="text-sm text-[var(--text-secondary)]">{status}</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={sendListAgents}>
+            <IconList size={16} /> List Agents
+          </button>
+          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={()=>window.aiw.listMcpTools()}>
+            <IconRefresh size={16} /> Refresh MCP Tools
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-2xs text-[var(--text-tertiary)]">Agent ID</label>
+            <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={agentId} onChange={(e)=>setAgentId(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <label className="text-2xs text-[var(--text-tertiary)]">Goal</label>
+            <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={goal} onChange={(e)=>setGoal(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1 md:col-span-3">
+            <label className="text-2xs text-[var(--text-tertiary)]">Params (JSON)</label>
+            <textarea className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[100px]" value={params} onChange={(e)=>setParams(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="px-3 py-1 rounded bg-[var(--accent)] text-white flex items-center gap-2" onClick={sendStartTask}>
+            <IconPlayerPlay size={16} /> Start Task
+          </button>
+          <div className="text-2xs text-[var(--text-tertiary)]">Approvals will appear in Chat; monitor progress there.</div>
+        </div>
+      </div>
       {/* Enhanced Grid Layout with Golden Ratio */}
       <div className="grid-asymmetric-sidebar gap-xl">
         {/* Left Panel: Task Overview - Using Golden Ratio Proportion */}
