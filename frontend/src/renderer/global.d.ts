@@ -21,6 +21,7 @@ declare global {
       setCodexPath: (codexPath: string) => Promise<boolean>;
       getHistory: () => Promise<boolean>;
       listMcpTools: () => Promise<boolean>;
+      listCustomPrompts: () => Promise<boolean>;
       upsertMcpServer: (server: { name: string; command: string; args?: string[]; env?: Record<string,string>}) => Promise<boolean>;
       removeMcpServer: (name: string) => Promise<boolean>;
       restart: () => Promise<void>;

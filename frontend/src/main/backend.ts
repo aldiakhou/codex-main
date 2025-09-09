@@ -47,26 +47,8 @@ export class BackendService extends EventEmitter {
       args.push('-p', this.profile);
     }
 
-    // Inject MCP servers as -c overrides from ~/.ai-workbench/config.json
-    const mcp = cfg.mcp_servers || {};
-    for (const [name, s] of Object.entries(mcp)) {
-      if (!s || !s.command) continue;
-      // Values passed via -c are parsed as TOML, not JSON. Strings and arrays
-      // are compatible, but inline tables must use TOML syntax.
-      args.push('-c', `mcp_servers.${name}.command=${JSON.stringify(s.command)}`);
-      if (s.args && s.args.length) {
-        // Arrays of strings are valid TOML as-is (same as JSON syntax)
-        args.push('-c', `mcp_servers.${name}.args=${JSON.stringify(s.args)}`);
-      }
-      if (s.env && Object.keys(s.env).length) {
-        // Convert {K:V} into a TOML inline table: { K = "V", ... }
-        const parts = Object.entries(s.env)
-          .filter(([k, v]) => k && v !== undefined)
-          .map(([k, v]) => `${k} = ${JSON.stringify(String(v))}`);
-        const inline = `{ ${parts.join(', ')} }`;
-        args.push('-c', `mcp_servers.${name}.env=${inline}`);
-      }
-    }
+    // MCP servers: single source of truth is ~/.codex/config.toml (edited in Settings).
+    // No -c overrides injected from ~/.ai-workbench/config.json.
     args.push('proto');
 
     this.emit('status', 'connecting');
@@ -270,22 +252,18 @@ export class BackendService extends EventEmitter {
 
   public upsertMcpServer(server: MCPServer): boolean {
     try {
-      const cfgDir = path.join(os.homedir(), '.ai-workbench');
-      const cfgPath = path.join(cfgDir, 'config.json');
-      let data: AppConfig = {};
-      if (fs.existsSync(cfgPath)) {
-        try { data = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch { data = {}; }
-      }
-      if (!data.mcp_servers) data.mcp_servers = {} as any;
-      data.mcp_servers![server.name] = {
-        name: server.name,
+      const { ok, config, error } = this.readCodexConfig();
+      if (!ok) throw new Error(error || 'Failed to read Codex config');
+      const cfg: any = config || {};
+      cfg.mcp_servers = cfg.mcp_servers || {};
+      cfg.mcp_servers[server.name] = {
         command: server.command,
         args: server.args || [],
         env: server.env || {},
-      } as any;
-      fs.mkdirSync(cfgDir, { recursive: true });
-      fs.writeFileSync(cfgPath, JSON.stringify(data, null, 2), 'utf8');
-      this.emit('log', `Saved MCP server '${server.name}' to ${cfgPath}`);
+      };
+      const res = this.saveCodexConfig(cfg);
+      if (!res.ok) throw new Error(res.error || 'Failed to write config');
+      this.emit('log', `Saved MCP server '${server.name}' to ${res.path}`);
       return true;
     } catch (e) {
       this.emit('error', `Failed to save MCP server: ${String(e)}`);
@@ -295,14 +273,14 @@ export class BackendService extends EventEmitter {
 
   public removeMcpServer(name: string): boolean {
     try {
-      const cfgDir = path.join(os.homedir(), '.ai-workbench');
-      const cfgPath = path.join(cfgDir, 'config.json');
-      if (!fs.existsSync(cfgPath)) return true;
-      const data: AppConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      if (data.mcp_servers && data.mcp_servers[name]) {
-        delete data.mcp_servers[name];
-        fs.writeFileSync(cfgPath, JSON.stringify(data, null, 2), 'utf8');
-        this.emit('log', `Removed MCP server '${name}' from ${cfgPath}`);
+      const { ok, config, error } = this.readCodexConfig();
+      if (!ok) throw new Error(error || 'Failed to read Codex config');
+      const cfg: any = config || {};
+      if (cfg.mcp_servers && cfg.mcp_servers[name]) {
+        delete cfg.mcp_servers[name];
+        const res = this.saveCodexConfig(cfg);
+        if (!res.ok) throw new Error(res.error || 'Failed to write config');
+        this.emit('log', `Removed MCP server '${name}' from ${res.path}`);
       }
       return true;
     } catch (e) {
@@ -313,11 +291,10 @@ export class BackendService extends EventEmitter {
 
   public getMcpServers(): Record<string, MCPServer> {
     try {
-      const cfgDir = path.join(os.homedir(), '.ai-workbench');
-      const cfgPath = path.join(cfgDir, 'config.json');
-      if (!fs.existsSync(cfgPath)) return {};
-      const data: AppConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      return (data.mcp_servers as any) || {};
+      const { ok, config, error } = this.readCodexConfig();
+      if (!ok) throw new Error(error || 'Failed to read Codex config');
+      const cfg: any = config || {};
+      return (cfg.mcp_servers as any) || {};
     } catch (e) {
       this.emit('error', `Failed to read MCP servers: ${String(e)}`);
       return {};
@@ -456,6 +433,11 @@ export class BackendService extends EventEmitter {
   // --- MCP tools ----------------------------------------------------------
   listMcpTools(): boolean {
     return this.send({ id: `list_mcp_tools_${Date.now()}`, op: { type: 'list_mcp_tools' } });
+  }
+
+  // --- Custom prompts -----------------------------------------------------
+  listCustomPrompts(): boolean {
+    return this.send({ id: `list_custom_prompts_${Date.now()}`, op: { type: 'list_custom_prompts' } });
   }
 
   private async autoDetectCodexPath(): Promise<string | undefined> {

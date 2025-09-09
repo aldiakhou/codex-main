@@ -69,6 +69,9 @@ type BackendContextType = {
   refreshMcpServers: () => Promise<Record<string, any>>;
   serverErrors: Record<string, string>;
   plan: { explanation?: string | null; plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> } | null;
+  turnDiff?: string | null;
+  customPrompts: Array<{ name: string; path: string; content: string }>;
+  refreshCustomPrompts: () => Promise<boolean>;
 };
 
 const BackendContext = createContext<BackendContextType | undefined>(undefined);
@@ -96,6 +99,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<BackendContextType['plan']>(null);
+  const [turnDiff, setTurnDiff] = useState<string | null>(null);
+  const rawReasoningRef = useRef<{ id: string; text: string } | null>(null);
+  const [customPrompts, setCustomPrompts] = useState<BackendContextType['customPrompts']>([]);
   const [chatParams, setChatParamsState] = useState<BackendContextType['chatParams']>(() => {
     const saved = localStorage.getItem('chatParams');
     if (saved) {
@@ -143,7 +149,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last && last.role === 'assistant' && last.text === text) return prev; // de-dupe
-              return [...prev, { id: e.id || `msg_${Date.now()}`, role: 'assistant', text }];
+              return [...prev, { id: `msg_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'assistant', text }];
             });
           }
           return;
@@ -153,7 +159,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!delta) return;
           let cur = streamingAssistantRef.current;
           if (!cur) {
-            cur = { id: e.id || `delta_${Date.now()}`, text: '' };
+            cur = { id: `delta_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, text: '' };
             streamingAssistantRef.current = cur;
             setMessages((prev) => [...prev, { id: cur.id, role: 'assistant', text: '', ts: Date.now() } as any]);
           }
@@ -171,7 +177,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text } : m)));
             streamingReasoningRef.current = null;
           } else {
-            setMessages((prev) => [...prev, { id: e.id || `rsn_${Date.now()}`, role: 'reasoning', text, ts: Date.now() } as any]);
+            setMessages((prev) => [...prev, { id: `rsn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'reasoning', text, ts: Date.now() } as any]);
           }
           return;
         }
@@ -180,13 +186,45 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!delta) return;
           let cur = streamingReasoningRef.current;
           if (!cur) {
-            cur = { id: e.id || `rsn_${Date.now()}`, text: '' };
+            cur = { id: `rsn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, text: '' };
             streamingReasoningRef.current = cur;
             setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '', ts: Date.now() } as any]);
           }
           cur.text += delta;
           const cid = cur.id;
           setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text: cur!.text } : m)));
+          return;
+        }
+        if (type === 'agent_reasoning_raw_content') {
+          const text = e.msg?.text ?? '';
+          if (!text) return;
+          const cur = rawReasoningRef.current;
+          if (cur) {
+            const cid = cur.id;
+            setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text } : m)));
+            rawReasoningRef.current = null;
+          } else {
+            setMessages((prev) => [...prev, { id: `raw_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'reasoning', text, ts: Date.now() } as any]);
+          }
+          return;
+        }
+        if (type === 'agent_reasoning_raw_content_delta') {
+          const delta = e.msg?.delta ?? '';
+          if (!delta) return;
+          let cur = rawReasoningRef.current;
+          if (!cur) {
+            cur = { id: `raw_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, text: '' };
+            rawReasoningRef.current = cur;
+            setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '', ts: Date.now() } as any]);
+          }
+          cur.text += delta;
+          const cid = cur.id;
+          setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text: cur!.text } : m)));
+          return;
+        }
+        if (type === 'agent_reasoning_section_break') {
+          // Add a subtle separator system message when a new section starts
+          setMessages((prev) => [...prev, { id: `sec_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text: '--- Reasoning section ---', ts: Date.now() } as any]);
           return;
         }
         if (type === 'plan_update') {
@@ -222,37 +260,57 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const text = `Stream error: ${msg}`;
             const last = prev[prev.length - 1];
             if (last && last.role === 'system' && last.text === text) return prev;
-            return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any];
+            return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
           });
+          return;
+        }
+        if (type === 'background_event') {
+          const msg = e.msg?.message || '';
+          if (!msg) return;
+          setMessages((prev) => {
+            const text = `Background: ${msg}`;
+            return [...prev, { id: `bg_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
+          });
+          return;
+        }
+        if (type === 'turn_diff') {
+          const diff = e.msg?.unified_diff || '';
+          setTurnDiff(diff || null);
+          return;
+        }
+        if (type === 'list_custom_prompts_response') {
+          const cps = Array.isArray(e.msg?.custom_prompts) ? e.msg.custom_prompts : [];
+          setCustomPrompts(cps.map((p: any) => ({ name: String(p.name||''), path: String(p.path||''), content: String(p.content||'') })));
+          const names = cps.map((p: any) => p?.name || '').filter(Boolean).join(', ');
+          const text = names ? `Custom prompts available: ${names}` : 'Custom prompts list received';
+          setMessages((prev) => [...prev, { id: `cp_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]);
           return;
         }
         if (type === 'session_configured') {
           const model = e.msg?.model || '';
-          setMessages((prev) => { const last = prev[prev.length-1]; const text = `Connected. Model: ${model}`; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => { const last = prev[prev.length-1]; const text = `Connected. Model: ${model}`; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'task_started') {
           const cw = e.msg?.model_context_window;
           if (cw) setTokenUsage((prev) => ({ ...(prev || { input_tokens:0, output_tokens:0, total_tokens:0 }), context_window: cw }));
-          setMessages((prev) => { const last = prev[prev.length-1]; const text = 'Task started'; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => { const last = prev[prev.length-1]; const text = 'Task started'; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'task_complete') {
-          setMessages((prev) => { const last = prev[prev.length-1]; const text = 'Task complete.'; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => { const last = prev[prev.length-1]; const text = 'Task complete.'; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'mcp_tool_call_begin') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || `mcp_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'mcp', name, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
-          setMessages((prev) => { const text = `Tool call begin: ${name}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'mcp_tool_call_end') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now() } : tc));
-          setMessages((prev) => { const text = `Tool call end: ${name}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'exec_command_begin') {
@@ -260,7 +318,6 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const cwd = e.msg?.cwd || '';
           const call_id = e.msg?.call_id || e.id || `exec_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
-          setMessages((prev) => { const text = `exec: ${cmd}\ncwd: ${cwd}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'exec_command_output_delta') {
@@ -286,24 +343,23 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const out = e.msg?.formatted_output || e.msg?.stdout || '';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now(), exit_code: code, formatted_output: out, stdout: tc.stdout || (e.msg?.stdout || ''), stderr: tc.stderr || (e.msg?.stderr || '') } : tc));
-          setMessages((prev) => { const text = `exit ${code}\n${out}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'web_search_begin') {
-          setMessages((prev) => { const text = `web search: ${e.msg?.query || ''}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => { const text = `web search: ${e.msg?.query || ''}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'web_search_end') {
-          setMessages((prev) => { const text = 'web search done'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => { const text = 'web search done'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'patch_apply_begin') {
-          setMessages((prev) => { const text = 'Applying patch...'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => { const text = 'Applying patch...'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'patch_apply_end') {
           const ok = e.msg?.success ? 'success' : 'failed';
-          setMessages((prev) => { const text = `Patch apply ${ok}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => { const text = `Patch apply ${ok}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'conversation_history') {
@@ -417,6 +473,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
     mcpServers,
     serverErrors,
     plan,
+    turnDiff,
+    customPrompts,
+    refreshCustomPrompts: async () => window.aiw.listCustomPrompts(),
     start: (opts) => window.aiw.start(opts),
     stop: () => window.aiw.stop(),
     login: (apiKey?: string) => window.aiw.login(apiKey),
@@ -456,7 +515,8 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setMcpServers(cfg || {});
       return cfg;
     },
-  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams, draftMessage, tokenUsage, toolCalls, mcpTools, mcpServers, serverErrors, plan]);
+  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams, draftMessage, tokenUsage, toolCalls, mcpTools, mcpServers, serverErrors, plan, turnDiff, customPrompts]);
 
   return <BackendContext.Provider value={api}>{children}</BackendContext.Provider>;
 };
+

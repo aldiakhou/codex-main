@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('aiw', {
   setCodexPath: (codexPath: string) => ipcRenderer.invoke('aiw:setCodexPath', codexPath),
   getHistory: () => ipcRenderer.invoke('aiw:getHistory'),
   listMcpTools: () => ipcRenderer.invoke('aiw:listMcpTools'),
+  listCustomPrompts: () => ipcRenderer.invoke('aiw:listCustomPrompts'),
   upsertMcpServer: (server: { name: string; command: string; args?: string[]; env?: Record<string,string>}) => ipcRenderer.invoke('aiw:upsertMcpServer', server),
   removeMcpServer: (name: string) => ipcRenderer.invoke('aiw:removeMcpServer', name),
   restart: () => ipcRenderer.invoke('aiw:restartBackend'),

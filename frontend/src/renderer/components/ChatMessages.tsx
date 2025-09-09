@@ -5,8 +5,9 @@ import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js';
 import { IconRobot, IconUser, IconTools, IconInfoCircle, IconBrain } from '@tabler/icons-react';
 
-const ChatMessages: React.FC = () => {
-  const { messages, chatParams, setDraftMessage } = useBackend();
+type Props = { showToolCalls?: boolean };
+const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
+  const { messages, chatParams, setDraftMessage, toolCalls } = useBackend() as any;
   const endRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [showScroll, setShowScroll] = useState(false);
@@ -33,7 +34,39 @@ const ChatMessages: React.FC = () => {
     return () => io.disconnect();
   }, []);
 
-  const filtered = useMemo(() => messages.filter(m => m.role !== 'reasoning' || chatParams.showReasoning), [messages, chatParams.showReasoning]);
+  // Hide tool-role messages from inline chat; show reasoning only if enabled.
+  const baseMessages = useMemo(() => messages.filter(m => m.role !== 'tool' && (m.role !== 'reasoning' || chatParams.showReasoning)), [messages, chatParams.showReasoning]);
+  // Merge inline tool calls before the next assistant message.
+  const filtered = useMemo(() => {
+    const calls = showToolCalls ? [...(toolCalls || [])].sort((a, b) => (a.started_at||0) - (b.started_at||0)) : [];
+    let ci = 0;
+    const result: Array<any> = [];
+    let lastTs = 0;
+    for (const m of baseMessages) {
+      const ts = (m as any).ts || lastTs || 0;
+      // Insert tool calls that happened since the previous message timestamp, up to this message timestamp
+      const inline: any[] = [];
+      while (ci < calls.length) {
+        const c = calls[ci];
+        const t = c.ended_at || c.started_at || 0;
+        if (t && t <= ts) { inline.push(c); ci++; continue; }
+        break;
+      }
+      if (inline.length) {
+        result.push({ id: `tc_${ts}_${result.length}` as any, role: 'tool-inline', calls: inline } as any);
+      }
+      result.push(m);
+      lastTs = ts;
+    }
+    // trailing calls after last message
+    const rest: any[] = calls.slice(ci);
+    if (rest.length) result.push({ id: `tc_tail_${Date.now()}` as any, role: 'tool-inline', calls: rest } as any);
+    return result;
+  }, [baseMessages, toolCalls, showToolCalls]);
+
+  // Per-call collapse/expand state
+  const [tcOpen, setTcOpen] = useState<Record<string, boolean>>({});
+  const toggleCall = (id: string) => setTcOpen((prev) => ({ ...prev, [id]: !prev[id] }));
   const [collapse, setCollapse] = useState<Record<string, boolean>>({});
   const toggle = (id: string) => setCollapse((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -49,11 +82,51 @@ const ChatMessages: React.FC = () => {
               <div className="flex-1 h-px bg-white/10"></div>
             </div>
           ) : null}
-          <div className={`rounded-xl px-3 py-2 shadow-sm ${m.role==='assistant' ? 'bg-violet-500/10' : m.role==='user' ? 'bg-green-500/10' : m.role==='tool' ? 'bg-blue-500/10' : m.role==='system' ? 'bg-gray-500/10' : 'bg-yellow-500/10'}`}>
+          {m.role === 'tool-inline' ? (
+            <div className="rounded-xl px-3 py-2 shadow-sm bg-blue-500/10 border border-blue-500/30">
+              {(m as any).calls.map((c: any, i: number) => {
+                const header = c.kind === 'exec' ? `$ ${(c.command||[]).join(' ')}` : (c.name || 'tool');
+                const status = c.status === 'running' ? 'running' : `done${c.exit_code !== undefined ? ` (${c.exit_code})` : ''}`;
+                const outputCombined = (c.formatted_output || c.stdout || '') + (c.stderr ? `\n[stderr]\n${c.stderr}` : '');
+                const callId: string = String(c.call_id || `${(m as any).id}_${i}`);
+                const isOpen = !!tcOpen[callId];
+                const lines = (outputCombined || '').split(/\r?\n/);
+                const previewLines = 6;
+                const preview = lines.slice(0, previewLines).join('\n');
+                const moreCount = Math.max(0, lines.length - previewLines);
+                return (
+                  <div key={callId} className="border border-[var(--border)] rounded bg-[var(--bg-secondary)] mb-2 last:mb-0">
+                    <div className="w-full text-left px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="truncate font-mono text-sm">
+                        <span className={`inline-block w-2 h-2 rounded-full mr-2 ${c.status==='running'?'bg-yellow-500 animate-pulse':'bg-green-500'}`}></span>
+                        {header}
+                        {c.cwd ? <span className="text-[var(--text-tertiary)] ml-2">(cwd: {c.cwd})</span> : null}
+                      </div>
+                      <div className="text-xs text-[var(--text-tertiary)] whitespace-nowrap flex items-center gap-2">
+                        <span>{status}</span>
+                        <button className="px-2 py-0.5 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs" onClick={()=>toggleCall(callId)}>
+                          {isOpen ? 'Hide Output' : 'Show Output'}
+                        </button>
+                      </div>
+                    </div>
+                    {isOpen && (
+                      <div className="px-3 pb-3">
+                        <div className="flex gap-2 mb-2">
+                          <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs" onClick={async()=>{ try { await navigator.clipboard.writeText(outputCombined); } catch {} }}>Copy Output</button>
+                          <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs" onClick={()=> setDraftMessage((prev:any)=> (prev ? prev+"\n\n" : '') + '```\n' + outputCombined + '\n```')}>Quote Output</button>
+                        </div>
+                        <pre className="whitespace-pre-wrap text-xs font-mono bg-[var(--bg-tertiary)] border border-[var(--border)] rounded p-2 max-h-64 overflow-auto">{outputCombined || '[no output yet]'}</pre>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+          <div className={`rounded-xl px-3 py-2 shadow-sm ${m.role==='assistant' ? 'bg-violet-500/10' : m.role==='user' ? 'bg-green-500/10' : m.role==='system' ? 'bg-gray-500/10' : 'bg-yellow-500/10'}`}>
             <div className="flex items-center gap-2 text-2xs text-[var(--text-tertiary)]">
               {m.role === 'assistant' && <IconRobot size={14} className="text-violet-300" />}
               {m.role === 'user' && <IconUser size={14} className="text-green-300" />}
-              {m.role === 'tool' && <IconTools size={14} className="text-blue-300" />}
               {m.role === 'reasoning' && <IconBrain size={14} className="text-yellow-300" />}
               {m.role === 'system' && <IconInfoCircle size={14} className="text-gray-300" />}
               <span className="uppercase">{m.role}</span>
@@ -99,6 +172,7 @@ const ChatMessages: React.FC = () => {
               <button className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-2xs" onClick={()=> setDraftMessage(prev => (prev ? prev+"\n\n" : '') + '> ' + m.text.replace(/\n/g,'\n> ') )}>Reply</button>
             </div>
           </div>
+          )}
         </div>
       ))}
       <div ref={endRef} />

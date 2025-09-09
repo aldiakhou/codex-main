@@ -4,7 +4,7 @@ import { IconTools } from '@tabler/icons-react';
 import McpServerModal from '../McpServerModal';
 
 const ToolsWorkspace: React.FC = () => {
-  const { status, logs, mcpTools, refreshMcpTools, mcpServers, refreshMcpServers, serverErrors } = useBackend();
+  const { status, logs, mcpTools, refreshMcpTools, mcpServers, refreshMcpServers, serverErrors, customPrompts, refreshCustomPrompts, setDraftMessage } = useBackend();
   const [filter, setFilter] = useState('');
   const [openModal, setOpenModal] = useState<string | false>(false);
   useEffect(() => { refreshMcpServers().then(()=>refreshMcpTools()).catch(()=>{}); }, []);
@@ -73,6 +73,33 @@ const ToolsWorkspace: React.FC = () => {
             );
           })
         )}
+      </div>
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold">Custom Prompts</h2>
+          <div className="flex items-center gap-2">
+            <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-sm" onClick={()=>refreshCustomPrompts()}>Refresh</button>
+          </div>
+        </div>
+        <div className="border border-[var(--border)] rounded bg-[var(--bg-secondary)] p-2 max-h-80 overflow-auto text-sm">
+          {(!customPrompts || customPrompts.length === 0) ? (
+            <div className="text-[var(--text-tertiary)]">No custom prompts found</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {customPrompts.map((p: any) => (
+                <div key={p.name+String(p.path)} className="border border-[var(--border)] rounded p-3 bg-[var(--bg-tertiary)]">
+                  <div className="font-semibold truncate" title={p.name}>{p.name}</div>
+                  <div className="text-2xs text-[var(--text-tertiary)] truncate" title={p.path}>{p.path}</div>
+                  <div className="mt-2 text-xs text-[var(--text-primary)] line-clamp-4 whitespace-pre-wrap">{p.content}</div>
+                  <div className="mt-2 flex gap-2 justify-end">
+                    <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs" onClick={async()=>{ try { await navigator.clipboard.writeText(p.content); } catch {} }}>Copy</button>
+                    <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs" onClick={()=> setDraftMessage((prev: string)=> (prev ? prev+"\n\n" : '') + p.content)}>Insert</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div className="mt-8">
         <div className="flex items-center justify-between mb-2">
