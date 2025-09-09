@@ -98,7 +98,7 @@ class TaskStore:
 TASKS = TaskStore()
 
 
-# Simple in-memory agent registry (replace with file-backed persistence as needed)
+# Simple in-memory fallback agent registry (used if real agents fail to load)
 DEFAULT_AGENTS: List[Dict[str, Any]] = [
     {
         "id": "agent-researcher-1",
@@ -110,6 +110,90 @@ DEFAULT_AGENTS: List[Dict[str, Any]] = [
         "tool_allowlist": ["exec", "apply_patch", "mcp:web-search"],
     }
 ]
+
+
+# ===== Agent bridge (loads your real agents if available) =====
+class AgentBridge:
+    def __init__(self) -> None:
+        self.loaded = False
+        self.error: Optional[str] = None
+        self.registry = None  # agents.base.AgentRegistry
+
+    def load(self) -> bool:
+        if self.loaded:
+            return True
+        try:
+            # Local shimmed core is available under `mcp-agents-orchestrator/core`
+            # Your agents package is under `mcp-agents-orchestrator/agents`.
+            from agents.base import get_agent_registry  # type: ignore
+            from agents.mcp_enhanced_agents import register_mcp_agents  # type: ignore
+
+            reg = get_agent_registry()
+            # Register MCP + tool agents into the base registry (instantiates agents)
+            register_mcp_agents(reg)
+            self.registry = reg
+            self.loaded = True
+            return True
+        except Exception as e:  # pragma: no cover - defensive
+            self.error = str(e)
+            return False
+
+    def list_agents(self) -> List[Dict[str, Any]]:
+        if not self.load():
+            return DEFAULT_AGENTS
+        ids = self.registry.list_agents()
+        agents: List[Dict[str, Any]] = []
+        for aid in ids:
+            try:
+                info = self.registry.get_agent_info(aid) or {}
+                agents.append({
+                    "id": aid,
+                    "name": info.get("name", aid),
+                    "description": info.get("description", ""),
+                    "capabilities": info.get("capabilities", []),
+                })
+            except Exception:
+                agents.append({"id": aid, "name": aid})
+        return agents
+
+    def start_task(self, task_id: str, agent_id: str, goal: str, params: Dict[str, Any], cwd: Optional[str]) -> None:
+        ok = self.load()
+        if not ok:
+            # Fallback simulated work
+            def worker():
+                TASKS.update(task_id, status="running", started_at=int(time.time() * 1000))
+                TASKS.append_progress(task_id, "Agent received goal", data={"goal": goal})
+                for step in ["collecting_sources", "extracting_insights", "drafting_report"]:
+                    TASKS.append_progress(task_id, step.replace("_", " ").title())
+                    time.sleep(0.8)
+                TASKS.update(task_id, status="completed", completed_at=int(time.time() * 1000), result={"summary": f"Task complete: {goal}"})
+            threading.Thread(target=worker, daemon=True).start()
+            return
+
+        # Real agent execution path
+        from core.models import AIAgentRequest  # our shim type
+
+        async def run_agent_async():
+            req = AIAgentRequest(request_id=task_id, text=goal, context=params or {}, cwd=cwd)
+            try:
+                TASKS.update(task_id, status="running", started_at=int(time.time() * 1000))
+                TASKS.append_progress(task_id, "Agent started")
+                result = await self.registry.process_request(agent_id, req)
+                TASKS.update(task_id, status="completed", completed_at=int(time.time() * 1000), result=result)
+            except Exception as e:  # pragma: no cover
+                TASKS.update(task_id, status="failed", error=str(e))
+
+        def runner():
+            try:
+                import asyncio
+                asyncio.run(run_agent_async())
+            except Exception as e:  # pragma: no cover
+                TASKS.update(task_id, status="failed", error=str(e))
+
+        threading.Thread(target=runner, daemon=True).start()
+
+
+BRIDGE = AgentBridge()
 
 
 def list_tools() -> Dict[str, Any]:
@@ -174,13 +258,14 @@ def result_text(text: str) -> Dict[str, Any]:
 def handle_call(name: str, args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     args = args or {}
     if name == "agents.list":
+        agents = BRIDGE.list_agents()
         return {
             "jsonrpc": JSONRPC,
             "result": {
                 "content": [
-                    {"type": "text", "text": json.dumps({"agents": DEFAULT_AGENTS})}
+                    {"type": "text", "text": json.dumps({"agents": agents})}
                 ],
-                "structuredContent": {"agents": DEFAULT_AGENTS},
+                "structuredContent": {"agents": agents},
             },
         }
 
@@ -188,18 +273,9 @@ def handle_call(name: str, args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         agent_id = str(args.get("agent_id", ""))
         goal = str(args.get("goal", ""))
         params = args.get("params") or {}
+        cwd = args.get("cwd")
         task = TASKS.create(agent_id, goal, params)
-
-        def worker(task_id: str, goal_text: str):
-            TASKS.update(task_id, status="running", started_at=int(time.time() * 1000))
-            TASKS.append_progress(task_id, "Agent received goal", data={"goal": goal_text})
-            # Simulate work
-            for step in ["collecting_sources", "extracting_insights", "drafting_report"]:
-                TASKS.append_progress(task_id, step.replace("_", " ").title())
-                time.sleep(0.8)
-            TASKS.update(task_id, status="completed", completed_at=int(time.time() * 1000), result={"summary": f"Task complete: {goal_text}"})
-
-        threading.Thread(target=worker, args=(task["task_id"], goal), daemon=True).start()
+        BRIDGE.start_task(task["task_id"], agent_id, goal, params, cwd)
         return result_text(f"Started task {task['task_id']} on agent {agent_id}")
 
     if name == "agents.task_status":
@@ -304,4 +380,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
