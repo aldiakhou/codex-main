@@ -53,7 +53,7 @@ const ChatWorkspace: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden w-full h-screen">
       <div className="flex items-center justify-between p-6 pb-2">
         <h1 className="text-2xl font-bold">Chat</h1>
         <div className="flex items-center gap-3">
@@ -68,10 +68,10 @@ const ChatWorkspace: React.FC = () => {
         <div className="flex-1 min-w-0 px-6 flex flex-col h-full">
           <ErrorBanner message={lastError || null} />
           <ChatTurnDiff />
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 pb-28 md:pb-32">
             <ChatMessages showToolCalls={showToolCalls} />
           </div>
-          <div className="sticky bottom-0 bg-[var(--bg-primary)]/85 backdrop-blur border-t border-[var(--border)]">
+          <div className="sticky bottom-0 z-10 bg-[var(--bg-primary)]/85 backdrop-blur border-t border-[var(--border)]">
             <ChatInterface />
           </div>
         </div>
