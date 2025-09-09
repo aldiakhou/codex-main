@@ -32,6 +32,13 @@ const SettingsWorkspace: React.FC = () => {
     if (!res.ok) setError(res.error || 'Failed to save');
     setSaving(false);
   };
+  const saveAndRestart = async () => {
+    setSaving(true); setError(null);
+    const res = await window.aiw.saveCodexConfig(cfg);
+    if (!res.ok) { setError(res.error || 'Failed to save'); setSaving(false); return; }
+    try { await window.aiw.restart(); } catch {}
+    setSaving(false);
+  };
 
   // --- helpers for nested paths ------------------------------------------
   const set = (key: string, value: any) => setCfg((prev: any) => ({ ...prev, [key]: value }));
@@ -215,6 +222,9 @@ const SettingsWorkspace: React.FC = () => {
             <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={load}>Reload</button>
             <button className="px-3 py-1 rounded bg-[var(--accent)] text-white" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
             <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={()=> window.aiw.restart()}>Restart Backend</button>
+          </div>
+          <div className="flex items-center justify-end gap-2 mt-2">
+            <button className="px-3 py-1 rounded bg-[var(--accent)] text-white" onClick={saveAndRestart} disabled={saving}>{saving ? 'Saving…' : 'Save & Restart'}</button>
           </div>
         </>
       )}

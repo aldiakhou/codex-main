@@ -51,10 +51,21 @@ export class BackendService extends EventEmitter {
     const mcp = cfg.mcp_servers || {};
     for (const [name, s] of Object.entries(mcp)) {
       if (!s || !s.command) continue;
+      // Values passed via -c are parsed as TOML, not JSON. Strings and arrays
+      // are compatible, but inline tables must use TOML syntax.
       args.push('-c', `mcp_servers.${name}.command=${JSON.stringify(s.command)}`);
-      if (s.args && s.args.length) args.push('-c', `mcp_servers.${name}.args=${JSON.stringify(s.args)}`);
-      if (s.env && Object.keys(s.env).length)
-        args.push('-c', `mcp_servers.${name}.env=${JSON.stringify(s.env)}`);
+      if (s.args && s.args.length) {
+        // Arrays of strings are valid TOML as-is (same as JSON syntax)
+        args.push('-c', `mcp_servers.${name}.args=${JSON.stringify(s.args)}`);
+      }
+      if (s.env && Object.keys(s.env).length) {
+        // Convert {K:V} into a TOML inline table: { K = "V", ... }
+        const parts = Object.entries(s.env)
+          .filter(([k, v]) => k && v !== undefined)
+          .map(([k, v]) => `${k} = ${JSON.stringify(String(v))}`);
+        const inline = `{ ${parts.join(', ')} }`;
+        args.push('-c', `mcp_servers.${name}.env=${inline}`);
+      }
     }
     args.push('proto');
 

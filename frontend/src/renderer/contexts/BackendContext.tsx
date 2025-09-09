@@ -68,6 +68,7 @@ type BackendContextType = {
   mcpServers: Record<string, { name: string; command: string; args?: string[]; env?: Record<string,string> }>;
   refreshMcpServers: () => Promise<Record<string, any>>;
   serverErrors: Record<string, string>;
+  plan: { explanation?: string | null; plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> } | null;
 };
 
 const BackendContext = createContext<BackendContextType | undefined>(undefined);
@@ -94,6 +95,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [mcpTools, setMcpTools] = useState<Record<string, any>>({});
   const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
+  const [plan, setPlan] = useState<BackendContextType['plan']>(null);
   const [chatParams, setChatParamsState] = useState<BackendContextType['chatParams']>(() => {
     const saved = localStorage.getItem('chatParams');
     if (saved) {
@@ -187,6 +189,20 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text: cur!.text } : m)));
           return;
         }
+        if (type === 'plan_update') {
+          try {
+            const payload = e.msg || {};
+            const explanation: string | undefined = payload.explanation || undefined;
+            const items: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> = Array.isArray(payload.plan)
+              ? payload.plan.map((it: any) => ({
+                  step: String(it.step || ''),
+                  status: (String(it.status || 'pending').toLowerCase().replace('-', '_') as any) || 'pending',
+                }))
+              : [];
+            setPlan({ explanation: explanation ?? undefined, plan: items });
+          } catch {}
+          return;
+        }
         if (type === 'token_count') {
           const tu = e.msg || {};
           setTokenUsage((prev) => ({
@@ -197,6 +213,17 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             total_tokens: tu.total_tokens ?? prev?.total_tokens ?? 0,
             context_window: prev?.context_window,
           }));
+          return;
+        }
+        if (type === 'stream_error') {
+          const msg = e.msg?.message || 'model stream error';
+          setLogs((prev) => [...prev.slice(-400), `STREAM ERROR: ${msg}`]);
+          setMessages((prev) => {
+            const text = `Stream error: ${msg}`;
+            const last = prev[prev.length - 1];
+            if (last && last.role === 'system' && last.text === text) return prev;
+            return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any];
+          });
           return;
         }
         if (type === 'session_configured') {
@@ -389,6 +416,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
     toolCalls,
     mcpServers,
     serverErrors,
+    plan,
     start: (opts) => window.aiw.start(opts),
     stop: () => window.aiw.stop(),
     login: (apiKey?: string) => window.aiw.login(apiKey),
@@ -428,7 +456,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setMcpServers(cfg || {});
       return cfg;
     },
-  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams, draftMessage, tokenUsage, toolCalls, mcpTools, mcpServers, serverErrors]);
+  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams, draftMessage, tokenUsage, toolCalls, mcpTools, mcpServers, serverErrors, plan]);
 
   return <BackendContext.Provider value={api}>{children}</BackendContext.Provider>;
 };
