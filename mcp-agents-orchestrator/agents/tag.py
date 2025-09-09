@@ -6,8 +6,8 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
 from .base import StructuredOutputAgent, AgentFactory
-from ..core.models import AIAgentRequest
-from ..core.logging import get_logger
+from core.models import AIAgentRequest
+from core.logging import get_logger
 
 logger = get_logger(__name__)
 

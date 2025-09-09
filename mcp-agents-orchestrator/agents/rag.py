@@ -8,8 +8,8 @@ import json
 from pathlib import Path
 
 from .base import ToolEnhancedAgent, AgentFactory
-from ..core.models import AIAgentRequest, RAGResponse
-from ..core.logging import get_logger
+from core.models import AIAgentRequest, RAGResponse
+from core.logging import get_logger
 
 logger = get_logger(__name__)
 

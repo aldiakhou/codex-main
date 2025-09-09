@@ -8,7 +8,7 @@ import inspect
 import asyncio
 from pocketflow import Node, Flow, AsyncNode, AsyncFlow
 
-from ..core.logging import get_logger
+from core.logging import get_logger
 from .base import call_llm
 
 logger = get_logger(__name__)

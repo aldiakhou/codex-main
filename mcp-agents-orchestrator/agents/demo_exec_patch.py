@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Dict
 
 from .base import BaseAgentInterface
-from ..core.models import AIAgentRequest
+from core.models import AIAgentRequest
 from mcp_agents_orchestrator.__main__ import (
     exec_approval_request,
     exec_command_begin,
@@ -65,4 +65,3 @@ class DemoExecPatchAgent(BaseAgentInterface):
 
 def create_demo_exec_patch_agent() -> DemoExecPatchAgent:
     return DemoExecPatchAgent()
-

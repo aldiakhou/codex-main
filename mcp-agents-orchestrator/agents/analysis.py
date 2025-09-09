@@ -19,8 +19,8 @@ from mcp_agents_orchestrator.__main__ import (
 )
 import os
 import uuid
-from ..core.models import AIAgentRequest
-from ..core.logging import get_logger
+from core.models import AIAgentRequest
+from core.logging import get_logger
 
 logger = get_logger(__name__)
 

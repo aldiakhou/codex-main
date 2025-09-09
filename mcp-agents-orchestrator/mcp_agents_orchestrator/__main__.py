@@ -10,6 +10,15 @@ from typing import Any, Dict, List, Optional
 JSONRPC = "2.0"
 MCP_VERSION = "2025-06-18"
 
+# Ensure sibling packages (agents/, core/) are importable regardless of CWD
+try:
+    import pathlib
+    _ROOT = pathlib.Path(__file__).resolve().parents[1]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+except Exception:
+    pass
+
 
 def log(msg: str) -> None:
     try:

@@ -29,7 +29,14 @@ from .summary import SummaryAgent, create_summary_agent
 from .tag import TagAgent, create_tag_agent
 from .expand import ExpandAgent, create_expand_agent
 from .live_monitoring import LiveMonitoringAgent, create_live_monitoring_agent
-from .connexion import ConnectionAgent, create_connection_agent
+# Optional: connection agent may not be available in this build
+try:
+    from .connexion import ConnectionAgent, create_connection_agent  # type: ignore
+    _HAS_CONNECTION = True
+except Exception:  # pragma: no cover
+    ConnectionAgent = None  # type: ignore
+    create_connection_agent = None  # type: ignore
+    _HAS_CONNECTION = False
 
 # Unified registry initialization
 from .registry import initialize_all_agents as initialize_pocket_flow_agents
@@ -84,7 +91,7 @@ __all__ = [
     'TagAgent',
     'ExpandAgent',
     'LiveMonitoringAgent',
-    'ConnectionAgent',
+    # 'ConnectionAgent' (optional),
     
     # Factory functions
     'create_brainstorm_agent',
@@ -96,7 +103,7 @@ __all__ = [
     'create_tag_agent',
     'create_expand_agent',
     'create_live_monitoring_agent',
-    'create_connection_agent',
+    # 'create_connection_agent' (optional),
     
     # Initialization
     'initialize_pocket_flow_agents',

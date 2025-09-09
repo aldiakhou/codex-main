@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from .base import MCPIntegratedAgent, AgentFactory
-from ..core.models import AIAgentRequest, LiveMonitoringResponse
-from ..core.logging import get_logger
+from core.models import AIAgentRequest, LiveMonitoringResponse
+from core.logging import get_logger
 
 logger = get_logger(__name__)
 

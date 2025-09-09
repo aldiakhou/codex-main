@@ -14,14 +14,14 @@ from pocketflow import Node, Flow, AsyncNode
 import os
 from .mcp_client import PocketFlowMCPClient
 from .mcp_result_formatter import MCPResultFormatter
-from ..core.models import (
+from core.models import (
     AIAgentRequest, MCPToolResponse, ErrorSeverity, WebSearchResponse, ResearchResponse, RAGResponse, LiveMonitoringResponse
 )
-from ..core.logging import (
+from core.logging import (
     get_logger, RequestContext, PerformanceTimer, 
     log_agent_activity, log_agent_error
 )
-from ..core.config import get_config
+from core.config import get_config
 
 logger = get_logger(__name__)
 

@@ -5,11 +5,10 @@ Maintains full compatibility with existing MindRobot architecture
 from typing import Dict, Any, List
 from pocketflow import Node
 from .base import StructuredOutputAgent, AgentFactory
-from ..core.models import BrainstormRequest, BrainstormResponse
 
 # Import the existing Pydantic models
 try:
-    from ..agents.pydantic_models import (
+    from .pydantic_models import (
         BrainstormingOutput,  
         NODE_COLORS
     )
@@ -40,13 +39,17 @@ class BrainstormNode(Node):
         self.model = model
         self.temperature = temperature
     
-    def _build_input_text(self, request: BrainstormRequest) -> str:
+    def _build_input_text(self, request) -> str:
         """Build specific input for brainstorming"""
-        input_text = f"""Topic: {request.topic}
-Number of ideas: {request.num_ideas}
-Style: {request.style}
+        topic = getattr(request, 'topic', None)
+        num_ideas = getattr(request, 'num_ideas', None)
+        style = getattr(request, 'style', None)
+        context_val = getattr(request, 'context', None)
+        input_text = f"""Topic: {topic}
+Number of ideas: {num_ideas}
+Style: {style}
 
-Context: {request.context if request.context else 'None provided'}
+Context: {context_val if context_val else 'None provided'}
 
 Generate brainstorming ideas for this topic. Ensure variety and depth.
 Adapt the style as follows:
@@ -98,30 +101,21 @@ Focus on creating ideas that would form a coherent, useful mind map structure.""
     
     def _build_input_text(self, request) -> str:
         """Build specific input for brainstorming"""
-        if isinstance(request, BrainstormRequest):
-            input_text = f"""Topic: {request.topic}
-Number of ideas: {request.num_ideas}
-Style: {request.style}
+        # Handle generic AIAgentRequest-like input
+        context = request.context if hasattr(request, 'context') else {}
+        input_text = f"""Topic: {context.get('topic', 'General')}
+Number of ideas: {context.get('num_ideas', '4-6')}
+Style: {context.get('style', 'creative')}
 
-Context: {request.context if request.context else 'None provided'}
+Context: {context.get('additional_context', 'None provided')}
 
-Generate brainstorming ideas for this topic. Ensure variety and depth.
+Generate brainstorming ideas for this topic.
 Adapt the style as follows:
 - creative: Focus on innovative, out-of-the-box ideas
 - analytical: Focus on systematic, data-driven ideas  
 - practical: Focus on actionable, implementable ideas
 
 Return exactly what was requested in the proper format."""
-        else:
-            # Handle AIAgentRequest format
-            context = request.context if hasattr(request, 'context') else {}
-            input_text = f"""Topic: {context.get('topic', 'General')}
-Number of ideas: {context.get('num_ideas', '4-6')}
-Style: {context.get('style', 'creative')}
-
-Context: {context.get('additional_context', 'None provided')}
-
-Generate brainstorming ideas for this topic."""
         
         return input_text
 

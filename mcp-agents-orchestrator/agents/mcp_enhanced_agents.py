@@ -397,51 +397,23 @@ initialize_mcp_agents()
 # =============================
 
 def register_mcp_agents(base_registry) -> None:
-    """Register MCP and tool-enhanced agents into the base AgentRegistry (instances)."""
-    try:
-        # Web search (MCP)
-        base_registry.register_agent(
-            "web_search",
-            create_enhanced_web_search_agent(),
-            {"category": "mcp_integrated"}
-        )
+    """Register MCP and tool-enhanced agents into the base AgentRegistry (instances).
 
-        # Deep research (MCP)
-        base_registry.register_agent(
-            "deep_research",
-            create_enhanced_deep_research_agent(),
-            {"category": "mcp_integrated"}
-        )
+    Registration is best-effort: failures for one agent do not prevent others.
+    """
+    def _safe_register(agent_id: str, factory):
+        try:
+            base_registry.register_agent(agent_id, factory, {"category": "mcp_integrated" if agent_id in {"web_search","deep_research","live_monitoring"} else "tool_enhanced"})
+            logger.info(f"Registered agent: {agent_id}")
+        except Exception as e:
+            logger.warning(f"Skipping agent {agent_id}: {e}")
 
-        # Live monitoring (MCP)
-        base_registry.register_agent(
-            "live_monitoring",
-            create_live_monitoring_agent(),
-            {"category": "mcp_integrated"}
-        )
-
-        # RAG (tools)
-        base_registry.register_agent(
-            "rag",
-            create_rag_agent(),
-            {"category": "tool_enhanced"}
-        )
-
-        # Analysis (tools)
-        base_registry.register_agent(
-            "analysis",
-            create_analysis_agent(),
-            {"category": "tool_enhanced"}
-        )
-
-        # Demo Exec+Patch (tools)
-        base_registry.register_agent(
-            "demo_exec_patch",
-            create_demo_exec_patch_agent(),
-            {"category": "tool_enhanced"}
-        )
-    except Exception as e:
-        logger.error(f"Failed to register MCP agents into base registry: {e}")
+    _safe_register("web_search", create_enhanced_web_search_agent())
+    _safe_register("deep_research", create_enhanced_deep_research_agent())
+    _safe_register("live_monitoring", create_live_monitoring_agent())
+    _safe_register("rag", create_rag_agent())
+    _safe_register("analysis", create_analysis_agent())
+    _safe_register("demo_exec_patch", create_demo_exec_patch_agent())
 
 
 async def test_mcp_connectivity() -> bool:

@@ -20,7 +20,7 @@ if os.environ.get("MCP_STDIO_MODE", "").lower() in ("1", "true", "yes"):
     builtins.print = _safe_print
 from typing import Dict, Any, List, Optional, Type, Union
 
-from ..core.logging import get_logger
+from core.logging import get_logger
 
 logger = get_logger(__name__)
 

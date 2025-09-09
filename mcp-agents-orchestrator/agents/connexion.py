@@ -7,12 +7,12 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .base import BaseAgentInterface
-from ..core.models import (
+from core.models import (
     AIAgentRequest,
     ConnectionResponse,
     ConnectionSuggestion,
 )
-from ..core.logging import get_logger
+from core.logging import get_logger
 
 logger = get_logger(__name__)
 

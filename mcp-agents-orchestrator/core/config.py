@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -9,7 +9,7 @@ class AIConfig:
 
 @dataclass
 class Config:
-    ai: AIConfig = AIConfig()
+    ai: AIConfig = field(default_factory=AIConfig)
 
 
 _CFG = Config()
@@ -17,4 +17,3 @@ _CFG = Config()
 
 def get_config() -> Config:
     return _CFG
-

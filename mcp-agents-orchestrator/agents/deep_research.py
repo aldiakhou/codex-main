@@ -16,8 +16,8 @@ from pocketflow import AsyncNode, AsyncFlow
 
 from .base import PocketFlowAgent, call_llm
 from .mcp_client import PocketFlowMCPClient
-from ..core.models import AIAgentRequest, ResearchResponse, ResearchSection
-from ..core.logging import get_logger
+from core.models import AIAgentRequest, ResearchResponse, ResearchSection
+from core.logging import get_logger
 
 logger = get_logger(__name__)
 

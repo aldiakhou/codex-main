@@ -6,7 +6,7 @@ import yaml
 import logging
 from typing import Dict, Any, Optional, Union, Type
 from pydantic import BaseModel
-from ..core.models import WebSearchResponse, ResearchResponse, RAGResponse, LiveMonitoringResponse
+from core.models import WebSearchResponse, ResearchResponse, RAGResponse, LiveMonitoringResponse
 from .utils import call_llm
 
 logger = logging.getLogger(__name__)
