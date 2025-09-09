@@ -153,11 +153,11 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!cur) {
             cur = { id: e.id || `delta_${Date.now()}`, text: '' };
             streamingAssistantRef.current = cur;
-            setMessages((prev) => [...prev, { id: cur.id, role: 'assistant', text: '' }]);
+            setMessages((prev) => [...prev, { id: cur.id, role: 'assistant', text: '', ts: Date.now() } as any]);
           }
           cur.text += delta;
           const cid = cur.id;
-          setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text: cur!.text } : m)));
+            setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text: cur!.text } : m)));
           return;
         }
         if (type === 'agent_reasoning') {
@@ -169,7 +169,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text } : m)));
             streamingReasoningRef.current = null;
           } else {
-            setMessages((prev) => [...prev, { id: e.id || `rsn_${Date.now()}`, role: 'reasoning', text }]);
+            setMessages((prev) => [...prev, { id: e.id || `rsn_${Date.now()}`, role: 'reasoning', text, ts: Date.now() } as any]);
           }
           return;
         }
@@ -180,7 +180,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!cur) {
             cur = { id: e.id || `rsn_${Date.now()}`, text: '' };
             streamingReasoningRef.current = cur;
-            setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '' }]);
+            setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '', ts: Date.now() } as any]);
           }
           cur.text += delta;
           const cid = cur.id;
@@ -201,31 +201,31 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         if (type === 'session_configured') {
           const model = e.msg?.model || '';
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Connected. Model: ${model}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Connected. Model: ${model}`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'task_started') {
           const cw = e.msg?.model_context_window;
           if (cw) setTokenUsage((prev) => ({ ...(prev || { input_tokens:0, output_tokens:0, total_tokens:0 }), context_window: cw }));
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task started` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task started`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'task_complete') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task complete.` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task complete.`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'mcp_tool_call_begin') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || `mcp_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'mcp', name, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call begin: ${name}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call begin: ${name}`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'mcp_tool_call_end') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now() } : tc));
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call end: ${name}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call end: ${name}`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'exec_command_begin') {
@@ -233,7 +233,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const cwd = e.msg?.cwd || '';
           const call_id = e.msg?.call_id || e.id || `exec_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exec: ${cmd}\ncwd: ${cwd}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exec: ${cmd}\ncwd: ${cwd}`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'exec_command_output_delta') {
@@ -259,24 +259,24 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const out = e.msg?.formatted_output || e.msg?.stdout || '';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now(), exit_code: code, formatted_output: out, stdout: tc.stdout || (e.msg?.stdout || ''), stderr: tc.stderr || (e.msg?.stderr || '') } : tc));
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exit ${code}\n${out}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exit ${code}\n${out}`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'web_search_begin') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `web search: ${e.msg?.query || ''}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `web search: ${e.msg?.query || ''}`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'web_search_end') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `web search done` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `web search done`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'patch_apply_begin') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Applying patch...` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Applying patch...`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'patch_apply_end') {
           const ok = e.msg?.success ? 'success' : 'failed';
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Patch apply ${ok}` }]);
+          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Patch apply ${ok}`, ts: Date.now() } as any]);
           return;
         }
         if (type === 'conversation_history') {
@@ -393,7 +393,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
     stop: () => window.aiw.stop(),
     login: (apiKey?: string) => window.aiw.login(apiKey),
     userTurn: async (text: string, params = {}) => {
-      setMessages((prev) => [...prev, { id: `user_${Date.now()}`, role: 'user', text }]);
+      setMessages((prev) => [...prev, { id: `user_${Date.now()}`, role: 'user', text, ts: Date.now() } as any]);
       const merged = {
         model: chatParams.model,
         approval_policy: chatParams.approval_policy,

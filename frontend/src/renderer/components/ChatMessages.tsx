@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useBackend } from '../contexts/BackendContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,10 +7,22 @@ import hljs from 'highlight.js';
 const ChatMessages: React.FC = () => {
   const { messages, chatParams, setDraftMessage } = useBackend();
   const endRef = useRef<HTMLDivElement | null>(null);
+  const [showScroll, setShowScroll] = useState(false);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
+
+  useEffect(() => {
+    const target = endRef.current;
+    if (!target) return;
+    const io = new IntersectionObserver((entries) => {
+      const e = entries[0];
+      setShowScroll(!e.isIntersecting);
+    }, { root: null, threshold: 0.1 });
+    io.observe(target);
+    return () => io.disconnect();
+  }, []);
 
   const filtered = useMemo(() => messages.filter(m => m.role !== 'reasoning' || chatParams.showReasoning), [messages, chatParams.showReasoning]);
 
@@ -21,6 +33,7 @@ const ChatMessages: React.FC = () => {
           <div className="text-xs text-[var(--text-tertiary)] mb-1 uppercase tracking-wide flex items-center gap-2 justify-between">
             <span className={`inline-block w-2 h-2 rounded-full ${m.role === 'assistant' ? 'bg-violet-400' : m.role === 'reasoning' ? 'bg-yellow-400' : m.role === 'tool' ? 'bg-blue-400' : m.role === 'user' ? 'bg-green-400' : 'bg-gray-400'}`} />
             <span className="mr-auto ml-2">{m.role}</span>
+            <span className="text-2xs mr-2">{(m as any).ts ? new Date((m as any).ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
             <div className="flex gap-2">
               <button className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-2xs" onClick={async ()=>{ try { await navigator.clipboard.writeText(m.text); } catch {} }}>Copy</button>
               <button className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] text-2xs" onClick={()=> setDraftMessage(prev => (prev ? prev+"\n\n" : '') + '> ' + m.text.replace(/\n/g,'\n> ') )}>Reply</button>
@@ -51,6 +64,11 @@ const ChatMessages: React.FC = () => {
         </div>
       ))}
       <div ref={endRef} />
+      {showScroll && (
+        <button onClick={()=> endRef.current?.scrollIntoView({ behavior: 'smooth' })} className="fixed bottom-28 right-8 px-3 py-2 rounded-full bg-[var(--accent)] text-white shadow-lg">
+          Scroll to latest
+        </button>
+      )}
     </div>
   );
 };

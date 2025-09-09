@@ -55,7 +55,7 @@ const ChatInterface: React.FC = () => {
         </div>
         <form onSubmit={handleSubmit}>
           {/* Parameter bar inside composer */}
-          <div className="flex items-center flex-wrap gap-2 mb-2 text-xs">
+          <div className="flex items-center flex-wrap gap-2 mb-2 text-xs sticky top-0 z-10 bg-[var(--bg-primary)]/80 backdrop-blur px-1 py-1 rounded">
             <div className={`px-2 py-1 rounded-full border ${modelChipClass} flex items-center gap-2`}>
               <span>Model:</span>
               <select
@@ -129,12 +129,7 @@ const ChatInterface: React.FC = () => {
             </button>
           </div>
         </form>
-        {/* Log output (dev) */}
-        <div className="mt-2 text-xs text-[var(--text-tertiary)] max-h-40 overflow-auto mono">
-          {logs.slice(-6).map((l, i) => (
-            <div key={i}>{l}</div>
-          ))}
-        </div>
+        {/* dev logs removed for cleaner chat */}
       </div>
     </div>
   );
