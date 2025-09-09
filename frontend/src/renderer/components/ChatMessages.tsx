@@ -5,8 +5,8 @@ import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js';
 import { IconRobot, IconUser, IconInfoCircle, IconBrain } from '@tabler/icons-react';
 
-type Props = { showToolCalls?: boolean };
-const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
+type Props = { showToolCalls?: boolean; scrollRootRef?: React.RefObject<HTMLDivElement> };
+const ChatMessages: React.FC<Props> = ({ showToolCalls = true, scrollRootRef }) => {
   const { messages, chatParams, setDraftMessage, toolCalls } = useBackend();
   const endRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -26,13 +26,14 @@ const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
   useEffect(() => {
     const target = endRef.current;
     if (!target) return;
+    const rootEl = scrollRootRef?.current || null;
     const io = new IntersectionObserver((entries) => {
       const e = entries[0];
       setShowScroll(!e.isIntersecting);
-    }, { root: null, threshold: 0.1 });
+    }, { root: rootEl, threshold: 0.1 });
     io.observe(target);
     return () => io.disconnect();
-  }, []);
+  }, [scrollRootRef?.current]);
 
   // Hide tool-role messages from inline chat; show reasoning only if enabled.
   const baseMessages = useMemo(() => messages.filter(m => m.role !== 'tool' && (m.role !== 'reasoning' || chatParams.showReasoning)), [messages, chatParams.showReasoning]);
@@ -178,7 +179,8 @@ const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
                           if (langMatch) html = hljs.highlight(txt, { language: langMatch[1] }).value;
                           else html = hljs.highlightAuto(txt).value;
                         } catch (e) { html = txt; }
-                        return <pre className="hljs"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>;
+                        // Do not return <pre> here; ReactMarkdown wraps block code in <pre>.
+                        return <code className={`hljs ${className||''}`} dangerouslySetInnerHTML={{ __html: html }} {...props} />;
                       }
                     }}
                   >

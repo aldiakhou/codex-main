@@ -17,6 +17,13 @@
 @tailwind components;
 @tailwind utilities;
 
+:root, html, body, #root {
+  height: 100%;
+}
+html, body, #root {
+  overflow: hidden; /* Prevent page scroll; inner panes handle scrolling */
+}
+
 :root {
   /* ===== GOLDEN RATIO SPACING SYSTEM ===== */
   /* Based on φ (phi) = 1.618... for perfect proportions */

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import ChatMessages from '../ChatMessages';
 import ChatInterface from '../ChatInterface';
 import ErrorBanner from '../ErrorBanner';
@@ -43,6 +43,7 @@ const ChatWorkspace: React.FC = () => {
     const v = localStorage.getItem('showToolCalls');
     return v !== 'false';
   });
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const toggleToolCalls = () => {
     setShowToolCalls((prev) => {
@@ -53,7 +54,7 @@ const ChatWorkspace: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden w-full h-screen">
+    <div className="flex-1 flex flex-col overflow-hidden w-full h-full">
       <div className="flex items-center justify-between p-6 pb-2">
         <h1 className="text-2xl font-bold">Chat</h1>
         <div className="flex items-center gap-3">
@@ -64,12 +65,12 @@ const ChatWorkspace: React.FC = () => {
           <div className="text-sm text-[var(--text-secondary)]">Status: {status}</div>
         </div>
       </div>
-      <div className={`flex-1 flex ${hasPlan ? '': ''}`}>
-        <div className="flex-1 min-w-0 px-6 flex flex-col h-full">
+      <div className={`flex-1 min-h-0 flex ${hasPlan ? '': ''}`}>
+        <div className="flex-1 min-w-0 min-h-0 px-6 flex flex-col h-full">
           <ErrorBanner message={lastError || null} />
           <ChatTurnDiff />
-          <div className="flex-1 pb-28 md:pb-32">
-            <ChatMessages showToolCalls={showToolCalls} />
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto pb-28 md:pb-32" data-testid="chat-scroll">
+            <ChatMessages showToolCalls={showToolCalls} scrollRootRef={scrollRef} />
           </div>
           <div className="sticky bottom-0 z-10 bg-[var(--bg-primary)]/85 backdrop-blur border-t border-[var(--border)]">
             <ChatInterface />

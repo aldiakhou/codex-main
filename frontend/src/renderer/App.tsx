@@ -74,7 +74,7 @@ const AppContent: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
       <div className="flex-1 flex overflow-hidden">
-        <main className="flex-1 overflow-auto main-content">
+        <main className="flex-1 overflow-hidden main-content">
           {renderWorkspace()}
         </main>
       </div>
