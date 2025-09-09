@@ -33,5 +33,25 @@ declare global {
       onLog: (cb: (m: string) => void) => () => void;
       onError: (cb: (m: string) => void) => () => void;
     };
+    fsapi: {
+      list: (dir: string) => Promise<{ ok: boolean; entries?: Array<{ name: string; path: string; isDir: boolean }>; error?: string }>;
+      read: (filePath: string) => Promise<{ ok: boolean; data?: string; error?: string }>;
+      readBase64: (filePath: string) => Promise<{ ok: boolean; base64?: string; error?: string }>;
+      stat: (p: string) => Promise<{ ok: boolean; stat?: { size: number; mtimeMs: number; isDir: boolean }; error?: string }>;
+      chooseDir: () => Promise<{ ok: boolean; path?: string; canceled?: boolean }>;
+      createFile: (filePath: string, content?: string) => Promise<{ ok: boolean; error?: string }>;
+      createDir: (dirPath: string) => Promise<{ ok: boolean; error?: string }>;
+      renamePath: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>;
+      deletePath: (p: string, root: string) => Promise<{ ok: boolean; error?: string }>;
+      undo: () => Promise<{ ok: boolean; error?: string }>;
+    };
+    idx: {
+      build: (dir: string) => Promise<{ ok: boolean; stats?: { files: number; links: number }; error?: string }>;
+      backlinks: (filePath: string) => Promise<{ ok: boolean; backlinks?: Array<{ from: string; anchor?: string }>; error?: string }>;
+      graph: () => Promise<{ ok: boolean; nodes?: Array<{ path: string; name: string }>; edges?: Array<{ from: string; to: string; anchor?: string }>; root?: string; error?: string }>;
+      watchStart: (dir: string) => Promise<{ ok: boolean }>;
+      watchStop: () => Promise<{ ok: boolean }>;
+      onUpdate: (cb: (payload: { stats: { files: number; links: number } }) => void) => () => void;
+    };
   }
 }

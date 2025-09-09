@@ -7,7 +7,7 @@ const PatchApprovalModal: React.FC = () => {
   if (!patchApprovalRequest) return null;
   const entries = Object.entries(patchApprovalRequest.changes || {});
   const [activeIdx, setActiveIdx] = useState(0);
-  const [activePath, activeChange] = entries[activeIdx] || [undefined, undefined] as any;
+  const [activePath, activeChange] = (entries[activeIdx] || [undefined, undefined]) as any;
 
   const diffHtml = useMemo(() => {
     if (!activePath || !activeChange) return '';
@@ -44,7 +44,7 @@ const PatchApprovalModal: React.FC = () => {
       <div className="bg-[var(--bg-secondary)] w-full max-w-3xl rounded-lg border border-[var(--border)]">
         <div className="p-3 border-b border-[var(--border)] flex justify-between items-center">
           <div className="font-semibold">Approve Code Changes</div>
-          <button onClick={() => clearApprovals()}>×</button>
+          <button onClick={() => clearApprovals()} aria-label="Close" title="Close">×</button>
         </div>
         <div className="p-4 text-sm space-y-3">
           {patchApprovalRequest.reason && (
@@ -81,3 +81,4 @@ const PatchApprovalModal: React.FC = () => {
 };
 
 export default PatchApprovalModal;
+

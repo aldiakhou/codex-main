@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { BackendProvider } from './contexts/BackendContext';
 import Header from './components/Header';
@@ -19,11 +19,25 @@ import TerminalWorkspace from './components/workspaces/TerminalWorkspace';
 import ToolsWorkspace from './components/workspaces/ToolsWorkspace';
 import ChatWorkspace from './components/workspaces/ChatWorkspace';
 import SettingsWorkspace from './components/workspaces/SettingsWorkspace';
+import GraphWorkspace from './components/workspaces/GraphWorkspace';
 
 const AppContent: React.FC = () => {
   const [activeWorkspace, setActiveWorkspace] = useState('dashboard');
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    const last = window.localStorage.getItem('lastWorkspace');
+    if (last) setActiveWorkspace(last);
+  }, []);
+  useEffect(() => {
+    window.localStorage.setItem('lastWorkspace', activeWorkspace);
+  }, [activeWorkspace]);
+  useEffect(() => {
+    const handler = () => setActiveWorkspace('files');
+    window.addEventListener('open-file-in-files', handler);
+    return () => window.removeEventListener('open-file-in-files', handler);
+  }, []);
 
   const renderWorkspace = () => {
     switch (activeWorkspace) {
@@ -43,6 +57,8 @@ const AppContent: React.FC = () => {
         return <TerminalWorkspace />;
       case 'tools':
         return <ToolsWorkspace />;
+      case 'graph':
+        return <GraphWorkspace />;
       case 'settings':
         return <SettingsWorkspace />;
       default:
@@ -52,26 +68,17 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col app-container">
-      {/* Header */}
-      <Header 
-        activeWorkspace={activeWorkspace} 
-        onWorkspaceChange={setActiveWorkspace} 
+      <Header
+        activeWorkspace={activeWorkspace}
+        onWorkspaceChange={setActiveWorkspace}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
-      
-      {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Main Workspace */}
         <main className="flex-1 overflow-auto main-content">
           {renderWorkspace()}
         </main>
       </div>
-      
-      {/* Modals */}
-      <DiffModal 
-        isOpen={isDiffModalOpen} 
-        onClose={() => setIsDiffModalOpen(false)} 
-      />
+      <DiffModal isOpen={isDiffModalOpen} onClose={() => setIsDiffModalOpen(false)} />
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
       <ExecApprovalModal />
       <PatchApprovalModal />
@@ -90,3 +97,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+

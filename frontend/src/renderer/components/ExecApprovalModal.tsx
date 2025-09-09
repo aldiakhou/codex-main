@@ -14,7 +14,7 @@ const ExecApprovalModal: React.FC = () => {
       <div className="bg-[var(--bg-secondary)] w-full max-w-2xl rounded-lg border border-[var(--border)]">
         <div className="p-3 border-b border-[var(--border)] flex justify-between items-center">
           <div className="font-semibold">Approve Command</div>
-          <button onClick={() => clearApprovals()}>×</button>
+          <button onClick={() => clearApprovals()} aria-label="Close" title="Close">×</button>
         </div>
         <div className="p-4 space-y-2 text-sm">
           {reason && <div className="text-[var(--text-tertiary)]">Reason: {reason}</div>}

@@ -43,3 +43,31 @@ contextBridge.exposeInMainWorld('aiw', {
     return () => ipcRenderer.removeListener('aiw:error', listener);
   },
 });
+
+// Filesystem bridge for Files workspace
+contextBridge.exposeInMainWorld('fsapi', {
+  list: (dir: string) => ipcRenderer.invoke('fs:list', dir),
+  read: (filePath: string) => ipcRenderer.invoke('fs:read', filePath),
+  readBase64: (filePath: string) => ipcRenderer.invoke('fs:readBase64', filePath),
+  stat: (p: string) => ipcRenderer.invoke('fs:stat', p),
+  chooseDir: () => ipcRenderer.invoke('fs:chooseDir'),
+  createFile: (filePath: string, content?: string) => ipcRenderer.invoke('fs:createFile', filePath, content ?? ''),
+  createDir: (dirPath: string) => ipcRenderer.invoke('fs:createDir', dirPath),
+  renamePath: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:renamePath', oldPath, newPath),
+  deletePath: (p: string, root: string) => ipcRenderer.invoke('fs:deletePath', p, root),
+  undo: () => ipcRenderer.invoke('fs:undo'),
+});
+
+// Indexer bridge
+contextBridge.exposeInMainWorld('idx', {
+  build: (dir: string) => ipcRenderer.invoke('idx:build', dir),
+  backlinks: (filePath: string) => ipcRenderer.invoke('idx:backlinks', filePath),
+  graph: () => ipcRenderer.invoke('idx:graph'),
+  watchStart: (dir: string) => ipcRenderer.invoke('idx:watchStart', dir),
+  watchStop: () => ipcRenderer.invoke('idx:watchStop'),
+  onUpdate: (cb: (payload: any) => void) => {
+    const handler = (_: any, payload: any) => cb(payload);
+    ipcRenderer.on('idx:update', handler);
+    return () => ipcRenderer.removeListener('idx:update', handler);
+  },
+});

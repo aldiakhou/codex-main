@@ -22,7 +22,7 @@ type BackendContextType = {
   status: Status;
   logs: string[];
   lastEvent: any | null;
-  messages: { id: string; role: 'assistant' | 'reasoning' | 'system' | 'tool' | 'user'; text: string }[];
+  messages: { id: string; role: 'assistant' | 'reasoning' | 'system' | 'tool' | 'user'; text: string; ts?: number }[];
   draftMessage: string;
   setDraftMessage: (v: string) => void;
   chatParams: {

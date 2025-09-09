@@ -3,11 +3,11 @@ import { useBackend } from '../contexts/BackendContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import hljs from 'highlight.js';
-import { IconRobot, IconUser, IconTools, IconInfoCircle, IconBrain } from '@tabler/icons-react';
+import { IconRobot, IconUser, IconInfoCircle, IconBrain } from '@tabler/icons-react';
 
 type Props = { showToolCalls?: boolean };
 const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
-  const { messages, chatParams, setDraftMessage, toolCalls } = useBackend() as any;
+  const { messages, chatParams, setDraftMessage, toolCalls } = useBackend();
   const endRef = useRef<HTMLDivElement | null>(null);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [showScroll, setShowScroll] = useState(false);
@@ -138,7 +138,7 @@ const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
                   <button className="text-2xs underline text-[var(--text-tertiary)]" onClick={()=>toggle(m.id as string)}>{collapse[m.id as string] ? 'Hide thoughts' : 'Show thoughts'}</button>
                   {collapse[m.id as string] && (
                     <div className="mt-1 text-sm">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} linkTarget="_blank" linkRelationship="noreferrer noopener">{m.text}</ReactMarkdown>
                     </div>
                   )}
                 </div>
@@ -146,6 +146,8 @@ const ChatMessages: React.FC<Props> = ({ showToolCalls = true }) => {
                 <div className="prose prose-invert max-w-none text-sm">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
+                    linkTarget="_blank"
+                    linkRelationship="noreferrer noopener"
                     components={{
                       code({node, inline, className, children, ...props}) {
                         const txt = String(children || '');
