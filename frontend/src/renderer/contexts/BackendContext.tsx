@@ -201,31 +201,31 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         if (type === 'session_configured') {
           const model = e.msg?.model || '';
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Connected. Model: ${model}`, ts: Date.now() } as any]);
+          setMessages((prev) => { const last = prev[prev.length-1]; const text = `Connected. Model: ${model}`; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'task_started') {
           const cw = e.msg?.model_context_window;
           if (cw) setTokenUsage((prev) => ({ ...(prev || { input_tokens:0, output_tokens:0, total_tokens:0 }), context_window: cw }));
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task started`, ts: Date.now() } as any]);
+          setMessages((prev) => { const last = prev[prev.length-1]; const text = 'Task started'; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'task_complete') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Task complete.`, ts: Date.now() } as any]);
+          setMessages((prev) => { const last = prev[prev.length-1]; const text = 'Task complete.'; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'mcp_tool_call_begin') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || `mcp_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'mcp', name, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call begin: ${name}`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = `Tool call begin: ${name}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'mcp_tool_call_end') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now() } : tc));
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `Tool call end: ${name}`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = `Tool call end: ${name}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'exec_command_begin') {
@@ -233,7 +233,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const cwd = e.msg?.cwd || '';
           const call_id = e.msg?.call_id || e.id || `exec_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exec: ${cmd}\ncwd: ${cwd}`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = `exec: ${cmd}\ncwd: ${cwd}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'exec_command_output_delta') {
@@ -259,24 +259,24 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const out = e.msg?.formatted_output || e.msg?.stdout || '';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now(), exit_code: code, formatted_output: out, stdout: tc.stdout || (e.msg?.stdout || ''), stderr: tc.stderr || (e.msg?.stderr || '') } : tc));
-          setMessages((prev) => [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text: `exit ${code}\n${out}`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = `exit ${code}\n${out}`; const last = prev[prev.length-1]; if (last && last.role==='tool' && last.text===text) return prev; return [...prev, { id: e.id || `tool_${Date.now()}`, role: 'tool', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'web_search_begin') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `web search: ${e.msg?.query || ''}`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = `web search: ${e.msg?.query || ''}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'web_search_end') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `web search done`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = 'web search done'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'patch_apply_begin') {
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Applying patch...`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = 'Applying patch...'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'patch_apply_end') {
           const ok = e.msg?.success ? 'success' : 'failed';
-          setMessages((prev) => [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text: `Patch apply ${ok}`, ts: Date.now() } as any]);
+          setMessages((prev) => { const text = `Patch apply ${ok}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: e.id || `sys_${Date.now()}`, role: 'system', text, ts: Date.now() } as any]; });
           return;
         }
         if (type === 'conversation_history') {

@@ -3,7 +3,7 @@ import { useBackend } from '../contexts/BackendContext';
 import ChatControls from './ChatControls';
 
 const ChatInterface: React.FC = () => {
-  const { status, userTurn, login, start, logs, draftMessage, setDraftMessage, chatParams, setChatParams } = useBackend();
+  const { status, userTurn, login, start, logs, draftMessage, setDraftMessage, chatParams, setChatParams, tokenUsage } = useBackend();
   const connected = status === 'connected';
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showCwdEditor, setShowCwdEditor] = useState(false);
@@ -56,8 +56,8 @@ const ChatInterface: React.FC = () => {
         <form onSubmit={handleSubmit}>
           {/* Parameter bar inside composer */}
           <div className="flex items-center flex-wrap gap-2 mb-2 text-xs sticky top-0 z-10 bg-[var(--bg-primary)]/80 backdrop-blur px-1 py-1 rounded">
-            <div className={`px-2 py-1 rounded-full border ${modelChipClass} flex items-center gap-2`}>
-              <span>Model:</span>
+          <div className={`px-2 py-1 rounded-full border ${modelChipClass} flex items-center gap-2`}>
+            <span>Model:</span>
               <select
                 value={chatParams.model}
                 onChange={(e)=>setChatParams({ model: e.target.value })}
@@ -94,6 +94,12 @@ const ChatInterface: React.FC = () => {
             )}
             <button type="button" className="ml-auto px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)]" onClick={()=>setShowAdvanced(v=>!v)}>{showAdvanced ? 'Hide' : 'Edit'}</button>
           </div>
+            {/* Token usage pill */}
+            {tokenUsage?.context_window ? (
+              <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]" title={`in:${tokenUsage.input_tokens||0} out:${tokenUsage.output_tokens||0} total:${tokenUsage.total_tokens||0} / ${tokenUsage.context_window}`}>
+                ctx {Math.min(100, Math.round(((tokenUsage.total_tokens||0) / (tokenUsage.context_window||1)) * 100))}%
+              </div>
+            ) : null}
           {showCwdEditor && (
             <div className="mb-2 p-2 border border-[var(--border)] rounded bg-[var(--bg-secondary)] flex items-center gap-2">
               <input value={cwdInput} onChange={(e)=>setCwdInput(e.target.value)} placeholder="Working directory (absolute or project path)" className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-sm" />
