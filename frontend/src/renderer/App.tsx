@@ -18,6 +18,7 @@ import PlannerWorkspace from './components/workspaces/PlannerWorkspace';
 import TerminalWorkspace from './components/workspaces/TerminalWorkspace';
 import ToolsWorkspace from './components/workspaces/ToolsWorkspace';
 import ChatWorkspace from './components/workspaces/ChatWorkspace';
+import SettingsWorkspace from './components/workspaces/SettingsWorkspace';
 
 const AppContent: React.FC = () => {
   const [activeWorkspace, setActiveWorkspace] = useState('dashboard');
@@ -42,6 +43,8 @@ const AppContent: React.FC = () => {
         return <TerminalWorkspace />;
       case 'tools':
         return <ToolsWorkspace />;
+      case 'settings':
+        return <SettingsWorkspace />;
       default:
         return <DashboardWorkspace />;
     }

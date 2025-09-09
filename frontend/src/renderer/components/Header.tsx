@@ -170,7 +170,7 @@ const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onO
           className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors p-2 rounded-lg glass-button btn-elastic interactive-icon border-gradient-aurora"
           whileHover={{ scale: 1.1, rotate: 90, backgroundColor: 'var(--bg-secondary)' }}
           whileTap={{ scale: 0.9 }}
-          onClick={() => onOpenSettings && onOpenSettings()}
+          onClick={() => onWorkspaceChange('settings')}
         >
           <IconSettings className="w-6 h-6 text-gradient-cosmic" />
         </motion.button>

@@ -313,6 +313,135 @@ export class BackendService extends EventEmitter {
     }
   }
 
+  // --- Codex config (.codex/config.toml) -------------------------------
+  private codexHome(): string {
+    const env = process.env['CODEX_HOME'];
+    return env && env.trim() ? env : path.join(os.homedir(), '.codex');
+  }
+
+  readCodexConfig(): { ok: boolean; config?: any; raw?: string; path: string; error?: string } {
+    try {
+      const cfgDir = this.codexHome();
+      const cfgPath = path.join(cfgDir, 'config.toml');
+      if (!fs.existsSync(cfgPath)) return { ok: true, config: {}, raw: '', path: cfgPath };
+      const raw = fs.readFileSync(cfgPath, 'utf8');
+      let config: any = {};
+      try {
+        // Lazy require to avoid bundler resolution issues; may throw if module missing
+        const { parse } = require('toml');
+        config = parse(raw);
+      } catch (e) {
+        // Fallback to a loose TOML parser for common cases
+        config = this.parseTomlLoose(raw);
+      }
+      return { ok: true, config, raw, path: cfgPath };
+    } catch (e: any) {
+      return { ok: false, error: String(e), path: path.join(this.codexHome(), 'config.toml') };
+    }
+  }
+
+  saveCodexConfig(config: any): { ok: boolean; path: string; error?: string } {
+    try {
+      const cfgDir = this.codexHome();
+      const cfgPath = path.join(cfgDir, 'config.toml');
+      fs.mkdirSync(cfgDir, { recursive: true });
+      let text: string;
+      try {
+        const stringify = require('toml').stringify;
+        text = stringify(config);
+      } catch (e) {
+        text = this.toTomlLoose(config);
+      }
+      fs.writeFileSync(cfgPath, text, 'utf8');
+      this.emit('log', `Saved Codex config to ${cfgPath}`);
+      return { ok: true, path: cfgPath };
+    } catch (e: any) {
+      return { ok: false, error: String(e), path: path.join(this.codexHome(), 'config.toml') };
+    }
+  }
+
+  // --- Minimal TOML helpers (fallback) -----------------------------------
+  private parseTomlLoose(text: string): any {
+    const root: any = {};
+    let path: string[] = [];
+    const setAt = (p: string[], key: string, value: any) => {
+      let cur = root;
+      for (const seg of p) {
+        cur[seg] = cur[seg] || {};
+        cur = cur[seg];
+      }
+      cur[key] = value;
+    };
+    const getAt = (p: string[]) => {
+      let cur = root;
+      for (const seg of p) {
+        cur[seg] = cur[seg] || {};
+        cur = cur[seg];
+      }
+      return cur;
+    };
+    const lines = text.split(/\r?\n/);
+    for (let raw of lines) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const sec = line.match(/^\[(.+?)\]$/);
+      if (sec) {
+        path = sec[1].split('.').map(s => s.trim());
+        continue;
+      }
+      const m = line.match(/^(\w[\w\-\_]*)\s*=\s*(.+)$/);
+      if (!m) continue;
+      const key = m[1];
+      let valRaw = m[2].trim();
+      let value: any;
+      if ((valRaw.startsWith('"') && valRaw.endsWith('"')) || (valRaw.startsWith("'") && valRaw.endsWith("'"))) {
+        value = valRaw.slice(1, -1);
+      } else if (valRaw === 'true' || valRaw === 'false') {
+        value = valRaw === 'true';
+      } else if (valRaw.startsWith('[') && valRaw.endsWith(']')) {
+        const inner = valRaw.slice(1, -1);
+        value = inner.split(',').map(s => s.trim()).filter(Boolean).map((s) => {
+          if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) return s.slice(1, -1);
+          if (s === 'true' || s === 'false') return s === 'true';
+          const n = Number(s); return isNaN(n) ? s : n;
+        });
+      } else {
+        const n = Number(valRaw);
+        value = isNaN(n) ? valRaw : n;
+      }
+      setAt(path, key, value);
+    }
+    return root;
+  }
+
+  private toTomlLoose(obj: any): string {
+    const lines: string[] = [];
+    const writeTable = (prefix: string[], o: any) => {
+      const scalars: [string, any][] = [];
+      const tables: [string, any][] = [];
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || Array.isArray(v)) scalars.push([k, v]);
+        else if (typeof v === 'object') tables.push([k, v]);
+      }
+      if (prefix.length) lines.push('', `[${prefix.join('.')}]`);
+      for (const [k, v] of scalars) lines.push(`${k} = ${this.tomlValue(v)}`);
+      for (const [k, v] of tables) writeTable([...prefix, k], v);
+    };
+    writeTable([], obj || {});
+    return lines.join('\n').replace(/^\n+/, '');
+  }
+
+  private tomlValue(v: any): string {
+    if (Array.isArray(v)) return `[${v.map((x) => this.tomlValue(x)).join(', ')}]`;
+    switch (typeof v) {
+      case 'string': return JSON.stringify(v);
+      case 'number': return String(v);
+      case 'boolean': return v ? 'true' : 'false';
+      default: return JSON.stringify(String(v));
+    }
+  }
+
   // --- MCP tools ----------------------------------------------------------
   listMcpTools(): boolean {
     return this.send({ id: `list_mcp_tools_${Date.now()}`, op: { type: 'list_mcp_tools' } });

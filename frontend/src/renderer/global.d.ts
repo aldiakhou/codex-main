@@ -25,6 +25,8 @@ declare global {
       removeMcpServer: (name: string) => Promise<boolean>;
       restart: () => Promise<void>;
       getMcpServers: () => Promise<Record<string, { name: string; command: string; args?: string[]; env?: Record<string,string> }>>;
+      readCodexConfig: () => Promise<{ ok: boolean; config?: any; raw?: string; path: string; error?: string }>;
+      saveCodexConfig: (cfg: any) => Promise<{ ok: boolean; path: string; error?: string }>;
       onEvent: (cb: (e: any) => void) => () => void;
       onStatus: (cb: (s: string) => void) => () => void;
       onLog: (cb: (m: string) => void) => () => void;

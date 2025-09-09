@@ -29,6 +29,8 @@ const wireBackendIpc = () => {
   ipcMain.handle('aiw:removeMcpServer', (_e, name: string) => backend.removeMcpServer(name));
   ipcMain.handle('aiw:restartBackend', () => backend.restart());
   ipcMain.handle('aiw:getMcpServers', () => backend.getMcpServers());
+  ipcMain.handle('aiw:readCodexConfig', () => backend.readCodexConfig());
+  ipcMain.handle('aiw:saveCodexConfig', (_e, cfg) => backend.saveCodexConfig(cfg));
 
   const send = (ch: string, payload: any) => {
     if (mainWindow) mainWindow.webContents.send(ch, payload);

@@ -41,18 +41,18 @@ const ChatInterface: React.FC = () => {
   return (
     <div className="bg-[var(--bg-primary)] border-t border-[var(--border)] p-4">
       <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-2 text-sm text-[var(--text-secondary)]">
-          <div className="flex items-center gap-2">
-            <span className={`inline-block w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500' : status === 'connecting' ? 'bg-yellow-500 animate-pulse' : status === 'error' ? 'bg-red-500' : 'bg-gray-500'}`} />
-            <span>{status}</span>
-          </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between mb-2 text-sm text-[var(--text-secondary)]">
+            <div className="flex items-center gap-2">
+              <span className={`inline-block w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500' : status === 'connecting' ? 'bg-yellow-500 animate-pulse' : status === 'error' ? 'bg-red-500' : 'bg-gray-500'}`} />
+              <span>{status}</span>
+            </div>
+            <div className="flex items-center gap-2">
             {status !== 'connected' && (
               <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={() => start()}>Start</button>
             )}
-            <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={() => login()}>Login</button>
+            {/* Login moved to Settings */}
+            </div>
           </div>
-        </div>
         <form onSubmit={handleSubmit}>
           {/* Parameter bar inside composer */}
           <div className="flex items-center flex-wrap gap-2 mb-2 text-xs sticky top-0 z-10 bg-[var(--bg-primary)]/80 backdrop-blur px-1 py-1 rounded">

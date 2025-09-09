@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('aiw', {
   removeMcpServer: (name: string) => ipcRenderer.invoke('aiw:removeMcpServer', name),
   restart: () => ipcRenderer.invoke('aiw:restartBackend'),
   getMcpServers: () => ipcRenderer.invoke('aiw:getMcpServers'),
+  readCodexConfig: () => ipcRenderer.invoke('aiw:readCodexConfig'),
+  saveCodexConfig: (cfg: any) => ipcRenderer.invoke('aiw:saveCodexConfig', cfg),
   onEvent: (cb: (e: any) => void) => {
     const listener = (_: any, payload: any) => cb(payload);
     ipcRenderer.on('aiw:event', listener);
