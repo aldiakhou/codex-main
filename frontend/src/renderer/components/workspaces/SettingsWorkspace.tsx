@@ -33,7 +33,20 @@ const SettingsWorkspace: React.FC = () => {
     setSaving(false);
   };
 
+  // --- helpers for nested paths ------------------------------------------
   const set = (key: string, value: any) => setCfg((prev: any) => ({ ...prev, [key]: value }));
+  const setPathVal = (keys: string[], value: any) => setCfg((prev: any) => {
+    const next = { ...prev };
+    let cur: any = next;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k = keys[i];
+      cur[k] = { ...(cur[k] || {}) };
+      cur = cur[k];
+    }
+    cur[keys[keys.length - 1]] = value;
+    return next;
+  });
+
 
   return (
     <div className="flex-1 p-6 overflow-y-auto">
@@ -93,6 +106,74 @@ const SettingsWorkspace: React.FC = () => {
             </div>
           </Section>
 
+          <Section title="History">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Persistence</label>
+                <select value={cfg.history?.persistence || ''} onChange={(e)=> set('history', { ...(cfg.history||{}), persistence: e.target.value || undefined })} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]">
+                  <option value="">(default)</option>
+                  <option value="save-all">save-all</option>
+                  <option value="none">none</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Max bytes</label>
+                <input type="number" value={cfg.history?.max_bytes || ''} onChange={(e)=> set('history', { ...(cfg.history||{}), max_bytes: e.target.value ? Number(e.target.value) : undefined })} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" />
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Notify">
+            <div className="flex items-center gap-2">
+              <label className="text-sm w-40">Commands</label>
+              <input value={(cfg.notify||[]).join(', ')} onChange={(e)=> set('notify', (e.target.value||'').split(',').map((s)=>s.trim()).filter(Boolean))} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" placeholder='"toast", "beep"' />
+            </div>
+          </Section>
+
+          <Section title="Tools Flags">
+            <KvPairs
+              label="Boolean flags (true/false)"
+              obj={Object.fromEntries(Object.entries(cfg.tools || {}).map(([k,v]: any)=>[k, typeof v === 'boolean' ? (v ? 'true' : 'false') : String(v)]))}
+              onChange={(m)=>{
+                const converted: any = {};
+                Object.entries(m).forEach(([k, v]) => {
+                  if (v === 'true') converted[k] = true;
+                  else if (v === 'false') converted[k] = false;
+                  else converted[k] = v as string;
+                });
+                set('tools', converted);
+              }}
+            />
+          </Section>
+
+          <Section title="Model Providers">
+            <ModelProvidersEditor providers={cfg.model_providers || {}} onChange={(m)=> set('model_providers', m)} />
+          </Section>
+
+          <Section title="MCP Servers (Codex Config)">
+            <McpServersEditor servers={cfg.mcp_servers || {}} onChange={(m)=> set('mcp_servers', m)} />
+          </Section>
+
+          <Section title="Files">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">File opener</label>
+                <select value={cfg.file_opener || ''} onChange={(e)=> set('file_opener', e.target.value || undefined)} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]">
+                  <option value="">(default)</option>
+                  <option value="vscode">vscode</option>
+                  <option value="vscode-insiders">vscode-insiders</option>
+                  <option value="windsurf">windsurf</option>
+                  <option value="cursor">cursor</option>
+                  <option value="none">none</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Docs max bytes</label>
+                <input type="number" value={cfg.project_doc_max_bytes || ''} onChange={(e)=> set('project_doc_max_bytes', e.target.value ? Number(e.target.value) : undefined)} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" />
+              </div>
+            </div>
+          </Section>
+
           <Section title="Shell Environment Policy">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <div className="flex items-center gap-2">
@@ -133,6 +214,7 @@ const SettingsWorkspace: React.FC = () => {
           <div className="flex items-center justify-end gap-2 mt-4">
             <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={load}>Reload</button>
             <button className="px-3 py-1 rounded bg-[var(--accent)] text-white" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={()=> window.aiw.restart()}>Restart Backend</button>
           </div>
         </>
       )}
@@ -142,3 +224,93 @@ const SettingsWorkspace: React.FC = () => {
 
 export default SettingsWorkspace;
 
+// --- Subcomponents ---------------------------------------------------------
+
+const ModelProvidersEditor: React.FC<{ providers: Record<string, any>, onChange: (m: Record<string, any>)=>void }> = ({ providers, onChange }) => {
+  const [newId, setNewId] = useState('');
+  const ids = Object.keys(providers || {});
+  const add = () => { const id = newId.trim(); if (!id) return; onChange({ ...providers, [id]: { base_url: '', env_key: '', http_headers: {}, env_http_headers: {}, query_params: {} } }); setNewId(''); };
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <input value={newId} onChange={(e)=>setNewId(e.target.value)} placeholder="provider id (e.g. openai)" className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" />
+        <button className="px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-xs" onClick={add}>Add</button>
+      </div>
+      {ids.length === 0 && <div className="text-2xs text-[var(--text-tertiary)]">No providers</div>}
+      {ids.map((id) => (
+        <div key={id} className="border border-[var(--border)] rounded p-3 bg-[var(--bg-tertiary)] space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">{id}</div>
+            <button className="text-red-300 underline text-xs" onClick={()=>{ const m = { ...providers }; delete m[id]; onChange(m); }}>Remove</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <Input label="Base URL" value={providers[id]?.base_url || ''} onChange={(v)=> onChange({ ...providers, [id]: { ...(providers[id]||{}), base_url: v } })} />
+            <Input label="Env Key" value={providers[id]?.env_key || ''} onChange={(v)=> onChange({ ...providers, [id]: { ...(providers[id]||{}), env_key: v } })} />
+          </div>
+          <KvPairs label="HTTP Headers" obj={providers[id]?.http_headers||{}} onChange={(m)=> onChange({ ...providers, [id]: { ...(providers[id]||{}), http_headers: m } })} />
+          <KvPairs label="Env HTTP Headers" obj={providers[id]?.env_http_headers||{}} onChange={(m)=> onChange({ ...providers, [id]: { ...(providers[id]||{}), env_http_headers: m } })} />
+          <KvPairs label="Query Params" obj={providers[id]?.query_params||{}} onChange={(m)=> onChange({ ...providers, [id]: { ...(providers[id]||{}), query_params: m } })} />
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const McpServersEditor: React.FC<{ servers: Record<string, any>, onChange: (m: Record<string, any>)=>void }> = ({ servers, onChange }) => {
+  const [newId, setNewId] = useState('');
+  const ids = Object.keys(servers || {});
+  const add = () => { const id = newId.trim(); if (!id) return; onChange({ ...servers, [id]: { command: '', args: [], env: {} } }); setNewId(''); };
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <input value={newId} onChange={(e)=>setNewId(e.target.value)} placeholder="server id (e.g. obsidian)" className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" />
+        <button className="px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-xs" onClick={add}>Add</button>
+      </div>
+      {ids.length === 0 && <div className="text-2xs text-[var(--text-tertiary)]">No MCP servers</div>}
+      {ids.map((id) => (
+        <div key={id} className="border border-[var(--border)] rounded p-3 bg-[var(--bg-tertiary)] space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">{id}</div>
+            <button className="text-red-300 underline text-xs" onClick={()=>{ const m = { ...servers }; delete m[id]; onChange(m); }}>Remove</button>
+          </div>
+          <Input label="Command" value={servers[id]?.command || ''} onChange={(v)=> onChange({ ...servers, [id]: { ...(servers[id]||{}), command: v } })} />
+          <Input label="Args (space separated)" value={(servers[id]?.args||[]).join(' ')} onChange={(v)=> onChange({ ...servers, [id]: { ...(servers[id]||{}), args: (v||'').split(' ').map((s:string)=>s.trim()).filter(Boolean) } })} />
+          <KvPairs label="Env" obj={servers[id]?.env||{}} onChange={(m)=> onChange({ ...servers, [id]: { ...(servers[id]||{}), env: m } })} />
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const Input: React.FC<{ label: string, value: string, onChange: (v: string)=>void }> = ({ label, value, onChange }) => (
+  <div className="flex items-center gap-2">
+    <label className="text-sm w-40">{label}</label>
+    <input value={value} onChange={(e)=> onChange(e.target.value)} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" />
+  </div>
+);
+
+const KvPairs: React.FC<{ label: string, obj: Record<string,string>, onChange: (m: Record<string,string>)=>void }> = ({ label, obj, onChange }) => {
+  const entries = Object.entries(obj || {});
+  const [k, setK] = useState('');
+  const [v, setV] = useState('');
+  return (
+    <div>
+      <div className="text-sm text-[var(--text-secondary)] mb-1">{label}</div>
+      <div className="space-y-2">
+        {entries.length === 0 && <div className="text-2xs text-[var(--text-tertiary)]">(none)</div>}
+        {entries.map(([key, val]) => (
+          <div key={key} className="flex items-center gap-2">
+            <input value={key} disabled className="w-48 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] font-mono text-xs" />
+            <input value={val} onChange={(e)=>{ const m = { ...(obj||{}) }; m[key]=e.target.value; onChange(m); }} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] font-mono text-xs" />
+            <button className="px-2 py-1 rounded bg-red-500/20 border border-red-500/40 text-xs" onClick={()=>{ const m = { ...(obj||{}) }; delete m[key]; onChange(m); }}>Remove</button>
+          </div>
+        ))}
+        <div className="flex items-center gap-2">
+          <input value={k} onChange={(e)=>setK(e.target.value)} placeholder="KEY" className="w-48 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] font-mono text-xs" />
+          <input value={v} onChange={(e)=>setV(e.target.value)} placeholder="value" className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] font-mono text-xs" />
+          <button className="px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-xs" onClick={()=>{ if (!k.trim()) return; const m = { ...(obj||{}) }; m[k.trim()] = v; onChange(m); setK(''); setV(''); }}>Add</button>
+        </div>
+      </div>
+    </div>
+  );
+};
