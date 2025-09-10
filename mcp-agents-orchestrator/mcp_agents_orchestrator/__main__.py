@@ -576,16 +576,44 @@ class AgentBridge:
         def runner():
             try:
                 import asyncio
+                # -- Auth: set env vars for agents from Codex auth.json --
+                try:
+                    from ..auth import get_provider_context  # type: ignore
+                except Exception:
+                    from mcp_agents_orchestrator.auth import get_provider_context  # type: ignore
+
+                auth_ctx = None
+                try:
+                    auth_ctx = get_provider_context()
+                except Exception:
+                    auth_ctx = None
                 # Set policy env for this task
                 old_stdio = os.environ.get("AGENT_ALLOW_MCP_STDIO")
                 old_http = os.environ.get("AGENT_ALLOW_HTTP_PREFIXES")
                 old_sandbox = os.environ.get("AGENT_SANDBOX_MODE")
+                old_api_key = os.environ.get("OPENAI_API_KEY")
+                old_authz = os.environ.get("AGENT_OPENAI_AUTHORIZATION")
+                old_base = os.environ.get("AGENT_OPENAI_BASE_URL")
+                old_acc = os.environ.get("AGENT_CHATGPT_ACCOUNT_ID")
                 if stdio_allow is not None:
                     os.environ["AGENT_ALLOW_MCP_STDIO"] = stdio_allow
                 if http_allow is not None:
                     os.environ["AGENT_ALLOW_HTTP_PREFIXES"] = http_allow
                 if sandbox_mode is not None:
                     os.environ["AGENT_SANDBOX_MODE"] = str(sandbox_mode)
+                if auth_ctx:
+                    if auth_ctx.get("authorization"):
+                        os.environ["AGENT_OPENAI_AUTHORIZATION"] = str(auth_ctx["authorization"])
+                    if auth_ctx.get("base_url"):
+                        os.environ["AGENT_OPENAI_BASE_URL"] = str(auth_ctx["base_url"])
+                    if auth_ctx.get("account_id"):
+                        os.environ["AGENT_CHATGPT_ACCOUNT_ID"] = str(auth_ctx["account_id"])
+                    if auth_ctx.get("mode") == "api_key":
+                        token = str(auth_ctx.get("authorization", ""))
+                        if token.lower().startswith("bearer "):
+                            token = token[7:]
+                        if token:
+                            os.environ["OPENAI_API_KEY"] = token
                 asyncio.run(run_agent_async())
                 # Restore
                 if old_stdio is None:
@@ -600,6 +628,22 @@ class AgentBridge:
                     os.environ.pop("AGENT_SANDBOX_MODE", None)
                 else:
                     os.environ["AGENT_SANDBOX_MODE"] = old_sandbox
+                if old_api_key is None:
+                    os.environ.pop("OPENAI_API_KEY", None)
+                else:
+                    os.environ["OPENAI_API_KEY"] = old_api_key
+                if old_authz is None:
+                    os.environ.pop("AGENT_OPENAI_AUTHORIZATION", None)
+                else:
+                    os.environ["AGENT_OPENAI_AUTHORIZATION"] = old_authz
+                if old_base is None:
+                    os.environ.pop("AGENT_OPENAI_BASE_URL", None)
+                else:
+                    os.environ["AGENT_OPENAI_BASE_URL"] = old_base
+                if old_acc is None:
+                    os.environ.pop("AGENT_CHATGPT_ACCOUNT_ID", None)
+                else:
+                    os.environ["AGENT_CHATGPT_ACCOUNT_ID"] = old_acc
             except Exception as e:  # pragma: no cover
                 TASKS.update(task_id, status="failed", error=str(e))
 

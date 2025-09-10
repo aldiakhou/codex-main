@@ -11,6 +11,7 @@ Overview
 Status
 - MVP, no external dependencies; pure Python stdio JSON-RPC.
 - Notifications are logged by Codex at present; progress polling is supported via agents.task_status.
+- Codex-auth aware: reads ~/.codex/auth.json (ChatGPT plan tokens or API key) so your agents do not need raw keys.
 
 Permissions (MVP)
 - Pass a `permission_profile` object to `agents.start_task` to control tool use:
@@ -23,7 +24,8 @@ Progress & Plan
 
 Usage
 1) Ensure Python 3.9+ is available on PATH.
-2) Launch Codex with an MCP server entry in `~/.codex/config.toml` (choose one):
+2) Install deps: `pip install -r mcp-agents-orchestrator/requirements.txt`
+3) Launch Codex with an MCP server entry in `~/.codex/config.toml` (choose one):
 
 ```
 [mcp_servers.agents_orchestrator]
@@ -41,7 +43,28 @@ args = ["C:/Users/you/path/to/codex-main/mcp-agents-orchestrator/agents_orchestr
 env = { PYTHONUNBUFFERED = "1" }
 ```
 
-3) Start the app. Codex will spawn the orchestrator lazily when a model decides to call an `agents.*` tool.
+4) Start the app. Codex will spawn the orchestrator lazily when a model decides to call an `agents.*` tool.
+
+Auth
+- The orchestrator inspects `~/.codex/auth.json` (or `CODEX_HOME/auth.json`) like the Rust CLI:
+  - ChatGPT plan: uses `tokens.access_token` with `Authorization: Bearer <token>` and `chatgpt-account-id` when present.
+  - API key: uses `OPENAI_API_KEY` from auth.json or environment.
+- Per-task env exports for agent code:
+  - `AGENT_OPENAI_AUTHORIZATION` (always set when available)
+  - `AGENT_OPENAI_BASE_URL` (ChatGPT backend or OpenAI API base)
+  - `AGENT_CHATGPT_ACCOUNT_ID` (when available)
+  - `OPENAI_API_KEY` (only in API-key mode for SDKs)
+
+Built-in Example Agent
+- ID: `simple` (registered via `agents/mcp_enhanced_agents.py`)
+- Behavior: calls the OpenAI Responses API (non-streaming) using Codex auth and returns a summary + raw response.
+- Try it via tools:
+
+```
+agents.list
+agents.start_task {"agent_id":"simple", "goal":"Say hello and summarize: hello world"}
+agents.task_status {"task_id":"<value from start_task>"}
+```
 
 User-Defined Agents (Aliases)
 - Optional file: `~/.codex/agents/agents.json`
