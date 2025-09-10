@@ -385,6 +385,8 @@ class MCPIntegratedAgent(PocketFlowAgent):
             "type": "mcp_integrated",
             "server_configs": [config.get("name", f"{config.get('type', 'unknown')}_server") 
                               for config in self.server_configs],
+            # Expose full details to orchestrator UI/consumers
+            "server_configs_detail": self.server_configs,
             "model": self.model,
             "capabilities": ["mcp_integration", "external_tools", "real_time_data", "pocket_flow"]
         })

@@ -9,8 +9,10 @@ import yaml
 import uuid
 from datetime import datetime
 from pocketflow import AsyncNode, AsyncFlow
+from urllib import request as urlrequest, parse as urlparse
 
 from .base import PocketFlowAgent, call_llm
+from .utils import emit_progress, emit_plan
 from .mcp_client import PocketFlowMCPClient
 from core.models import AIAgentRequest, WebSearchResponse, SearchResult
 from core.logging import get_logger
@@ -79,13 +81,26 @@ priority_sources:
 ```"""
         
         response = call_llm(prompt, temperature=0.3)
-        
+
+        # Robust YAML extraction
+        analysis = None
         try:
-            yaml_str = response.split("```yaml")[1].split("```")[0].strip()
-            analysis = yaml.safe_load(yaml_str)
-            return analysis
+            txt = response.strip() if isinstance(response, str) else ""
+            if "```yaml" in txt:
+                yaml_str = txt.split("```yaml", 1)[1]
+                if "```" in yaml_str:
+                    yaml_str = yaml_str.split("```", 1)[0]
+                analysis = yaml.safe_load(yaml_str.strip())
+            else:
+                # Try to parse whole response as YAML
+                analysis = yaml.safe_load(txt)
         except Exception as e:
             logger.error(f"Failed to parse query analysis: {e}")
+            analysis = None
+
+        if analysis:
+            return analysis
+        else:
             # Fallback simple analysis
             return {
                 "query_analysis": {
@@ -106,6 +121,25 @@ priority_sources:
             }
     
     async def post_async(self, shared, prep_res, exec_res):
+        # Emit progress and initial plan after analysis
+        try:
+            emit_progress(shared, "Query analysis ready")
+            plans = []
+            for p in (exec_res or {}).get("search_plans", []) if isinstance(exec_res, dict) else []:
+                label = p.get("search_query") or p.get("purpose") or "search step"
+                plans.append({"step": f"Search: {label}", "status": "pending"})
+            if plans:
+                # Seed a standard plan
+                seed = [
+                    {"step": "Analyze query", "status": "completed"},
+                    {"step": "Setup tools", "status": "pending"},
+                    {"step": "Execute searches", "status": "pending"},
+                    {"step": "Evaluate sources", "status": "pending"},
+                    {"step": "Synthesize results", "status": "pending"},
+                ]
+                emit_plan(shared, seed, explanation="Web search plan")
+        except Exception:
+            pass
         shared["query_analysis"] = exec_res
         return "setup_tools"
 
@@ -116,25 +150,16 @@ class MultiToolSetupNode(AsyncNode):
     async def exec_async(self, _):
         """Initialize multiple MCP clients for different search engines"""
         
-        # Configuration for multiple MCP servers
+        # Use Python MCP server (mcp_server_fetch). It exposes a 'fetch' tool (URL fetcher), not a query search.
         server_configs = [
             {
-                "name": "fetch_search",
-                "config": {
-                    "command": "npx",
-                    "args": ["-y", "@kazuph/mcp-fetch"],
-                    "type": "stdio"
-                },
-                "priority": 1
-            },
-            {
-                "name": "web_search", 
+                "name": "py_fetch",
                 "config": {
                     "command": "python",
                     "args": ["-m", "mcp_server_fetch"],
                     "type": "stdio"
                 },
-                "priority": 2
+                "priority": 1
             }
         ]
         
@@ -157,6 +182,18 @@ class MultiToolSetupNode(AsyncNode):
         return available_tools
     
     async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, f"Tools ready: {len(exec_res or {})} server(s)")
+            # Update plan stage
+            emit_plan(shared, [
+                {"step": "Analyze query", "status": "completed"},
+                {"step": "Setup tools", "status": "completed"},
+                {"step": "Execute searches", "status": "in_progress"},
+                {"step": "Evaluate sources", "status": "pending"},
+                {"step": "Synthesize results", "status": "pending"},
+            ])
+        except Exception:
+            pass
         shared["available_search_tools"] = exec_res
         if exec_res:
             return "execute_searches"
@@ -168,9 +205,22 @@ class ParallelSearchExecutionNode(AsyncNode):
     """Executes searches in parallel across multiple engines"""
     
     async def prep_async(self, shared):
+        qa = shared.get("query_analysis") or {}
+        plans = []
+        try:
+            plans = qa.get("search_plans") or []
+        except Exception:
+            plans = []
+        # Fallback to a single plan using the original query
+        try:
+            if not plans:
+                oq = qa.get("query_analysis", {}).get("original_query") or shared.get("request").context.get("query", "")
+                plans = [{"step": 1, "search_query": oq, "purpose": "direct search"}]
+        except Exception:
+            pass
         return {
-            "search_plans": shared["query_analysis"]["search_plans"],
-            "available_tools": shared["available_search_tools"]
+            "search_plans": plans,
+            "available_tools": shared.get("available_search_tools", {})
         }
     
     async def exec_async(self, context):
@@ -221,22 +271,72 @@ class ParallelSearchExecutionNode(AsyncNode):
         """Execute search with specific tool"""
         try:
             # Find appropriate tool for web search
-            search_tools = [
-                tool for tool in tools 
-                if any(keyword in tool["name"].lower() for keyword in ["search", "fetch", "web"])
-            ]
+            def has_query_param(tool):
+                schema = tool.get("inputSchema")
+                try:
+                    # Handle object or dict
+                    props = None
+                    if isinstance(schema, dict):
+                        props = schema.get("properties")
+                    elif hasattr(schema, "properties"):
+                        props = getattr(schema, "properties")
+                    if isinstance(props, dict):
+                        return "query" in props
+                except Exception:
+                    pass
+                # string fallback
+                return "\"query\"" in str(schema) or "query" in str(schema)
+
+            # Prefer tools explicitly accepting a 'query' argument
+            search_tools = [tool for tool in tools if has_query_param(tool)]
+            if not search_tools:
+                # Fallback: heuristics on name but avoid pure 'fetch' tools
+                search_tools = [
+                    tool for tool in tools
+                    if ("search" in tool.get("name", "").lower() or "web" in tool.get("name", "").lower())
+                    and "fetch" not in tool.get("name", "").lower()
+                ]
             
             if not search_tools:
-                return {"error": "No search tool found", "tool_name": tool_name}
+                # Direct DDG fallback (Instant Answer API) to ensure minimal results
+                try:
+                    q = urlparse.quote(query)
+                    url = f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1"
+                    with urlrequest.urlopen(url, timeout=10) as resp:
+                        data = json.loads(resp.read().decode('utf-8', errors='ignore'))
+                    items = []
+                    if isinstance(data, dict):
+                        if data.get('AbstractURL'):
+                            items.append({
+                                'title': data.get('Heading') or 'DuckDuckGo Abstract',
+                                'url': data.get('AbstractURL'),
+                                'snippet': data.get('AbstractText') or '',
+                            })
+                        for t in data.get('RelatedTopics', [])[:10]:
+                            if isinstance(t, dict):
+                                txt = t.get('Text') or ''
+                                href = t.get('FirstURL') or ''
+                                if href:
+                                    items.append({'title': txt[:80] or 'Related', 'url': href, 'snippet': txt})
+                    return {
+                        "tool_name": tool_name,
+                        "query": query,
+                        "results": items,
+                        "success": True,
+                        "raw_result": {"source": "duckduckgo"}
+                    }
+                except Exception as e:
+                    return {"error": f"No search tool and DDG failed: {e}", "tool_name": tool_name}
             
             # Use the first available search tool
             search_tool = search_tools[0]
             
             # Prepare parameters based on tool schema
             params = {"query": query}
-            if "limit" in str(search_tool.get("inputSchema", {})):
+            schema_str = str(search_tool.get("inputSchema", {}))
+            if "limit" in schema_str:
                 params["limit"] = 10
-            if "num_results" in str(search_tool.get("inputSchema", {})):
+            if "num_results" in schema_str:
                 params["num_results"] = 10
             
             # Execute search
@@ -244,12 +344,40 @@ class ParallelSearchExecutionNode(AsyncNode):
                 search_tool["name"],
                 params
             )
-            
+            payload = result.get("result", [])
+            success = result.get("success", False)
+            # If tool yielded nothing useful, try DDG fallback
+            empty = (isinstance(payload, list) and not payload) or (isinstance(payload, dict) and not payload)
+            if not success or empty:
+                try:
+                    q = urlparse.quote(query)
+                    url = f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1"
+                    with urlrequest.urlopen(url, timeout=10) as resp:
+                        data = json.loads(resp.read().decode('utf-8', errors='ignore'))
+                    ddg_items = []
+                    if isinstance(data, dict):
+                        if data.get('AbstractURL'):
+                            ddg_items.append({
+                                'title': data.get('Heading') or 'DuckDuckGo Abstract',
+                                'url': data.get('AbstractURL'),
+                                'snippet': data.get('AbstractText') or '',
+                            })
+                        for t in data.get('RelatedTopics', [])[:10]:
+                            if isinstance(t, dict):
+                                txt = t.get('Text') or ''
+                                href = t.get('FirstURL') or ''
+                                if href:
+                                    ddg_items.append({'title': txt[:80] or 'Related', 'url': href, 'snippet': txt})
+                    payload = ddg_items
+                    success = True
+                except Exception:
+                    pass
+
             return {
                 "tool_name": tool_name,
                 "query": query,
-                "results": result.get("result", []),
-                "success": result.get("success", False),
+                "results": payload,
+                "success": success,
                 "raw_result": result
             }
             
@@ -258,6 +386,17 @@ class ParallelSearchExecutionNode(AsyncNode):
             return {"error": str(e), "tool_name": tool_name}
     
     async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, "Search execution complete")
+            emit_plan(shared, [
+                {"step": "Analyze query", "status": "completed"},
+                {"step": "Setup tools", "status": "completed"},
+                {"step": "Execute searches", "status": "completed"},
+                {"step": "Evaluate sources", "status": "in_progress"},
+                {"step": "Synthesize results", "status": "pending"},
+            ])
+        except Exception:
+            pass
         shared["raw_search_results"] = exec_res
         return "evaluate_sources"
 
@@ -266,9 +405,21 @@ class SourceEvaluationNode(AsyncNode):
     """Evaluates and ranks search results for quality and relevance"""
     
     async def prep_async(self, shared):
+        qa_obj = shared.get("query_analysis") or {}
+        oq = None
+        try:
+            if isinstance(qa_obj, dict):
+                oq = qa_obj.get("query_analysis", {}).get("original_query") or qa_obj.get("original_query")
+        except Exception:
+            oq = None
+        if not oq:
+            try:
+                oq = shared.get("request").context.get("query")
+            except Exception:
+                oq = ""
         return {
-            "raw_results": shared["raw_search_results"],
-            "original_query": shared["query_analysis"]["query_analysis"]["original_query"]
+            "raw_results": shared.get("raw_search_results", []),
+            "original_query": oq or ""
         }
     
     async def exec_async(self, context):
@@ -390,6 +541,17 @@ Return JSON:
             }
     
     async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, "Source evaluation complete")
+            emit_plan(shared, [
+                {"step": "Analyze query", "status": "completed"},
+                {"step": "Setup tools", "status": "completed"},
+                {"step": "Execute searches", "status": "completed"},
+                {"step": "Evaluate sources", "status": "completed"},
+                {"step": "Synthesize results", "status": "in_progress"},
+            ])
+        except Exception:
+            pass
         shared["evaluated_sources"] = exec_res
         return "synthesize"
 
@@ -406,16 +568,43 @@ class ResultSynthesisNode(AsyncNode):
     
     async def exec_async(self, context):
         """Create comprehensive synthesis of search results"""
-        query_analysis = context["query_analysis"]["query_analysis"]
-        top_sources = context["evaluated_sources"]["top_sources"]
-        original_query = query_analysis["original_query"]
+        qa_obj = context.get("query_analysis", {}) or {}
+        # Support either {query_analysis:{...}} or direct {...}
+        qa = qa_obj.get("query_analysis", qa_obj) if isinstance(qa_obj, dict) else {}
+        top_sources = (context.get("evaluated_sources", {}) or {}).get("top_sources", [])
+        original_query = qa.get("original_query") or (context.get("request").context.get("query", "") if context.get("request") else "")
         
+        # If no evaluated sources, generate knowledge-based result via LLM
+        if not top_sources:
+            fb_prompt = f"""You are a web search assistant. The user searched for: "{original_query}"
+
+Without external tools, provide the best information you can from your knowledge base.
+Return JSON with this shape:
+{{
+  "query": "{original_query}",
+  "results": [{{"title": "...", "url": "", "snippet": "...", "relevance_score": 0.8, "source_type": "knowledge_base"}}],
+  "total_results": 1,
+  "search_time": 1.0,
+  "search_engine": "knowledge-fallback",
+  "related_queries": []
+}}"""
+            fb_resp = call_llm(fb_prompt, temperature=0.5)
+            try:
+                js = fb_resp.strip()
+                if js.startswith("```json"):
+                    js = js[7:]
+                if js.endswith("```"):
+                    js = js[:-3]
+                return json.loads(js.strip())
+            except Exception:
+                return {"query": original_query, "results": [], "total_results": 0, "search_time": 1.0}
+
         # Create synthesis prompt
         prompt = f"""Synthesize comprehensive search results into a structured response.
 
 Original Query: "{original_query}"
-Query Intent: {query_analysis.get("intent", "general information")}
-Query Type: {query_analysis.get("query_type", "exploratory")}
+        Query Intent: {qa.get("intent", "general information")}
+        Query Type: {qa.get("query_type", "exploratory")}
 
 Top Sources:
 {json.dumps(top_sources, indent=2)}
@@ -488,6 +677,17 @@ IMPORTANT: Include 5-10 most relevant results with enhanced snippets that direct
             }
     
     async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, "Synthesis complete")
+            emit_plan(shared, [
+                {"step": "Analyze query", "status": "completed"},
+                {"step": "Setup tools", "status": "completed"},
+                {"step": "Execute searches", "status": "completed"},
+                {"step": "Evaluate sources", "status": "completed"},
+                {"step": "Synthesize results", "status": "completed"},
+            ])
+        except Exception:
+            pass
         shared["final_result"] = exec_res
         return None
 
@@ -555,6 +755,10 @@ Provide accurate, helpful information even without live search capabilities."""
             }
     
     async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, "Search complete")
+        except Exception:
+            pass
         shared["final_result"] = exec_res
         return None
 

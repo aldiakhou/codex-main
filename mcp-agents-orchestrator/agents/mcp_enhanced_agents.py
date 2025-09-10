@@ -17,7 +17,14 @@ from .deep_research import (
     EnhancedDeepResearchAgent as DeepResearchAgent,
     create_enhanced_deep_research_agent as create_deep_research_agent,
 )
-from .live_monitoring import LiveMonitoringAgent, create_live_monitoring_agent
+# Live monitoring is optional in this build; wrap import
+try:
+    from .live_monitoring import LiveMonitoringAgent, create_live_monitoring_agent  # type: ignore
+    _HAS_LIVE = True
+except Exception:
+    LiveMonitoringAgent = None  # type: ignore
+    create_live_monitoring_agent = None  # type: ignore
+    _HAS_LIVE = False
 from .rag import RAGAgent, create_rag_agent
 from .analysis import AnalysisAgent, create_analysis_agent
 from .demo_exec_patch import create_demo_exec_patch_agent
@@ -410,7 +417,8 @@ def register_mcp_agents(base_registry) -> None:
 
     _safe_register("web_search", create_enhanced_web_search_agent())
     _safe_register("deep_research", create_enhanced_deep_research_agent())
-    _safe_register("live_monitoring", create_live_monitoring_agent())
+    if _HAS_LIVE and callable(create_live_monitoring_agent):
+        _safe_register("live_monitoring", create_live_monitoring_agent())
     _safe_register("rag", create_rag_agent())
     _safe_register("analysis", create_analysis_agent())
     _safe_register("demo_exec_patch", create_demo_exec_patch_agent())

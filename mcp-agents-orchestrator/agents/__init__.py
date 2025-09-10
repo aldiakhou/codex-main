@@ -1,114 +1,71 @@
 """
-Pocket Flow Agent Implementation for MindRobot
-Compatible with existing MindRobot architecture while using Pocket Flow's lightweight framework
+Agents package (compatibility-friendly)
+
+Goals:
+- Keep imports light to avoid hard failures on optional modules
+- Provide convenience functions used by previous examples
+- Expose registry access for direct agent execution
 """
 
 from .base import (
-    PocketFlowAgent, 
+    PocketFlowAgent,
     StructuredOutputAgent,
     MCPIntegratedAgent,
     ToolEnhancedAgent,
     AgentRegistry,
-    get_agent_registry
+    get_agent_registry,
 )
 
-from .brainstorm import BrainstormAgent, create_brainstorm_agent
-# Web search: provide compatibility aliases
-from .web_search import (
-    EnhancedWebSearchAgent as WebSearchAgent,
-    create_enhanced_web_search_agent as create_web_search_agent,
-)
-from .rag import RAGAgent, create_rag_agent
-# Deep research: provide compatibility aliases
-from .deep_research import (
-    EnhancedDeepResearchAgent as DeepResearchAgent,
-    create_enhanced_deep_research_agent as create_deep_research_agent,
-)
-from .analysis import AnalysisAgent, create_analysis_agent
-from .summary import SummaryAgent, create_summary_agent
-from .tag import TagAgent, create_tag_agent
-from .expand import ExpandAgent, create_expand_agent
-from .live_monitoring import LiveMonitoringAgent, create_live_monitoring_agent
-# Optional: connection agent may not be available in this build
+# Lazily import inside functions to avoid import-time failures
+
+async def process_web_search_request(query: str, search_type: str = "general", max_results: int = 5, context: dict | None = None):
+    """Convenience wrapper to run the web_search agent via the global registry.
+
+    Mirrors earlier examples: from mindrobot.agents import process_web_search_request
+    """
+    from ..core.models import AIAgentRequest
+    registry = get_agent_registry()
+    ctx = {"query": query, "search_type": search_type, "max_results": max_results}
+    if context:
+        ctx.update(context)
+    req = AIAgentRequest(context=ctx)
+    return await registry.process_request("web_search", req)
+
+
+async def process_rag_request(query: str, search_type: str = "comprehensive", max_results: int = 10, context: dict | None = None):
+    """Convenience wrapper to run the rag agent via the global registry."""
+    from ..core.models import AIAgentRequest
+    registry = get_agent_registry()
+    ctx = {"query": query, "search_type": search_type, "max_results": max_results}
+    if context:
+        ctx.update(context)
+    req = AIAgentRequest(context=ctx)
+    return await registry.process_request("rag", req)
+
+
+# Optional: initialization helpers (re-export for compatibility)
 try:
-    from .connexion import ConnectionAgent, create_connection_agent  # type: ignore
-    _HAS_CONNECTION = True
+    from .registry import initialize_all_agents as initialize_pocket_flow_agents  # type: ignore
+    from .registry import get_agent_system_status  # type: ignore
 except Exception:  # pragma: no cover
-    ConnectionAgent = None  # type: ignore
-    create_connection_agent = None  # type: ignore
-    _HAS_CONNECTION = False
+    def initialize_pocket_flow_agents(*args, **kwargs):  # type: ignore
+        return {"success": False, "error": "registry unavailable"}
+    def get_agent_system_status():  # type: ignore
+        return {"total_agents": 0, "available_agents": []}
 
-# Unified registry initialization
-from .registry import initialize_all_agents as initialize_pocket_flow_agents
-from .registry import get_agent_system_status
-
-# Quick access functions
-async def process_brainstorm_request(topic: str, num_ideas: str = "4-6", style: str = "creative", context: dict = None):
-    """Process brainstorm request using Pocket Flow"""
-    from ..core.models import BrainstormRequest
-    registry = get_agent_registry()
-    request = BrainstormRequest(topic=topic, num_ideas=num_ideas, style=style, context=context)
-    return await registry.process_request("brainstorm", request)
-
-async def process_web_search_request(query: str, search_type: str = "general", max_results: int = 5):
-    """Process web search request using Pocket Flow"""
-    from ..core.models import AIAgentRequest
-    registry = get_agent_registry()
-    request = AIAgentRequest(context={
-        "query": query,
-        "search_type": search_type,
-        "max_results": max_results
-    })
-    return await registry.process_request("web_search", request)
-
-async def process_rag_request(query: str, search_type: str = "comprehensive", max_results: int = 10):
-    """Process RAG request using Pocket Flow"""
-    from ..core.models import AIAgentRequest
-    registry = get_agent_registry()
-    request = AIAgentRequest(context={
-        "query": query,
-        "search_type": search_type,
-        "max_results": max_results
-    })
-    return await registry.process_request("rag", request)
 
 __all__ = [
     # Base classes
     'PocketFlowAgent',
-    'StructuredOutputAgent', 
+    'StructuredOutputAgent',
     'MCPIntegratedAgent',
     'ToolEnhancedAgent',
     'AgentRegistry',
     'get_agent_registry',
-    
-    # Agent classes
-    'BrainstormAgent',
-    'WebSearchAgent',
-    'RAGAgent',
-    'DeepResearchAgent',
-    'AnalysisAgent',
-    'SummaryAgent',
-    'TagAgent',
-    'ExpandAgent',
-    'LiveMonitoringAgent',
-    # 'ConnectionAgent' (optional),
-    
-    # Factory functions
-    'create_brainstorm_agent',
-    'create_web_search_agent',
-    'create_rag_agent',
-    'create_deep_research_agent',
-    'create_analysis_agent',
-    'create_summary_agent',
-    'create_tag_agent',
-    'create_expand_agent',
-    'create_live_monitoring_agent',
-    # 'create_connection_agent' (optional),
-    
-    # Initialization
-    'initialize_pocket_flow_agents',
-    'get_agent_system_status',
-    'process_brainstorm_request',
+    # Convenience functions
     'process_web_search_request',
     'process_rag_request',
+    # Optional helpers
+    'initialize_pocket_flow_agents',
+    'get_agent_system_status',
 ]

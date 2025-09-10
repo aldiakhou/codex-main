@@ -73,6 +73,54 @@ def notify(method: str, params: Dict[str, Any]) -> None:
         pass
 
 
+# ---- User-defined agents (aliases) persistence ----
+class UserAgentsStore:
+    """File-backed store for simple user-defined agents.
+
+    File format (~/.codex/agents/agents.json):
+    {
+      "agents": [
+        {"id": "my-research", "alias_of": "deep_research", "name": "My Research", "description": "..."}
+      ]
+    }
+    """
+
+    def __init__(self) -> None:
+        self._dir = _state_dir()
+        self._path = os.path.join(self._dir, "agents.json")
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._loaded = False
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        try:
+            if os.path.exists(self._path):
+                with open(self._path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                items = data.get("agents") or []
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, dict) and isinstance(it.get("id"), str):
+                            self._cache[it["id"]] = it
+        except Exception:
+            # Best-effort; ignore corrupt files in MVP
+            self._cache = {}
+        finally:
+            self._loaded = True
+
+    def get(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        self._load()
+        return self._cache.get(agent_id)
+
+    def list(self) -> List[Dict[str, Any]]:
+        self._load()
+        return list(self._cache.values())
+
+
+USER_AGENTS = UserAgentsStore()
+
+
 # ---- Approval state (submission_id mapping) ----
 _APPROVAL_DECISIONS: Dict[str, str] = {}
 _CALL_TO_SUBMISSION: Dict[str, str] = {}
@@ -126,6 +174,28 @@ def exec_command_output_delta(call_id: str, stream: str, chunk_bytes: bytes) -> 
     notify("exec_command_output_delta", {"call_id": call_id, "stream": stream, "chunk": base64.b64encode(chunk_bytes).decode("ascii")})
 
 
+def _to_jsonable(obj: Any) -> Any:
+    """Best-effort conversion of objects to JSON-serializable structures."""
+    try:
+        # Pydantic v2 BaseModel
+        if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
+            return obj.model_dump()
+    except Exception:
+        pass
+    # Built-ins
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_jsonable(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_to_jsonable(v) for v in obj]
+    # Fallback: primitive or string
+    try:
+        json.dumps(obj)
+        return obj
+    except Exception:
+        return str(obj)
+
 def exec_command_end(call_id: str, exit_code: int, stdout: str = "", stderr: str = "", formatted_output: str = "", duration_ms: int = 0) -> None:
     notify("exec_command_end", {"call_id": call_id, "exit_code": exit_code, "stdout": stdout, "stderr": stderr, "formatted_output": formatted_output, "duration_ms": duration_ms})
 
@@ -177,6 +247,10 @@ class TaskStore:
             t = self._tasks.get(task_id)
             if not t:
                 return
+            # Ensure results are JSON-serializable
+            if "result" in patch:
+                patch = dict(patch)
+                patch["result"] = _to_jsonable(patch.get("result"))
             t.update(patch)
             self._persist_event({"type": "update", "task_id": task_id, "patch": patch})
             self._persist_snapshot()
@@ -201,7 +275,9 @@ class TaskStore:
     def get(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             t = self._tasks.get(task_id)
-            return json.loads(json.dumps(t)) if t else None
+            # Return a deep copy without requiring strict JSON encoding here
+            import copy
+            return copy.deepcopy(t) if t else None
 
     def cancel(self, task_id: str) -> bool:
         with self._lock:
@@ -271,6 +347,72 @@ class AgentBridge:
             self.error = str(e)
             return False
 
+    def _expected_context(self, agent_id: str) -> List[str]:
+        aid = agent_id.lower()
+        if aid == "web_search":
+            return ["query", "search_type", "max_results"]
+        if aid == "deep_research":
+            return ["topic", "depth", "focus_areas"]
+        if aid == "live_monitoring":
+            return ["monitoring_target", "metrics_to_track", "thresholds", "check_interval", "historical_data", "additional_context"]
+        if aid == "rag":
+            return ["query", "search_type", "max_results", "additional_context"]
+        if aid == "analysis":
+            return ["data", "analysis_type", "focus_areas", "additional_context"]
+        if aid == "demo_exec_patch":
+            return ["demo", "demo_exec_patch"]
+        return []
+
+    def _expected_context_schema(self, agent_id: str) -> List[Dict[str, Any]]:
+        keys = self._expected_context(agent_id)
+        # Simple descriptors for UI hints
+        descriptions = {
+            "query": "Primary query or question",
+            "search_type": "general|news|academic",
+            "max_results": "Maximum number of results",
+            "topic": "Research topic",
+            "depth": "brief|standard|comprehensive",
+            "focus_areas": "List of focus areas",
+            "monitoring_target": "Target system or source to monitor",
+            "metrics_to_track": "List of metric names to track",
+            "thresholds": "Mapping of metric→threshold",
+            "check_interval": "Check cadence (e.g., 5 minutes)",
+            "historical_data": "Recent data points for baseline",
+            "additional_context": "Free-form additional context",
+            "data": "Content or structured data to analyze",
+            "analysis_type": "general|statistical|qualitative",
+            "focus_areas": "List of areas to focus on",
+            "demo": "Enable exec/patch demo",
+            "demo_exec_patch": "Enable exec/patch demo",
+        }
+        types = {
+            "query": "string",
+            "search_type": "string",
+            "max_results": "number",
+            "topic": "string",
+            "depth": "string",
+            "focus_areas": "array",
+            "monitoring_target": "string",
+            "metrics_to_track": "array",
+            "thresholds": "object",
+            "check_interval": "string",
+            "historical_data": "array",
+            "additional_context": "string",
+            "data": "string",
+            "analysis_type": "string",
+            "demo": "boolean",
+            "demo_exec_patch": "boolean",
+        }
+        schema: List[Dict[str, Any]] = []
+        for k in keys:
+            schema.append({
+                "key": k,
+                "type": types.get(k, "string"),
+                "required": False,
+                "description": descriptions.get(k, k.replace("_", " ")),
+            })
+        return schema
+
     def list_agents(self) -> List[Dict[str, Any]]:
         if not self.load():
             return DEFAULT_AGENTS
@@ -279,14 +421,56 @@ class AgentBridge:
         for aid in ids:
             try:
                 info = self.registry.get_agent_info(aid) or {}
+                # Try to fetch instance to expose server configs if available
+                inst = None
+                try:
+                    inst = self.registry.get_agent(aid)  # type: ignore[attr-defined]
+                except Exception:
+                    inst = None
+                server_detail = None
+                if isinstance(info.get("server_configs_detail"), list):
+                    server_detail = info.get("server_configs_detail")
+                elif inst is not None and hasattr(inst, "server_configs"):
+                    try:
+                        sc = getattr(inst, "server_configs")
+                        if isinstance(sc, list):
+                            server_detail = sc
+                    except Exception:
+                        server_detail = None
                 agents.append({
                     "id": aid,
                     "name": info.get("name", aid),
                     "description": info.get("description", ""),
                     "capabilities": info.get("capabilities", []),
+                    "expected_context": self._expected_context(aid),
+                    "expected_context_schema": self._expected_context_schema(aid),
+                    "server_configs": server_detail,
                 })
             except Exception:
                 agents.append({"id": aid, "name": aid})
+        # Merge user-defined agent aliases (do not override built-ins)
+        try:
+            builtin_ids = {a["id"] for a in agents}
+            for u in USER_AGENTS.list():
+                uid = str(u.get("id"))
+                if not uid or uid in builtin_ids:
+                    continue
+                alias_of = u.get("alias_of")
+                base_info: Optional[Dict[str, Any]] = None
+                if isinstance(alias_of, str) and alias_of in [a["id"] for a in agents]:
+                    base_info = next((a for a in agents if a["id"] == alias_of), None)
+                agents.append({
+                    "id": uid,
+                    "name": u.get("name") or uid,
+                    "description": u.get("description") or (base_info or {}).get("description", ""),
+                    "capabilities": (base_info or {}).get("capabilities", []),
+                    "expected_context": u.get("expected_context") or (base_info or {}).get("expected_context", []),
+                    "expected_context_schema": u.get("expected_context_schema") or (base_info or {}).get("expected_context_schema", []),
+                    "server_configs": (base_info or {}).get("server_configs"),
+                    "alias_of": alias_of,
+                })
+        except Exception:
+            pass
         return agents
 
     def start_task(self, task_id: str, agent_id: str, goal: str, params: Dict[str, Any], cwd: Optional[str], permission_profile: Optional[Dict[str, Any]] = None) -> None:
@@ -336,17 +520,56 @@ class AgentBridge:
         # Real agent execution path
         from core.models import AIAgentRequest  # our shim type
 
-        # Build per-task policy environment
-        stdio_allow = "*" if (permission_profile and any(str(x).startswith("mcp") for x in permission_profile.get("tool_allowlist", []))) else ""
-        http_allow = ""  # tighten by default
+        # Build per-task policy environment from permission_profile
+        tool_allow = (permission_profile or {}).get("tool_allowlist", []) if isinstance(permission_profile, dict) else []
+        stdio_cmds: List[str] = []
+        http_prefixes: List[str] = []
+        for entry in tool_allow:
+            s = str(entry)
+            ls = s.lower()
+            # Allow generic MCP stdio defaults if wildcard present
+            if ls in ("mcp", "mcp:*", "mcp-stdio", "mcp:stdio"):
+                for cmd in ("npx", "python"):
+                    if cmd not in stdio_cmds:
+                        stdio_cmds.append(cmd)
+            # Specific stdio command forms
+            if ls.startswith("mcp:stdio:"):
+                cmd = s.split(":", 2)[-1]
+                if cmd and cmd not in stdio_cmds:
+                    stdio_cmds.append(cmd)
+            if ls.startswith("stdio:"):
+                cmd = s.split(":", 1)[-1]
+                if cmd and cmd not in stdio_cmds:
+                    stdio_cmds.append(cmd)
+            # HTTP prefixes
+            if ls.startswith("mcp:http:") or ls.startswith("http:") or ls.startswith("https:"):
+                # Keep original string for actual prefix (may be https://...)
+                if s not in http_prefixes:
+                    http_prefixes.append(s)
+        # If no explicit stdio commands but any mcp tool was allowed, default to npx;python
+        if not stdio_cmds and any(str(x).lower().startswith("mcp") for x in tool_allow):
+            stdio_cmds = ["npx", "python"]
+        stdio_allow = ";".join(stdio_cmds) if stdio_cmds else None
+        http_allow = ";".join(http_prefixes) if http_prefixes else None
+        sandbox_mode = (permission_profile or {}).get("sandbox") if isinstance(permission_profile, dict) else None
+
+        # Resolve alias to base agent if needed
+        base_agent_id = agent_id
+        try:
+            u = USER_AGENTS.get(agent_id)
+            if u and isinstance(u.get("alias_of"), str):
+                base_agent_id = str(u["alias_of"]) or agent_id
+        except Exception:
+            base_agent_id = agent_id
 
         async def run_agent_async():
             req = AIAgentRequest(request_id=task_id, text=goal, context=params or {}, cwd=cwd)
             try:
                 TASKS.update(task_id, status="running", started_at=int(time.time() * 1000))
                 TASKS.append_progress(task_id, "Agent started")
-                result = await self.registry.process_request(agent_id, req)
+                result = await self.registry.process_request(base_agent_id, req)
                 TASKS.update(task_id, status="completed", completed_at=int(time.time() * 1000), result=result)
+                TASKS.append_progress(task_id, "Agent completed")
             except Exception as e:  # pragma: no cover
                 TASKS.update(task_id, status="failed", error=str(e))
 
@@ -356,10 +579,13 @@ class AgentBridge:
                 # Set policy env for this task
                 old_stdio = os.environ.get("AGENT_ALLOW_MCP_STDIO")
                 old_http = os.environ.get("AGENT_ALLOW_HTTP_PREFIXES")
+                old_sandbox = os.environ.get("AGENT_SANDBOX_MODE")
                 if stdio_allow is not None:
                     os.environ["AGENT_ALLOW_MCP_STDIO"] = stdio_allow
                 if http_allow is not None:
                     os.environ["AGENT_ALLOW_HTTP_PREFIXES"] = http_allow
+                if sandbox_mode is not None:
+                    os.environ["AGENT_SANDBOX_MODE"] = str(sandbox_mode)
                 asyncio.run(run_agent_async())
                 # Restore
                 if old_stdio is None:
@@ -370,6 +596,10 @@ class AgentBridge:
                     os.environ.pop("AGENT_ALLOW_HTTP_PREFIXES", None)
                 else:
                     os.environ["AGENT_ALLOW_HTTP_PREFIXES"] = old_http
+                if old_sandbox is None:
+                    os.environ.pop("AGENT_SANDBOX_MODE", None)
+                else:
+                    os.environ["AGENT_SANDBOX_MODE"] = old_sandbox
             except Exception as e:  # pragma: no cover
                 TASKS.update(task_id, status="failed", error=str(e))
 

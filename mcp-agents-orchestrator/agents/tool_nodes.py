@@ -10,6 +10,7 @@ from pocketflow import Node, Flow, AsyncNode, AsyncFlow
 
 from core.logging import get_logger
 from .base import call_llm
+from .utils import emit_progress, emit_plan
 
 logger = get_logger(__name__)
 
@@ -24,6 +25,10 @@ class AnalyzeToolsNode(AsyncNode):
     
     async def prep_async(self, shared):
         """Extract tool information"""
+        try:
+            emit_progress(shared, "Analyzing available tools")
+        except Exception:
+            pass
         tool_info = []
         for tool in self.tools:
             # Get function signature and docstring
@@ -57,6 +62,16 @@ class AnalyzeToolsNode(AsyncNode):
         """Save tool info and continue"""
         shared["tool_info"] = exec_res
         shared["tool_map"] = self.tool_map
+        try:
+            emit_progress(shared, f"Tools analyzed: {len(exec_res)}")
+            emit_plan(shared, [
+                {"step": "Analyze tools", "status": "completed"},
+                {"step": "Decide strategy", "status": "in_progress"},
+                {"step": "Execute tools", "status": "pending"},
+                {"step": "Generate answer", "status": "pending"},
+            ], explanation="Tool agent plan")
+        except Exception:
+            pass
         return "decide"
 
 
@@ -127,7 +142,27 @@ Return JSON:
         """Route based on decision"""
         shared["tool_strategy"] = exec_res
         if exec_res.get("use_tools", False) and exec_res.get("tool_calls"):
+            try:
+                emit_progress(shared, f"Strategy decided: executing {len(exec_res.get('tool_calls', []))} tool(s)")
+                emit_plan(shared, [
+                    {"step": "Analyze tools", "status": "completed"},
+                    {"step": "Decide strategy", "status": "completed"},
+                    {"step": "Execute tools", "status": "in_progress"},
+                    {"step": "Generate answer", "status": "pending"},
+                ])
+            except Exception:
+                pass
             return "execute"
+        try:
+            emit_progress(shared, "No tools needed; generating answer")
+            emit_plan(shared, [
+                {"step": "Analyze tools", "status": "completed"},
+                {"step": "Decide strategy", "status": "completed"},
+                {"step": "Execute tools", "status": "skipped"},
+                {"step": "Generate answer", "status": "in_progress"},
+            ])
+        except Exception:
+            pass
         return "answer"
 
 
@@ -143,6 +178,10 @@ class ExecuteToolsNode(AsyncNode):
     
     async def exec_async(self, context):
         """Execute tools in sequence with proper async/sync handling"""
+        try:
+            emit_progress({"request": context.get("request")}, "Executing tools")
+        except Exception:
+            pass
         tool_calls = context["tool_calls"]
         tool_map = context["tool_map"]
         results = []
@@ -193,6 +232,16 @@ class ExecuteToolsNode(AsyncNode):
     async def post_async(self, shared, prep_res, exec_res):
         """Save tool results"""
         shared["tool_results"] = exec_res
+        try:
+            emit_progress(shared, "Tools executed")
+            emit_plan(shared, [
+                {"step": "Analyze tools", "status": "completed"},
+                {"step": "Decide strategy", "status": "completed"},
+                {"step": "Execute tools", "status": "completed"},
+                {"step": "Generate answer", "status": "in_progress"},
+            ])
+        except Exception:
+            pass
         return "answer"
 
 
@@ -217,6 +266,10 @@ class ToolAnswerNode(AsyncNode):
     
     async def exec_async(self, context):
         """Generate final answer"""
+        try:
+            emit_progress({"request": context.get("request")}, "Generating answer")
+        except Exception:
+            pass
         request = context["request"]
         tool_results = context["tool_results"]
         strategy = context["strategy"]
@@ -274,6 +327,16 @@ Return response as JSON matching this schema:
     async def post_async(self, shared, prep_res, exec_res):
         """Save final result"""
         shared["result"] = exec_res
+        try:
+            emit_progress(shared, "Answer ready")
+            emit_plan(shared, [
+                {"step": "Analyze tools", "status": "completed"},
+                {"step": "Decide strategy", "status": "completed"},
+                {"step": "Execute tools", "status": "completed"},
+                {"step": "Generate answer", "status": "completed"},
+            ])
+        except Exception:
+            pass
         return None
 
 

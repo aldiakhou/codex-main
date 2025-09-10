@@ -15,6 +15,7 @@ import hashlib
 from pocketflow import AsyncNode, AsyncFlow
 
 from .base import PocketFlowAgent, call_llm
+from .utils import safe_mkdir, safe_write_text, get_sandbox_mode, emit_progress, emit_plan
 from .mcp_client import PocketFlowMCPClient
 from core.models import AIAgentRequest, ResearchResponse, ResearchSection
 from core.logging import get_logger
@@ -164,18 +165,43 @@ document_structure:
     
     async def post_async(self, shared, prep_res, exec_res):
         shared["research_plan"] = exec_res
+
+        # Determine base directory from request.cwd, fallback to CWD
+        request = shared.get("request")
+        base_dir = Path(getattr(request, "cwd", None) or os.getcwd())
+        rel_dir = Path("research_output") / exec_res["plan_id"]
+
+        # Create directory under sandbox rules
+        try:
+            out_dir = safe_mkdir(base_dir, rel_dir)
+            shared["research_base_dir"] = str(base_dir)
+            shared["research_rel_dir"] = str(rel_dir)
+            shared["research_dir"] = out_dir  # absolute path convenience
+
+            # Save research plan
+            plan_rel = rel_dir / "research_plan.yaml"
+            yaml_text = yaml.dump(exec_res, default_flow_style=False, allow_unicode=True)
+            safe_write_text(base_dir, plan_rel, yaml_text)
+            logger.info(f"Created research directory: {out_dir}")
+        except PermissionError as e:
+            # Sandbox is read-only: continue without writing to disk
+            shared["research_base_dir"] = str(base_dir)
+            shared["research_rel_dir"] = str(rel_dir)
+            shared["research_dir"] = base_dir / rel_dir
+            logger.warning(f"Sandbox prevents writing research files: {e}")
+        # Emit plan seed and progress
+        try:
+            emit_progress(shared, "Research plan created")
+            emit_plan(shared, [
+                {"step": "Plan research", "status": "completed"},
+                {"step": "Setup tools", "status": "pending"},
+                {"step": "Execute subplans", "status": "pending"},
+                {"step": "Generate report", "status": "pending"},
+                {"step": "Prepare response", "status": "pending"},
+            ], explanation="Deep research plan")
+        except Exception:
+            pass
         
-        # Create research directory
-        research_dir = Path("research_output") / exec_res["plan_id"]
-        research_dir.mkdir(parents=True, exist_ok=True)
-        shared["research_dir"] = research_dir
-        
-        # Save research plan
-        plan_path = research_dir / "research_plan.yaml"
-        with open(plan_path, 'w', encoding='utf-8') as f:
-            yaml.dump(exec_res, f, default_flow_style=False, allow_unicode=True)
-        
-        logger.info(f"Created research directory: {research_dir}")
         return "setup_research_tools"
 
 
@@ -187,22 +213,13 @@ class ResearchToolSetupNode(AsyncNode):
         
         server_configs = [
             {
-                "name": "web_research",
-                "config": {
-                    "command": "npx",
-                    "args": ["-y", "@kazuph/mcp-fetch"],
-                    "type": "stdio"
-                },
-                "capabilities": ["web", "news", "general"]
-            },
-            {
-                "name": "search_engine",
+                "name": "py_fetch",
                 "config": {
                     "command": "python",
                     "args": ["-m", "mcp_server_fetch"],
                     "type": "stdio"
                 },
-                "capabilities": ["web", "academic", "technical"]
+                "capabilities": ["web", "fetch", "content"]
             }
         ]
         
@@ -223,7 +240,18 @@ class ResearchToolSetupNode(AsyncNode):
         
         return available_tools
     
-    async def post_async(self, shared, prep_res, exec_res):
+async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, f"Research tools ready: {len(exec_res or {})}")
+            emit_plan(shared, [
+                {"step": "Plan research", "status": "completed"},
+                {"step": "Setup tools", "status": "completed"},
+                {"step": "Execute subplans", "status": "in_progress"},
+                {"step": "Generate report", "status": "pending"},
+                {"step": "Prepare response", "status": "pending"},
+            ])
+        except Exception:
+            pass
         shared["research_tools"] = exec_res
         return "execute_subplans"
 
@@ -235,15 +263,17 @@ class SubplanExecutionNode(AsyncNode):
         return {
             "research_plan": shared["research_plan"],
             "research_tools": shared["research_tools"],
-            "research_dir": shared["research_dir"]
+            "research_base_dir": shared.get("research_base_dir"),
+            "research_rel_dir": shared.get("research_rel_dir"),
         }
     
     async def exec_async(self, context):
         """Execute each subplan and create markdown documents"""
         research_plan = context["research_plan"]
         research_tools = context["research_tools"]
-        research_dir = context["research_dir"]
-        
+        base_dir = Path(context["research_base_dir"] or os.getcwd())
+        rel_root = Path(context["research_rel_dir"] or ("research_output/" + research_plan.get("plan_id", "plan")))
+
         all_results = []
         
         # Process each main plan
@@ -254,9 +284,12 @@ class SubplanExecutionNode(AsyncNode):
                 "subplan_results": []
             }
             
-            # Create plan directory
-            plan_dir = research_dir / main_plan["plan_id"]
-            plan_dir.mkdir(exist_ok=True)
+            # Create plan directory under sandbox
+            plan_rel = rel_root / main_plan["plan_id"]
+            try:
+                plan_dir = safe_mkdir(base_dir, plan_rel)
+            except PermissionError:
+                plan_dir = (base_dir / plan_rel)
             
             # Process each subplan
             for subplan in main_plan["subplans"]:
@@ -276,9 +309,11 @@ class SubplanExecutionNode(AsyncNode):
                 )
                 
                 # Save subplan document
-                doc_path = plan_dir / f"{subplan['subplan_id']}.md"
-                with open(doc_path, 'w', encoding='utf-8') as f:
-                    f.write(doc_content)
+                doc_rel = plan_rel / f"{subplan['subplan_id']}.md"
+                try:
+                    doc_path = safe_write_text(base_dir, doc_rel, doc_content)
+                except PermissionError:
+                    doc_path = (base_dir / doc_rel)
                 
                 plan_results["subplan_results"].append({
                     "subplan": subplan,
@@ -292,9 +327,11 @@ class SubplanExecutionNode(AsyncNode):
                 plan_results["subplan_results"]
             )
             
-            summary_path = plan_dir / "plan_summary.md"
-            with open(summary_path, 'w', encoding='utf-8') as f:
-                f.write(plan_summary)
+            summary_rel = plan_rel / "plan_summary.md"
+            try:
+                summary_path = safe_write_text(base_dir, summary_rel, plan_summary)
+            except PermissionError:
+                summary_path = (base_dir / summary_rel)
             
             plan_results["summary_document"] = str(summary_path)
             all_results.append(plan_results)
@@ -306,38 +343,77 @@ class SubplanExecutionNode(AsyncNode):
         results = []
         
         for query in subplan["research_queries"]:
-            # Try each available tool
+            # Prefer tools that accept a 'query' parameter; else fallback to DuckDuckGo API
+            found_any = False
             for tool_name, tool_info in research_tools.items():
                 try:
-                    # Find search tool
-                    search_tools = [
-                        tool for tool in tool_info["tools"] 
-                        if any(keyword in tool["name"].lower() for keyword in ["search", "fetch", "web"])
-                    ]
-                    
-                    if search_tools:
-                        search_tool = search_tools[0]
-                        
-                        # Prepare parameters
-                        params = {"query": query}
-                        if "limit" in str(search_tool.get("inputSchema", {})):
-                            params["limit"] = 5
-                        
-                        result = await tool_info["client"].call_tool_atomic(
-                            search_tool["name"],
-                            params
-                        )
-                        
-                        if result.get("success"):
-                            results.append({
-                                "query": query,
-                                "tool": tool_name,
-                                "data": result.get("result", []),
-                                "timestamp": datetime.now().isoformat()
-                            })
+                    tools = tool_info.get("tools", [])
+                    def has_query_param(tool):
+                        schema = tool.get("inputSchema")
+                        props = None
+                        if isinstance(schema, dict):
+                            props = schema.get("properties")
+                        elif hasattr(schema, "properties"):
+                            props = getattr(schema, "properties")
+                        return isinstance(props, dict) and "query" in props
+                    search_tools = [tool for tool in tools if has_query_param(tool)]
+                    if not search_tools:
+                        continue
+                    st = search_tools[0]
+                    params = {"query": query}
+                    if "limit" in str(st.get("inputSchema", {})):
+                        params["limit"] = 5
+                    result = await tool_info["client"].call_tool_atomic(st["name"], params)
+                    results.append({
+                        "query": query,
+                        "tool": st["name"],
+                        "data": result.get("result", []),
+                        "timestamp": datetime.now().isoformat(),
+                        "success": result.get("success", False),
+                    })
+                    found_any = True
+                except Exception as e:
+                    logger.error(f"Research error for query '{query}' on {tool_name}: {e}")
+            if not found_any:
+                # DuckDuckGo Instant Answer fallback
+                try:
+                    from urllib import request as _urlreq, parse as _urlparse
+                    q = _urlparse.quote(query)
+                    url = f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1"
+                    with _urlreq.urlopen(url, timeout=10) as resp:
+                        data = json.loads(resp.read().decode('utf-8', errors='ignore'))
+                    items = []
+                    if isinstance(data, dict):
+                        if data.get('AbstractURL'):
+                            items.append({'title': data.get('Heading') or 'DuckDuckGo', 'url': data.get('AbstractURL'), 'snippet': data.get('AbstractText') or ''})
+                        for t in data.get('RelatedTopics', [])[:10]:
+                            if isinstance(t, dict) and t.get('FirstURL'):
+                                txt = t.get('Text') or ''
+                                items.append({'title': txt[:80] or 'Related', 'url': t['FirstURL'], 'snippet': txt})
+                    results.append({
+                        "query": query,
+                        "tool": "duckduckgo",
+                        "data": items,
+                        "timestamp": datetime.now().isoformat(),
+                        "success": True,
+                    })
+                    # Optionally fetch top result content if mcp_server_fetch is available
+                    for tname, tinfo in research_tools.items():
+                        fetch_tool = next((t for t in tinfo.get("tools", []) if t.get("name", "").lower()=="fetch"), None)
+                        if fetch_tool and items:
+                            url = items[0].get('url')
+                            if url:
+                                fetch_res = await tinfo["client"].call_tool_atomic("fetch", {"url": url, "max_length": 3000})
+                                results.append({
+                                    "query": url,
+                                    "tool": "fetch",
+                                    "data": fetch_res.get("result"),
+                                    "timestamp": datetime.now().isoformat(),
+                                    "success": fetch_res.get("success", False),
+                                })
                             break
                 except Exception as e:
-                    logger.error(f"Research error for query '{query}': {e}")
+                    logger.warning(f"DDG fallback failed: {e}")
         
         return results
     
@@ -437,7 +513,18 @@ Format as a professional markdown document."""
         
         return header + response
     
-    async def post_async(self, shared, prep_res, exec_res):
+async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, "Subplans executed")
+            emit_plan(shared, [
+                {"step": "Plan research", "status": "completed"},
+                {"step": "Setup tools", "status": "completed"},
+                {"step": "Execute subplans", "status": "completed"},
+                {"step": "Generate report", "status": "in_progress"},
+                {"step": "Prepare response", "status": "pending"},
+            ])
+        except Exception:
+            pass
         shared["plan_results"] = exec_res
         return "generate_final_report"
 
@@ -683,7 +770,18 @@ class ResponsePreparationNode(AsyncNode):
             "research_depth": "comprehensive"
         }
     
-    async def post_async(self, shared, prep_res, exec_res):
+async def post_async(self, shared, prep_res, exec_res):
+        try:
+            emit_progress(shared, "Report generated; preparing response")
+            emit_plan(shared, [
+                {"step": "Plan research", "status": "completed"},
+                {"step": "Setup tools", "status": "completed"},
+                {"step": "Execute subplans", "status": "completed"},
+                {"step": "Generate report", "status": "completed"},
+                {"step": "Prepare response", "status": "in_progress"},
+            ])
+        except Exception:
+            pass
         shared["response_data"] = exec_res
         return None
 
