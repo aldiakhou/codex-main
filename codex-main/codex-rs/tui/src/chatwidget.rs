@@ -1015,6 +1015,11 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(crate::app_event::AppEvent::ConversationHistory(ev));
             }
+            // Agents proto events are currently not displayed directly in the TUI chat widget
+            EventMsg::AgentsListed(_) => {}
+            EventMsg::AgentRunStarted(_) => {}
+            EventMsg::AgentStatus(_) => {}
+            EventMsg::AgentCancelled(_) => {}
         }
     }
 

@@ -1,0 +1,71 @@
+#############################################
+# Codex Agents Configuration (agents.toml)  #
+#############################################
+
+# Place this file at: ~/.codex/agents.toml
+# Each top-level [agent.<id>] entry defines a ready-to-run agent.
+
+[agent.research]
+name = "Research Agent"
+description = "Outline → gather → draft → summarize"
+model = "gpt-4o"                 # optional
+approval_policy = "on-request"    # optional: untrusted | on-failure | on-request | never
+sandbox = "workspace-write"       # optional: read-only | workspace-write | danger-full-access
+cwd = "."                          # optional working directory
+
+# Base/system instructions for the agent
+instructions = """
+You are a research agent. Produce a concise research brief based on the user's goal.
+Outline, gather sources (use web_search when available), draft and summarize.
+Return final output as JSON matching the schema.
+"""
+
+# Built-in tools the agent may use
+allowed_builtin_tools = ["shell", "apply_patch", "web_search", "plan", "view_image"]
+
+# Qualified MCP tools the agent may use (server__tool)
+allowed_mcp_tools = [
+  # "fileserver__read_file",
+  # "github__search_issues",
+]
+
+# Strict final JSON schema for validation at completion
+output_schema = '''
+{
+  "type": "object",
+  "required": ["topic","summary","key_points","risks","open_questions","citations"],
+  "properties": {
+    "topic": {"type": "string"},
+    "summary": {"type": "string"},
+    "key_points": {"type": "array", "items": {"type":"string"}},
+    "risks": {"type": "array", "items": {"type":"string"}},
+    "open_questions": {"type": "array", "items": {"type":"string"}},
+    "citations": {
+      "type": "array",
+      "items": {
+        "type":"object",
+        "required":["title","url","snippet"],
+        "properties": {
+          "title":{"type":"string"},
+          "url":{"type":"string","format":"uri"},
+          "snippet":{"type":"string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
+'''
+
+[agent.web_search]
+name = "Web Search Agent"
+description = "Prefers web_search when available; falls back gracefully"
+instructions = """
+Use web_search when available to gather 3–6 relevant sources; otherwise proceed without it.
+Return final output as JSON per schema.
+"""
+allowed_builtin_tools = ["web_search", "plan"]
+allowed_mcp_tools = []
+output_schema = '''{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":true}'''
+

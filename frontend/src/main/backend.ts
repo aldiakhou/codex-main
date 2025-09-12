@@ -435,6 +435,30 @@ export class BackendService extends EventEmitter {
     return this.send({ id: `list_mcp_tools_${Date.now()}`, op: { type: 'list_mcp_tools' } });
   }
 
+  // --- Agents proto ops ---------------------------------------------------
+  listAgents(): boolean {
+    return this.send({ id: `list_agents_${Date.now()}`, op: { type: 'list_agents' } });
+  }
+
+  startAgent(agentId: string, input?: string, context?: any): boolean {
+    const op: any = { type: 'start_agent', id: agentId };
+    if (input && input.trim()) op.input = input;
+    if (context !== undefined) op.context = context;
+    return this.send({ id: `start_agent_${Date.now()}`, op });
+  }
+
+  agentStatus(taskId: string): boolean {
+    return this.send({ id: `agent_status_${Date.now()}`, op: { type: 'agent_status', task_id: taskId } });
+  }
+
+  agentCancel(taskId: string): boolean {
+    return this.send({ id: `agent_cancel_${Date.now()}`, op: { type: 'agent_cancel', task_id: taskId } });
+  }
+
+  agentsReload(): boolean {
+    return this.send({ id: `agents_reload_${Date.now()}`, op: { type: 'agents_reload' } });
+  }
+
   // --- Custom prompts -----------------------------------------------------
   listCustomPrompts(): boolean {
     return this.send({ id: `list_custom_prompts_${Date.now()}`, op: { type: 'list_custom_prompts' } });

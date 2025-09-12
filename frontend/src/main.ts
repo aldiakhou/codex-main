@@ -28,6 +28,12 @@ const wireBackendIpc = () => {
   ipcMain.handle('aiw:getHistory', () => backend.getHistory());
   ipcMain.handle('aiw:listMcpTools', () => backend.listMcpTools());
   ipcMain.handle('aiw:listCustomPrompts', () => backend.listCustomPrompts());
+  // Agents proto ops
+  ipcMain.handle('aiw:listAgents', () => backend.listAgents());
+  ipcMain.handle('aiw:startAgent', (_e, id: string, input?: string, context?: any) => backend.startAgent(id, input, context));
+  ipcMain.handle('aiw:agentStatus', (_e, taskId: string) => backend.agentStatus(taskId));
+  ipcMain.handle('aiw:agentCancel', (_e, taskId: string) => backend.agentCancel(taskId));
+  ipcMain.handle('aiw:agentsReload', () => backend.agentsReload());
 
   // Basic FS IPC for Files workspace
   ipcMain.handle('fs:list', async (_e, dir: string) => {

@@ -100,3 +100,32 @@ This folder is the root of a Cargo workspace. It contains quite a bit of experim
 - [`exec/`](./exec) "headless" CLI for use in automation.
 - [`tui/`](./tui) CLI that launches a fullscreen TUI built with [Ratatui](https://ratatui.rs/).
 - [`cli/`](./cli) CLI multitool that provides the aforementioned CLIs via subcommands.
+
+## Agents (Config + Proto + MCP)
+
+Codex CLI supports simple, configurable “agents” that can be launched from your frontend (via `codex.exe proto`) or externally (via the MCP server). Agents are defined in `~/.codex/agents.toml`.
+
+- Example config: see `docs/agents.toml.example` for a ready-to-use template.
+- Each agent entry specifies: name/description, base instructions, optional model/approval/sandbox/cwd, allowed built-in tools, allowed MCP tools (qualified as `server__tool`), and a strict final JSON schema for validation.
+
+### Using agents via Proto (your frontend)
+- List agents:
+  - Send: `{ "id":"1", "op": { "type":"list_agents" } }`
+  - Receive: `agents_listed` with built-ins + configured agents.
+- Start agent:
+  - Send: `{ "id":"2", "op": { "type":"start_agent", "id":"research", "input":"Write a brief...", "context":{...} } }`
+  - Stream: `agent_run_started`, PlanUpdate, AgentMessage/Delta, and `task_complete`. If final output violates `output_schema`, an `error` event is emitted.
+- Status/cancel:
+  - `{ "op": { "type":"agent_status", "task_id":"..." } }`
+  - `{ "op": { "type":"agent_cancel", "task_id":"..." } }`
+- Reload config without restart:
+  - `{ "op": { "type":"agents_reload" } }` → emits `agents_listed`.
+
+### Using agents via MCP
+- Start the MCP server: `codex mcp`.
+- Tools exposed:
+  - `agents-list`, `agents-start`, `agents-status`, `agents-cancel`, `agents-reload`.
+- `agents-start` reply includes `structured_content` with `{ task_id, allowed_mcp_tools }` so clients can display the effective toolset.
+
+### MCP tools in model tool list
+- When an agent specifies `allowed_mcp_tools`, only those tools are exposed to the model (as function tools) for that run; otherwise, all available MCP tools are exposed. Built-in tools follow the agent’s allowlist.

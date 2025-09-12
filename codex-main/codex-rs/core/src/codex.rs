@@ -750,6 +750,7 @@ impl Session {
                 include_web_search_request: config.tools_web_search_request,
                 use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
                 include_view_image_tool: config.include_view_image_tool,
+                allowed_mcp_tools: if config.allowed_mcp_tools.is_empty() { None } else { Some(config.allowed_mcp_tools.clone()) },
             }),
             user_instructions,
             base_instructions,
@@ -1349,6 +1350,7 @@ async fn submission_loop(
                     include_web_search_request: config.tools_web_search_request,
                     use_streamable_shell_tool: config.use_experimental_streamable_shell_tool,
                     include_view_image_tool: config.include_view_image_tool,
+                    allowed_mcp_tools: if config.allowed_mcp_tools.is_empty() { None } else { Some(config.allowed_mcp_tools.clone()) },
                 });
 
                 let new_turn_context = TurnContext {
@@ -1435,6 +1437,7 @@ async fn submission_loop(
                             use_streamable_shell_tool: config
                                 .use_experimental_streamable_shell_tool,
                             include_view_image_tool: config.include_view_image_tool,
+                            allowed_mcp_tools: if config.allowed_mcp_tools.is_empty() { None } else { Some(config.allowed_mcp_tools.clone()) },
                         }),
                         user_instructions: turn_context.user_instructions.clone(),
                         base_instructions: turn_context.base_instructions.clone(),
@@ -3415,3 +3418,4 @@ mod tests {
         assert_eq!(expected, got);
     }
 }
+

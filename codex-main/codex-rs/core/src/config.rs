@@ -185,6 +185,10 @@ pub struct Config {
     /// All characters are inserted as they are received, and no buffering
     /// or placeholder replacement will occur for fast keypress bursts.
     pub disable_paste_burst: bool,
+
+    /// Optional allowlist of MCP tools (qualified names) to expose to the model as tools.
+    /// When empty, all available MCP tools are exposed.
+    pub allowed_mcp_tools: Vec<String>,
 }
 
 impl Config {
@@ -219,7 +223,10 @@ impl Config {
         })?;
 
         // Step 4: merge with the strongly-typed overrides.
-        Self::load_from_base_config_with_overrides(cfg, overrides, codex_home)
+        let mut loaded = Self::load_from_base_config_with_overrides(cfg, overrides, codex_home)?;
+        // Default to exposing all MCP tools unless configured programmatically by callers.
+        loaded.allowed_mcp_tools = Vec::new();
+        Ok(loaded)
     }
 }
 
@@ -807,6 +814,7 @@ impl Config {
                 .unwrap_or(false),
             include_view_image_tool,
             disable_paste_burst: cfg.disable_paste_burst.unwrap_or(false),
+            allowed_mcp_tools: Vec::new(),
         };
         Ok(config)
     }
@@ -1385,3 +1393,4 @@ trust_level = "trusted"
 
     // No test enforcing the presence of a standalone [projects] header.
 }
+

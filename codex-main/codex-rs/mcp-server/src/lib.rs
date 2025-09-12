@@ -22,6 +22,7 @@ use tracing_subscriber::EnvFilter;
 
 mod codex_message_processor;
 mod codex_tool_config;
+mod agents_tool_config;
 mod codex_tool_runner;
 mod error_code;
 mod exec_approval;

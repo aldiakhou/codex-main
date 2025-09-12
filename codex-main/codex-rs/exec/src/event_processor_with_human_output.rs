@@ -547,6 +547,11 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 }
             },
             EventMsg::ShutdownComplete => return CodexStatus::Shutdown,
+            // Agents proto events: ignore in exec human output mode
+            EventMsg::AgentsListed(_) => {}
+            EventMsg::AgentRunStarted(_) => {}
+            EventMsg::AgentStatus(_) => {}
+            EventMsg::AgentCancelled(_) => {}
             EventMsg::ConversationHistory(_) => {}
         }
         CodexStatus::Running

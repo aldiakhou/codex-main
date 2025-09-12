@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { IconBolt, IconCode, IconFileText, IconActivity, IconPlus, IconSettings, IconList, IconRefresh, IconPlayerPlay } from '@tabler/icons-react';
 import { useBackend } from '../../contexts/BackendContext';
@@ -74,7 +74,7 @@ const cardVariants = {
 };
 
 const AgentsWorkspace: React.FC = () => {
-  const { userTurn } = useBackend();
+  const { listAgents, agentsReload, startAgent, agentRuns, agents: liveAgents, agentCancel, agentStatus, plan, plansByTask, toolCalls, messages } = useBackend();
   const workforceContainerRef = useRef<HTMLDivElement>(null);
   const [scrollState, setScrollState] = useState({ isAtStart: true, isAtEnd: true });
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
@@ -82,6 +82,46 @@ const AgentsWorkspace: React.FC = () => {
   const [goal, setGoal] = useState('Demo exec + patch');
   const [params, setParams] = useState('{ "demo_exec_patch": true }');
   const [status, setStatus] = useState('');
+  const [cardGoals, setCardGoals] = useState<Record<string, string>>({
+    search: 'Research: "AI agents frontend architecture best practices"',
+    developer: 'Draft implementation plan for feature X',
+    document: 'Summarize project docs into a brief',
+  });
+
+  // Drawer state for run details
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsAgentId, setDetailsAgentId] = useState<string | null>(null);
+  const [detailsTaskId, setDetailsTaskId] = useState<string | null>(null);
+
+  const lastAssistant = useMemo(() => {
+    try {
+      const arr = (messages || []).slice().reverse();
+      if (detailsTaskId) {
+        const byTask = arr.find((m: any) => m.role === 'assistant' && m.taskId === detailsTaskId);
+        if (byTask) return byTask;
+      }
+      return arr.find((m: any) => m.role === 'assistant') || null;
+    } catch {
+      return null as any;
+    }
+  }, [messages, detailsTaskId]);
+
+  // Periodically refresh status for running tasks
+  useEffect(() => {
+    const t = setInterval(() => {
+      Object.values(agentRuns || {}).forEach((run) => {
+        if (run.status === 'running') {
+          try { agentStatus(run.task_id); } catch {}
+        }
+      });
+    }, 3000);
+    return () => clearInterval(t);
+  }, [agentRuns, agentStatus]);
+
+  // Fetch agents on mount
+  useEffect(() => {
+    try { listAgents(); } catch {}
+  }, [listAgents]);
 
   const scrollWorkforce = (direction: 'left' | 'right') => {
     if (workforceContainerRef.current) {
@@ -106,32 +146,24 @@ const AgentsWorkspace: React.FC = () => {
     setTimeout(() => setIsCreatingAgent(false), 2000);
   };
 
-  const sendListAgents = async () => {
+  const doListAgents = async () => {
     setStatus('Listing agents...');
-    const text = 'Call the MCP tool `agents.list` with {} and show the JSON result.';
-    await userTurn(text);
-    setStatus('List request sent. See Chat for results.');
+    await listAgents();
+    setStatus('Received agents list.');
   };
 
-  const sendStartTask = async () => {
-    let args: any = {};
-    try { args = JSON.parse(params || '{}'); } catch { args = {}; }
-    const payload = {
-      agent_id: agentId,
-      goal,
-      params: args,
-      permission_profile: { sandbox: 'read-only', approval_policy: 'on-request', tool_allowlist: ['mcp:any'] },
-    } as any;
-    setStatus('Starting task...');
-    const text = [
-      'Call the MCP tool `agents.start_task` with the following JSON arguments:',
-      '```json',
-      JSON.stringify(payload),
-      '```',
-      'Use the tool directly; do not ask for confirmation. Then acknowledge.'
-    ].join('\n');
-    await userTurn(text);
-    setStatus('Task request sent. Watch Chat for approvals and progress.');
+  const doReloadAgents = async () => {
+    setStatus('Reloading agents...');
+    await agentsReload();
+    setStatus('Agents reloaded.');
+  };
+
+  const doStartTask = async () => {
+    let ctx: any = undefined;
+    try { ctx = params ? JSON.parse(params) : undefined; } catch { ctx = undefined; }
+    setStatus('Starting agent...');
+    const ok = await startAgent(agentId, goal, ctx);
+    setStatus(ok ? 'Agent started.' : 'Failed to start agent.');
   };
 
   useEffect(() => {
@@ -151,15 +183,18 @@ const AgentsWorkspace: React.FC = () => {
 
   return (
     <div className="workspace-layout container-full transition-fade-in bg-gradient-aurora">
-      {/* Minimal Agents Manager controls */}
+      {/* Minimal Agents Manager controls (wired to proto) */}
       <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--bg-secondary)] m-6 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Agents Manager (Minimal)</h2>
           <div className="text-sm text-[var(--text-secondary)]">{status}</div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={sendListAgents}>
+          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={doListAgents}>
             <IconList size={16} /> List Agents
+          </button>
+          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={doReloadAgents}>
+            <IconRefresh size={16} /> Reload Agents
           </button>
           <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={()=>window.aiw.listMcpTools()}>
             <IconRefresh size={16} /> Refresh MCP Tools
@@ -175,15 +210,49 @@ const AgentsWorkspace: React.FC = () => {
             <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={goal} onChange={(e)=>setGoal(e.target.value)} />
           </div>
           <div className="flex flex-col gap-1 md:col-span-3">
-            <label className="text-2xs text-[var(--text-tertiary)]">Params (JSON)</label>
+            <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
             <textarea className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[100px]" value={params} onChange={(e)=>setParams(e.target.value)} />
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="px-3 py-1 rounded bg-[var(--accent)] text-white flex items-center gap-2" onClick={sendStartTask}>
+          <button className="px-3 py-1 rounded bg-[var(--accent)] text-white flex items-center gap-2" onClick={doStartTask}>
             <IconPlayerPlay size={16} /> Start Task
           </button>
           <div className="text-2xs text-[var(--text-tertiary)]">Approvals will appear in Chat; monitor progress there.</div>
+        </div>
+
+        {/* Live Agents list + Runs (compact) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+          <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+            <div className="font-semibold mb-2 text-sm">Available Agents</div>
+            <div className="space-y-1 max-h-48 overflow-auto">
+              {liveAgents.length === 0 ? (
+                <div className="text-2xs text-[var(--text-tertiary)]">No agents yet. Use Reload Agents.</div>
+              ) : (
+                liveAgents.map(a => (
+                  <div key={a.id} className="flex items-center justify-between text-sm">
+                    <div className="truncate"><span className="font-medium">{a.id}</span> <span className="text-2xs text-[var(--text-tertiary)]">{a.name}</span></div>
+                    <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>{ setAgentId(a.id); setGoal(a.description || goal); }}>Select</button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+            <div className="font-semibold mb-2 text-sm">Active Runs</div>
+            <div className="space-y-1 max-h-48 overflow-auto">
+              {Object.keys(agentRuns).length === 0 ? (
+                <div className="text-2xs text-[var(--text-tertiary)]">No active runs.</div>
+              ) : (
+                Object.values(agentRuns).sort((a,b)=>b.updated_at-a.updated_at).map(run => (
+                  <div key={run.task_id} className="flex items-center justify-between text-sm">
+                    <div className="truncate"><span className="font-medium">{run.agent_id || 'agent'}</span> <span className="text-2xs text-[var(--text-tertiary)]">{run.status}</span></div>
+                    <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>agentCancel(run.task_id)}>Cancel</button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
       {/* Enhanced Grid Layout with Golden Ratio */}
@@ -342,14 +411,34 @@ const AgentsWorkspace: React.FC = () => {
               initial="hidden"
               animate="visible"
             >
-              {agents.map((agent, index) => (
+              {agents.map((agent, index) => {
+                // Map static cards to real agent ids
+                const mapId = (sid: string) => sid === 'search' ? 'web_search' : sid === 'developer' ? 'structured' : sid === 'document' ? 'structured' : sid;
+                const realId = mapId(agent.id);
+                // Find latest run for this agent
+                const latestRun = Object.values(agentRuns || {})
+                  .filter(r => (r.agent_id || '') === realId)
+                  .sort((a,b)=>b.updated_at - a.updated_at)[0];
+                const cardStatusClass = latestRun ? (latestRun.status === 'running' ? 'processing' : latestRun.status === 'complete' ? 'active' : 'idle') : agent.status;
+                const statusText = latestRun ? latestRun.status : agent.status;
+                const goalValue = cardGoals[agent.id] ?? '';
+                const onStart = async () => {
+                  await startAgent(realId, goalValue || 'Start an agent task.');
+                };
+                const onCancel = async () => { if (latestRun) await agentCancel(latestRun.task_id); };
+                const onView = () => {
+                  setDetailsAgentId(realId);
+                  setDetailsTaskId(latestRun?.task_id || null);
+                  setDetailsOpen(true);
+                };
+                return (
                 <motion.div
                   key={agent.id}
                   variants={cardVariants}
                   whileHover={{ scale: 1.02, y: -5 }}
                   whileTap={{ scale: 0.98 }}
                   className={`card-premium glass-card p-lg interactive-card hover-lift stagger-item shadow-multi ${
-                    agent.status === 'processing' ? 'loading-pulse shimmer' : ''
+                    cardStatusClass === 'processing' ? 'loading-pulse shimmer' : ''
                   }`}
                   style={{ animationDelay: `${index * 100}ms` }}
                 >
@@ -362,14 +451,14 @@ const AgentsWorkspace: React.FC = () => {
                         {agent.avatar}
                       </motion.div>
                       <motion.div 
-                        className={`status-indicator status-${agent.status} neon-border glass`}
+                        className={`status-indicator status-${cardStatusClass} neon-border glass`}
                         whileHover={{ scale: 1.05 }}
                       >
                         <div className={`w-2 h-2 rounded-full bg-current ${
-                          agent.status === 'processing' ? 'animate-pulse loading-bounce neon-blue' : 
-                          agent.status === 'active' ? 'neon-green' : 'neon-orange'
+                          cardStatusClass === 'processing' ? 'animate-pulse loading-bounce neon-blue' : 
+                          cardStatusClass === 'active' ? 'neon-green' : 'neon-orange'
                         }`} />
-                        {agent.status}
+                        {statusText}
                       </motion.div>
                     </div>
 
@@ -442,27 +531,57 @@ const AgentsWorkspace: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Per-card goal input */}
+                    <div className="content-flow-sm mt-sm">
+                      <label className="text-2xs text-[var(--text-tertiary)]">Goal</label>
+                      <input
+                        className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] w-full"
+                        value={goalValue}
+                        onChange={(e)=> setCardGoals((prev)=>({ ...prev, [agent.id]: e.target.value }))}
+                        placeholder="What should this agent do?"
+                      />
+                    </div>
+
                     {/* Agent Actions */}
                     <div className="flex gap-sm mt-md">
                       <motion.button
                         className="glass-button btn-elastic flex-1 interactive-icon border-gradient-primary"
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
+                        onClick={onStart}
                       >
                         <IconSettings size={14} />
-                        Configure
+                        Run
                       </motion.button>
                       <motion.button
                         className="btn-gradient btn-haptic flex-1"
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
+                        onClick={onView}
                       >
                         View Details
                       </motion.button>
+                      {latestRun && latestRun.status === 'running' && (
+                        <motion.button
+                          className="glass-button btn-elastic flex-1 interactive-icon border-gradient-aurora"
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={onCancel}
+                        >
+                          Cancel
+                        </motion.button>
+                      )}
                     </div>
+
+                    {/* Inline error banner if last run errored */}
+                    {latestRun && latestRun.error && (
+                      <div className="mt-sm p-xs rounded border border-red-500/40 bg-red-500/10 text-red-300 text-2xs">
+                        Error: {latestRun.error}
+                      </div>
+                    )}
                   </div>
                 </motion.div>
-              ))}
+              );})}
 
               {/* Loading Skeleton when creating new agent */}
               {isCreatingAgent && (
@@ -491,6 +610,87 @@ const AgentsWorkspace: React.FC = () => {
           </motion.div>
         </div>
       </div>
+      {/* Run Details Drawer */}
+      {detailsOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={()=>setDetailsOpen(false)} />
+          <div className="w-full sm:w-[480px] max-w-[90vw] h-full bg-[var(--bg-secondary)] border-l border-[var(--border)] shadow-xl overflow-auto p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-lg font-semibold">Agent Details</div>
+              <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={()=>setDetailsOpen(false)}>Close</button>
+            </div>
+            <div className="space-y-4">
+              <div className="p-3 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+                <div className="text-sm"><span className="text-[var(--text-tertiary)]">Agent:</span> {detailsAgentId || '-'}</div>
+                <div className="text-sm"><span className="text-[var(--text-tertiary)]">Task ID:</span> {detailsTaskId || '-'}</div>
+                {detailsTaskId && agentRuns[detailsTaskId] && (
+                  <div className="text-sm"><span className="text-[var(--text-tertiary)]">Status:</span> {agentRuns[detailsTaskId].status} {agentRuns[detailsTaskId].error ? (<span className="text-red-400">• {agentRuns[detailsTaskId].error}</span>) : null}</div>
+                )}
+              </div>
+
+              {/* Live Plan */}
+              <div className="p-3 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+                <div className="font-semibold mb-2 text-sm">Live Plan</div>
+                {(() => { const p = detailsTaskId && plansByTask[detailsTaskId] ? plansByTask[detailsTaskId] : plan; return p && p.plan && p.plan.length ? (
+                  <ul className="space-y-1">
+                    {p.plan.map((it, idx) => (
+                      <li key={idx} className="flex items-center gap-2 text-sm">
+                        <span className={`w-2 h-2 rounded-full ${it.status === 'completed' ? 'bg-green-400' : it.status === 'in_progress' ? 'bg-blue-400 animate-pulse' : 'bg-zinc-500'}`} />
+                        <span className="font-medium">{it.step}</span>
+                        <span className="text-2xs text-[var(--text-tertiary)]">{it.status.replace('_', ' ')}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-2xs text-[var(--text-tertiary)]">No plan yet.</div>
+                ); })()}
+                {(() => { const p = detailsTaskId && plansByTask[detailsTaskId] ? plansByTask[detailsTaskId] : plan; return p?.explanation ? <div className="mt-2 text-2xs text-[var(--text-tertiary)]">{p.explanation}</div> : null; })()}
+              </div>
+
+              {/* Tool Calls (recent) */}
+              <div className="p-3 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+                <div className="font-semibold mb-2 text-sm">Recent Tool Calls</div>
+                {toolCalls && toolCalls.length ? (
+                  <div className="space-y-2">
+                    {toolCalls.filter(tc => !detailsTaskId || tc.task_id === detailsTaskId).slice(0, 10).map((tc) => (
+                      <div key={tc.call_id} className="text-sm">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-2xs text-[var(--text-tertiary)] mr-2">{tc.kind}</span>
+                            {tc.kind === 'mcp' ? <span className="font-medium">{tc.name}</span> : <span className="font-medium">{(tc.command||[]).join(' ')}</span>}
+                          </div>
+                          <div className="text-2xs text-[var(--text-tertiary)]">{tc.status}</div>
+                        </div>
+                        {tc.formatted_output && (
+                          <pre className="mt-1 whitespace-pre-wrap text-xs bg-black/20 p-2 rounded border border-[var(--border)]">{tc.formatted_output}</pre>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-2xs text-[var(--text-tertiary)]">No tool calls yet.</div>
+                )}
+              </div>
+
+              {/* Final Output (best-effort) */}
+              <div className="p-3 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold text-sm">Final Output (latest assistant)</div>
+                  <button className="text-2xs underline" onClick={()=>{
+                    try { const text = (lastAssistant as any)?.text || ''; if (text) navigator.clipboard?.writeText(text); } catch {}
+                  }}>Copy</button>
+                </div>
+                {lastAssistant ? (
+                  <pre className="whitespace-pre-wrap text-xs bg-black/20 p-2 rounded border border-[var(--border)]">{(lastAssistant as any).text}</pre>
+                ) : (
+                  <div className="text-2xs text-[var(--text-tertiary)]">No assistant output captured.</div>
+                )}
+                <div className="mt-2 text-2xs text-[var(--text-tertiary)]">Note: Plan and tool calls are filtered by the run when available.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

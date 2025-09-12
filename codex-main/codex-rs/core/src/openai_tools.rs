@@ -70,6 +70,7 @@ pub(crate) struct ToolsConfig {
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
     pub web_search_request: bool,
     pub include_view_image_tool: bool,
+    pub allowed_mcp_tools: Option<Vec<String>>, // when Some(vec), filter to only these qualified names
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -81,6 +82,7 @@ pub(crate) struct ToolsConfigParams<'a> {
     pub(crate) include_web_search_request: bool,
     pub(crate) use_streamable_shell_tool: bool,
     pub(crate) include_view_image_tool: bool,
+    pub(crate) allowed_mcp_tools: Option<Vec<String>>,
 }
 
 impl ToolsConfig {
@@ -94,6 +96,7 @@ impl ToolsConfig {
             include_web_search_request,
             use_streamable_shell_tool,
             include_view_image_tool,
+            allowed_mcp_tools,
         } = params;
         let mut shell_type = if *use_streamable_shell_tool {
             ConfigShellToolType::StreamableShell
@@ -126,6 +129,7 @@ impl ToolsConfig {
             apply_patch_tool_type,
             web_search_request: *include_web_search_request,
             include_view_image_tool: *include_view_image_tool,
+            allowed_mcp_tools: allowed_mcp_tools.clone(),
         }
     }
 }
@@ -580,6 +584,11 @@ pub(crate) fn get_openai_tools(
         // Ensure deterministic ordering to maximize prompt cache hits.
         // HashMap iteration order is non-deterministic, so sort by fully-qualified tool name.
         let mut entries: Vec<(String, mcp_types::Tool)> = mcp_tools.into_iter().collect();
+        // Optional filtering by allowlist
+        if let Some(allow) = &config.allowed_mcp_tools {
+            let allow_set: std::collections::HashSet<&String> = allow.iter().collect();
+            entries.retain(|(k, _)| allow_set.contains(k));
+        }
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         for (name, tool) in entries.into_iter() {

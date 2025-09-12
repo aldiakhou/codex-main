@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('aiw', {
   getHistory: () => ipcRenderer.invoke('aiw:getHistory'),
   listMcpTools: () => ipcRenderer.invoke('aiw:listMcpTools'),
   listCustomPrompts: () => ipcRenderer.invoke('aiw:listCustomPrompts'),
+  // Agents proto ops
+  listAgents: () => ipcRenderer.invoke('aiw:listAgents'),
+  startAgent: (id: string, input?: string, context?: any) => ipcRenderer.invoke('aiw:startAgent', id, input, context),
+  agentStatus: (taskId: string) => ipcRenderer.invoke('aiw:agentStatus', taskId),
+  agentCancel: (taskId: string) => ipcRenderer.invoke('aiw:agentCancel', taskId),
+  agentsReload: () => ipcRenderer.invoke('aiw:agentsReload'),
   upsertMcpServer: (server: { name: string; command: string; args?: string[]; env?: Record<string,string>}) => ipcRenderer.invoke('aiw:upsertMcpServer', server),
   removeMcpServer: (name: string) => ipcRenderer.invoke('aiw:removeMcpServer', name),
   restart: () => ipcRenderer.invoke('aiw:restartBackend'),

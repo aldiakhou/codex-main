@@ -22,7 +22,7 @@ type BackendContextType = {
   status: Status;
   logs: string[];
   lastEvent: any | null;
-  messages: { id: string; role: 'assistant' | 'reasoning' | 'system' | 'tool' | 'user'; text: string; ts?: number }[];
+  messages: { id: string; role: 'assistant' | 'reasoning' | 'system' | 'tool' | 'user'; text: string; ts?: number; taskId?: string }[];
   draftMessage: string;
   setDraftMessage: (v: string) => void;
   chatParams: {
@@ -61,6 +61,7 @@ type BackendContextType = {
     stdout: string;
     stderr: string;
     formatted_output?: string;
+    task_id?: string;
   }>;
   getHistory: () => Promise<boolean>;
   mcpTools: Record<string, any>;
@@ -69,9 +70,18 @@ type BackendContextType = {
   refreshMcpServers: () => Promise<Record<string, any>>;
   serverErrors: Record<string, string>;
   plan: { explanation?: string | null; plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> } | null;
+  plansByTask: Record<string, { explanation?: string | null; plan: Array<{ step: string; status: 'pending' | 'in_progress' | 'completed' }> }>;
   turnDiff?: string | null;
   customPrompts: Array<{ name: string; path: string; content: string }>;
   refreshCustomPrompts: () => Promise<boolean>;
+  // --- Agents proto state/actions ---
+  agents: Array<{ id: string; name: string; description: string }>;
+  agentRuns: Record<string, { task_id: string; agent_id: string; status: string; error?: string; created_at: number; updated_at: number }>;
+  listAgents: () => Promise<boolean>;
+  agentsReload: () => Promise<boolean>;
+  startAgent: (id: string, input?: string, context?: any) => Promise<boolean>;
+  agentStatus: (taskId: string) => Promise<boolean>;
+  agentCancel: (taskId: string) => Promise<boolean>;
 };
 
 const BackendContext = createContext<BackendContextType | undefined>(undefined);
@@ -99,9 +109,13 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<BackendContextType['plan']>(null);
+  const [plansByTask, setPlansByTask] = useState<BackendContextType['plansByTask']>({});
   const [turnDiff, setTurnDiff] = useState<string | null>(null);
   const rawReasoningRef = useRef<{ id: string; text: string } | null>(null);
   const [customPrompts, setCustomPrompts] = useState<BackendContextType['customPrompts']>([]);
+  // Agents proto state
+  const [agents, setAgents] = useState<BackendContextType['agents']>([]);
+  const [agentRuns, setAgentRuns] = useState<BackendContextType['agentRuns']>({});
   const [chatParams, setChatParamsState] = useState<BackendContextType['chatParams']>(() => {
     const saved = localStorage.getItem('chatParams');
     if (saved) {
@@ -135,6 +149,44 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
       window.aiw.onEvent((e) => {
         setLastEvent(e);
         const type = e?.msg?.type || e?.type || '';
+        const metaTaskId: string | undefined = (e && e._meta && (e._meta.task_id || e._meta.taskId)) ? String(e._meta.task_id || e._meta.taskId) : undefined;
+        // --- Agents proto events ---
+        if (type === 'agents_listed') {
+          const arr = Array.isArray(e?.msg?.agents) ? e.msg.agents : [];
+          const mapped = arr.map((a: any) => ({ id: String(a.id||''), name: String(a.name||''), description: String(a.description||'') }));
+          setAgents(mapped);
+          return;
+        }
+        if (type === 'agent_run_started') {
+          const agent_id = String(e?.msg?.agent_id || '');
+          const task_id = String(e?.msg?.task_id || '');
+          if (!task_id) return;
+          setAgentRuns((prev) => ({
+            ...prev,
+            [task_id]: { task_id, agent_id, status: 'running', created_at: Date.now(), updated_at: Date.now() },
+          }));
+          return;
+        }
+        if (type === 'agent_status') {
+          const task_id = String(e?.msg?.task_id || '');
+          const status = String(e?.msg?.status || 'unknown');
+          const error = e?.msg?.error ? String(e.msg.error) : undefined;
+          if (!task_id) return;
+          setAgentRuns((prev) => ({
+            ...prev,
+            [task_id]: { ...(prev[task_id] || { task_id, agent_id: '', created_at: Date.now() }), task_id, status, error, updated_at: Date.now() },
+          }));
+          return;
+        }
+        if (type === 'agent_cancelled') {
+          const task_id = String(e?.msg?.task_id || '');
+          if (!task_id) return;
+          setAgentRuns((prev) => ({
+            ...prev,
+            [task_id]: { ...(prev[task_id] || { task_id, agent_id: '', created_at: Date.now() }), task_id, status: 'cancelled', updated_at: Date.now() },
+          }));
+          return;
+        }
         // Agent message streaming
         if (type === 'agent_message') {
           const text = e.msg?.message ?? '';
@@ -149,7 +201,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               if (last && last.role === 'assistant' && last.text === text) return prev; // de-dupe
-              return [...prev, { id: `msg_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'assistant', text }];
+              return [...prev, { id: `msg_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'assistant', text, taskId: metaTaskId } as any];
             });
           }
           return;
@@ -161,7 +213,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!cur) {
             cur = { id: `delta_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, text: '' };
             streamingAssistantRef.current = cur;
-            setMessages((prev) => [...prev, { id: cur.id, role: 'assistant', text: '', ts: Date.now() } as any]);
+            setMessages((prev) => [...prev, { id: cur.id, role: 'assistant', text: '', ts: Date.now(), taskId: metaTaskId } as any]);
           }
           cur.text += delta;
           const cid = cur.id;
@@ -177,7 +229,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text } : m)));
             streamingReasoningRef.current = null;
           } else {
-            setMessages((prev) => [...prev, { id: `rsn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'reasoning', text, ts: Date.now() } as any]);
+            setMessages((prev) => [...prev, { id: `rsn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'reasoning', text, ts: Date.now(), taskId: metaTaskId } as any]);
           }
           return;
         }
@@ -188,7 +240,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!cur) {
             cur = { id: `rsn_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, text: '' };
             streamingReasoningRef.current = cur;
-            setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '', ts: Date.now() } as any]);
+            setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '', ts: Date.now(), taskId: metaTaskId } as any]);
           }
           cur.text += delta;
           const cid = cur.id;
@@ -204,7 +256,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
             setMessages((prev) => prev.map((m) => (m.id === cid ? { ...m, text } : m)));
             rawReasoningRef.current = null;
           } else {
-            setMessages((prev) => [...prev, { id: `raw_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'reasoning', text, ts: Date.now() } as any]);
+            setMessages((prev) => [...prev, { id: `raw_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'reasoning', text, ts: Date.now(), taskId: metaTaskId } as any]);
           }
           return;
         }
@@ -215,7 +267,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!cur) {
             cur = { id: `raw_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, text: '' };
             rawReasoningRef.current = cur;
-            setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '', ts: Date.now() } as any]);
+            setMessages((prev) => [...prev, { id: cur.id, role: 'reasoning', text: '', ts: Date.now(), taskId: metaTaskId } as any]);
           }
           cur.text += delta;
           const cid = cur.id;
@@ -238,6 +290,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 }))
               : [];
             setPlan({ explanation: explanation ?? undefined, plan: items });
+            if (metaTaskId) {
+              setPlansByTask((prev) => ({ ...prev, [metaTaskId]: { explanation: explanation ?? undefined, plan: items } }));
+            }
           } catch {}
           return;
         }
@@ -304,7 +359,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (type === 'mcp_tool_call_begin') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || `mcp_${Date.now()}`;
-          setToolCalls((prev) => [{ call_id, kind: 'mcp', name, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
+          setToolCalls((prev) => [{ call_id, kind: 'mcp', name, status: 'running', started_at: Date.now(), stdout: '', stderr: '', task_id: metaTaskId }, ...prev]);
           return;
         }
         if (type === 'mcp_tool_call_end') {
@@ -317,7 +372,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const cmd = (e.msg?.command || []).join(' ');
           const cwd = e.msg?.cwd || '';
           const call_id = e.msg?.call_id || e.id || `exec_${Date.now()}`;
-          setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '' }, ...prev]);
+          setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '', task_id: metaTaskId }, ...prev]);
           return;
         }
         if (type === 'exec_command_output_delta') {
@@ -473,9 +528,18 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
     mcpServers,
     serverErrors,
     plan,
+    plansByTask,
     turnDiff,
     customPrompts,
     refreshCustomPrompts: async () => window.aiw.listCustomPrompts(),
+    // Agents proto
+    agents,
+    agentRuns,
+    listAgents: async () => window.aiw.listAgents(),
+    agentsReload: async () => window.aiw.agentsReload(),
+    startAgent: async (id: string, input?: string, context?: any) => window.aiw.startAgent(id, input, context),
+    agentStatus: async (taskId: string) => window.aiw.agentStatus(taskId),
+    agentCancel: async (taskId: string) => window.aiw.agentCancel(taskId),
     start: (opts) => window.aiw.start(opts),
     stop: () => window.aiw.stop(),
     login: (apiKey?: string) => window.aiw.login(apiKey),
@@ -515,7 +579,7 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setMcpServers(cfg || {});
       return cfg;
     },
-  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams, draftMessage, tokenUsage, toolCalls, mcpTools, mcpServers, serverErrors, plan, turnDiff, customPrompts]);
+  }), [status, logs, lastEvent, execApprovalRequest, patchApprovalRequest, chatParams, draftMessage, tokenUsage, toolCalls, mcpTools, mcpServers, serverErrors, plan, plansByTask, turnDiff, customPrompts, agents, agentRuns]);
 
   return <BackendContext.Provider value={api}>{children}</BackendContext.Provider>;
 };

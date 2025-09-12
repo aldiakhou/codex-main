@@ -50,6 +50,14 @@ You can give Codex extra instructions and guidance using `AGENTS.md` files. Code
 
 For more information on how to use AGENTS.md, see the [official AGENTS.md documentation](./agents.md).
 
+### Agents (Rust CLI)
+
+Codex’s Rust CLI supports configurable agents defined in `~/.codex/agents.toml`.
+
+- Example file: `codex-rs/docs/agents.toml.example`
+- Details and usage: `codex-rs/README.md` (Agents section)
+- Use via `codex.exe proto` (ListAgents / StartAgent / AgentStatus / AgentCancel / AgentsReload) or via the MCP tools (`agents-list`, `agents-start`, `agents-status`, `agents-cancel`, `agents-reload`).
+
 ### Tips & shortcuts
 
 #### Use `@` for file search

@@ -156,6 +156,27 @@ pub enum Op {
     Compact,
     /// Request to shut down codex instance.
     Shutdown,
+
+    /// Agents: list configured + builtin agents
+    ListAgents,
+
+    /// Agents: start an agent by id with optional context
+    StartAgent {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<serde_json::Value>,
+    },
+
+    /// Agents: query status
+    AgentStatus { task_id: String },
+
+    /// Agents: cancel running task
+    AgentCancel { task_id: String },
+
+    /// Agents: reload ~/.codex/agents.toml and emit current list
+    AgentsReload,
 }
 
 /// Determines the conditions under which the user is consulted to approve
@@ -489,6 +510,12 @@ pub enum EventMsg {
     ShutdownComplete,
 
     ConversationHistory(ConversationHistoryResponseEvent),
+
+    // ---- Agents proto events ----
+    AgentsListed(AgentsListedEvent),
+    AgentRunStarted(AgentRunStartedEvent),
+    AgentStatus(AgentStatusEvent),
+    AgentCancelled(AgentCancelledEvent),
 }
 
 // Individual event payload types matching each `EventMsg` variant.
@@ -496,6 +523,40 @@ pub enum EventMsg {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ErrorEvent {
     pub message: String,
+}
+
+// ---- Agents proto event payloads ----
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentListItem {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentsListedEvent {
+    pub agents: Vec<AgentListItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentRunStartedEvent {
+    pub agent_id: String,
+    pub task_id: uuid::Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentStatusEvent {
+    pub task_id: uuid::Uuid,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentCancelledEvent {
+    pub task_id: uuid::Uuid,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

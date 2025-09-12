@@ -278,8 +278,7 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::GetHistoryEntryResponse(_)
                     | EventMsg::PlanUpdate(_)
                     | EventMsg::TurnAborted(_)
-                    | EventMsg::ConversationHistory(_)
-                    | EventMsg::ShutdownComplete => {
+                    | EventMsg::ConversationHistory(_) | EventMsg::AgentsListed(_) | EventMsg::AgentRunStarted(_) | EventMsg::AgentStatus(_) | EventMsg::AgentCancelled(_) | EventMsg::ShutdownComplete => {
                         // For now, we do not do anything extra for these
                         // events. Note that
                         // send(codex_event_to_notification(&event)) above has
@@ -307,3 +306,4 @@ async fn run_codex_tool_session_inner(
         }
     }
 }
+

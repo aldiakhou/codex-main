@@ -63,6 +63,15 @@ You can also use Codex with an API key, but this requires [additional setup](./d
 Codex CLI supports [MCP servers](./docs/advanced.md#model-context-protocol-mcp). Enable by adding an `mcp_servers` section to your `~/.codex/config.toml`.
 
 
+### Agents (Rust CLI)
+
+Codex supports configurable “agents” in the Rust CLI. To try agents:
+
+- See the Rust README: `codex-rs/README.md` (Agents section)
+- Copy the example config to `~/.codex/agents.toml`: `codex-rs/docs/agents.toml.example`
+- Drive agents from your frontend via `codex.exe proto` or externally via the MCP server (`codex mcp`)
+
+
 ### Configuration
 
 Codex CLI supports a rich set of configuration options, with preferences stored in `~/.codex/config.toml`. For full configuration options, see [Configuration](./docs/config.md).
@@ -99,4 +108,3 @@ Codex CLI supports a rich set of configuration options, with preferences stored 
 ## License
 
 This repository is licensed under the [Apache-2.0 License](LICENSE).
-
