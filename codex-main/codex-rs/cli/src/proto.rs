@@ -149,27 +149,7 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
                                         // Load agent spec (prefer configured one)
                                         let specs = load_agents_from_home(&codex_home).unwrap_or_default();
                                         if let Some(spec) = specs.iter().find(|a| a.id == agent_id_owned) {
-                                            if let Some(m) = &spec.model { cfg.model = m.clone(); }
-                                            if let Some(cwd) = &spec.cwd { cfg.cwd = std::path::PathBuf::from(cwd); }
-                                            if let Some(ap) = &spec.approval_policy {
-                                                let s = format!("\"{}\"", ap);
-                                                if let Ok(v) = serde_json::from_str::<codex_core::protocol::AskForApproval>(&s) { cfg.approval_policy = v; }
-                                            }
-                                            if let Some(sb) = &spec.sandbox {
-                                                let s = format!("{{\"mode\":\"{}\"}}", sb);
-                                                if let Ok(v) = serde_json::from_str::<codex_core::protocol::SandboxPolicy>(&s) { cfg.sandbox_policy = v; }
-                                            }
-                                            // Built-in toggles
-                                            let allow = |k: &str| spec.allowed_builtin_tools.iter().any(|t| t == k);
-                                            cfg.include_plan_tool = true;
-                                            cfg.include_apply_patch_tool = allow("apply_patch");
-                                            cfg.tools_web_search_request = allow("web_search");
-                                            cfg.include_view_image_tool = allow("view_image");
-                                            // Set base instructions
-                                            if !spec.instructions.is_empty() {
-                                                cfg.base_instructions = Some(spec.instructions.clone());
-                                            }
-                                            cfg.allowed_mcp_tools = spec.allowed_mcp_tools.clone();
+                                            cfg = codex_core::agents_helpers::apply_spec_to_config(cfg, spec);
                                         } else {
                                             // Simple builtin defaults
                                             if agent_id_owned == "web_search" { cfg.tools_web_search_request = true; }

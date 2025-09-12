@@ -1,4 +1,4 @@
-import React, { Suspense, useCallback, useState } from 'react';
+import React, { Suspense, useCallback, useState, useEffect } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { BackendProvider } from './contexts/BackendContext';
 import Header from './components/Header';
@@ -25,12 +25,13 @@ const AppContent: React.FC = () => {
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  const handleWorkspaceChange: (id: string) => void = useCallback(
-    (id: string) => {
-      setActiveWorkspace(id as any);
-    },
-    [setActiveWorkspace]
-  );
+  const handleWorkspaceChange = useCallback((id: string) => {
+    // Only update if id is one of the known workspace ids
+    const allowed = ['chat','dashboard','agents','code','files','planner','terminal','tools','graph','settings'] as const;
+    if ((allowed as readonly string[]).includes(id)) {
+      setActiveWorkspace(id as typeof allowed[number]);
+    }
+  }, [setActiveWorkspace]);
 
   const renderWorkspace = () => {
     switch (activeWorkspace) {
@@ -58,6 +59,17 @@ const AppContent: React.FC = () => {
         return <DashboardWorkspace />;
     }
   };
+
+  // Toggle global mesh background off for Agents workspace to reduce visual noise.
+  useEffect(() => {
+    const body = document.body;
+    if (activeWorkspace === 'agents') {
+      body.classList.add('no-mesh-bg');
+    } else {
+      body.classList.remove('no-mesh-bg');
+    }
+    return () => body.classList.remove('no-mesh-bg');
+  }, [activeWorkspace]);
 
   return (
     <div className="h-screen flex flex-col app-container">

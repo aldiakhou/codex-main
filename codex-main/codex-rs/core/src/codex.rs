@@ -1,3 +1,5 @@
+use crate::CodexConversation;
+use crate::ConversationManager;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -126,6 +128,12 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::ShellToolCallParams;
 use codex_protocol::models::WebSearchAction;
+use codex_agents::AgentRegistry;
+use codex_agents::TaskStore as AgentsTaskStore;
+use codex_agents::AgentSpec;
+use codex_agents::load_agents_from_home;
+use codex_agents::summarize_agents;
+use crate::agents_helpers::apply_spec_to_config as apply_agent_spec_to_config;
 
 // A convenience extension trait for acquiring mutex locks where poisoning is
 // unrecoverable and should abort the program. This avoids scattered `.unwrap()`
@@ -292,6 +300,14 @@ pub(crate) struct Session {
     codex_linux_sandbox_exe: Option<PathBuf>,
     user_shell: shell::Shell,
     show_raw_agent_reasoning: bool,
+
+    // Built-in agents state
+    agents_registry: AgentRegistry,
+    agents_tasks: AgentsTaskStore,
+    agents_running: Arc<Mutex<HashMap<Uuid, Arc<CodexConversation>>>>,
+    configured_agents: Arc<Mutex<Vec<AgentSpec>>>,
+    conversation_manager: Arc<ConversationManager>,
+    base_config: Arc<Config>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -771,7 +787,12 @@ impl Session {
             codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
             user_shell: default_shell,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
-        });
+                    agents_registry: AgentRegistry::default_with_builtins(),
+            agents_tasks: AgentsTaskStore::new(),
+            agents_running: Arc::new(Mutex::new(HashMap::new())),
+            configured_agents: Arc::new(Mutex::new(load_agents_from_home(&config.codex_home).unwrap_or_default())),
+            conversation_manager: Arc::new(ConversationManager::new(auth_manager.clone())),
+            base_config: config.clone(),        });
 
         // record the initial user instructions and environment context,
         // regardless of whether we restored items.
@@ -1086,7 +1107,7 @@ impl Session {
     }
 
     /// Helper that emits a BackgroundEvent with the given message. This keeps
-    /// the call‑sites terse so adding more diagnostics does not clutter the
+    /// the callÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ëœsites terse so adding more diagnostics does not clutter the
     /// core agent logic.
     async fn notify_background_event(&self, sub_id: &str, message: impl Into<String>) {
         let event = Event {
@@ -1181,7 +1202,7 @@ impl Session {
         }
         command.arg(json);
 
-        // Fire-and-forget – we do not wait for completion.
+        // Fire-and-forget ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ we do not wait for completion.
         if let Err(e) = command.spawn() {
             warn!("failed to spawn notifier '{}': {e}", notify_command[0]);
         }
@@ -1406,7 +1427,7 @@ async fn submission_loop(
                     let model_family = find_family_for_model(&model)
                         .unwrap_or_else(|| config.model_family.clone());
 
-                    // Create a per‑turn Config clone with the requested model/family.
+                    // Create a perÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ëœturn Config clone with the requested model/family.
                     let mut per_turn_config = (*config).clone();
                     per_turn_config.model = model.clone();
                     per_turn_config.model_family = model_family.clone();
@@ -1414,7 +1435,7 @@ async fn submission_loop(
                         per_turn_config.model_context_window = Some(model_info.context_window);
                     }
 
-                    // Build a new client with per‑turn reasoning settings.
+                    // Build a new client with perÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ëœturn reasoning settings.
                     // Reuse the same provider and session id; auth defaults to env/API key.
                     let client = ModelClient::new(
                         Arc::new(per_turn_config),
@@ -1448,7 +1469,7 @@ async fn submission_loop(
                         disable_response_storage: turn_context.disable_response_storage,
                     };
                     // TODO: record the new environment context in the conversation history
-                    // no current task, spawn a new one with the per‑turn context
+                    // no current task, spawn a new one with the perÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ëœturn context
                     let task =
                         AgentTask::spawn(sess.clone(), Arc::new(fresh_turn_context), sub.id, items);
                     sess.set_task(task);
@@ -1929,13 +1950,13 @@ async fn run_turn(
                         "stream disconnected - retrying turn ({retries}/{max_retries} in {delay:?})...",
                     );
 
-                    // Surface retry information to any UI/front‑end so the
+                    // Surface retry information to any UI/frontÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ëœend so the
                     // user understands what is happening instead of staring
                     // at a seemingly frozen screen.
                     sess.notify_stream_error(
                         &sub_id,
                         format!(
-                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…"
+                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦"
                         ),
                     )
                     .await;
@@ -2177,7 +2198,7 @@ async fn run_compact_task(
                     sess.notify_stream_error(
                         &sub_id,
                         format!(
-                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}…"
+                            "stream error: {e}; retrying {retries}/{max_retries} in {delay:?}ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦"
                         ),
                     )
                     .await;
@@ -2390,7 +2411,134 @@ async fn handle_function_call(
     arguments: String,
     call_id: String,
 ) -> ResponseInputItem {
-    match name.as_str() {
+    match name.as_str() {        "agents_list" => {
+            let builtins = sess.agents_registry.list();
+            let specs = sess.configured_agents.lock().unwrap().clone();
+            let agents = summarize_agents(&specs, &builtins);
+            let json = serde_json::to_string(&agents).unwrap_or_else(|_| "[]".to_string());
+            return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: json, success: Some(true) } };
+        }
+        "agents_reload" => {
+            let mut guard = sess.configured_agents.lock().unwrap();
+            *guard = load_agents_from_home(&sess.base_config.codex_home).unwrap_or_default();
+            let builtins = sess.agents_registry.list();
+            let agents = summarize_agents(&guard, &builtins);
+            let json = serde_json::to_string(&agents).unwrap_or_else(|_| "[]".to_string());
+            return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: json, success: Some(true) } };
+        }
+        "agents_start" => {
+            #[derive(serde::Deserialize)]
+            struct StartArgs { #[serde(default)] agent_id: Option<String>, goal: String, #[serde(default)] context: Option<serde_json::Value> }
+            let args = match serde_json::from_str::<StartArgs>(&arguments) {
+                Ok(a) => a,
+                Err(e) => { return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: format!("failed to parse function arguments: {e}"), success: Some(false) } }; }
+            };
+            let task_id = Uuid::new_v4();
+            let cfg = {
+                let mut cfg = (*sess.base_config).clone();
+                if let Some(id) = &args.agent_id {
+                    if let Some(spec) = sess.configured_agents.lock().unwrap().iter().find(|s| &s.id == id) { cfg = apply_agent_spec_to_config(cfg, spec); }
+                }
+                cfg
+            };
+            let conversation_manager = sess.conversation_manager.clone();
+            let store = sess.agents_tasks.clone();
+            let running = sess.agents_running.clone();
+            let goal = args.goal.clone();
+            let context = args.context.clone();
+            let tx = sess.tx_event.clone();
+            let parent_sub_id = sub_id.clone();
+            let agent_label = args
+                .agent_id
+                .clone()
+                .unwrap_or_else(|| "structured".to_string());
+            tokio::spawn(async move {
+                store.set(task_id, codex_agents::TaskState::Running).await;
+                match conversation_manager.new_conversation(cfg).await {
+                    Ok(newc) => {
+                        {
+                            let mut guard = running.lock().unwrap();
+                            guard.insert(task_id, newc.conversation.clone());
+                        }
+                        // Submit initial input
+                        let mut text = goal;
+                        if let Some(ctx) = context { text.push_str("\n\nContext:\n"); text.push_str(&serde_json::to_string_pretty(&ctx).unwrap_or_default()); }
+                        let _ = newc.conversation.submit(Op::UserInput { items: vec![InputItem::Text { text }] }).await;
+                        // Drain until complete
+                        let mut final_text = String::new();
+                        loop {
+                            match newc.conversation.next_event().await {
+                                Ok(ev) => match ev.msg {
+                                    EventMsg::AgentMessageDelta(d) => final_text.push_str(&d.delta),
+                                    EventMsg::AgentMessage(m) => final_text = m.message,
+                                    // Forward plan updates from child agent to parent session with annotation
+                                    EventMsg::PlanUpdate(mut update) => {
+                                        let prefix = format!("Agent {}: ", agent_label);
+                                        let explanation = match update.explanation.take() {
+                                            Some(e) => format!("{}{}", prefix, e),
+                                            None => prefix,
+                                        };
+                                        let annotated = codex_protocol::plan_tool::UpdatePlanArgs {
+                                            explanation: Some(explanation),
+                                            plan: update.plan,
+                                        };
+                                        let _ = tx
+                                            .send(Event { id: parent_sub_id.clone(), msg: EventMsg::PlanUpdate(annotated) })
+                                            .await;
+                                    }
+                                    EventMsg::TaskComplete(_) => {
+                                        let value = serde_json::from_str::<serde_json::Value>(&final_text).unwrap_or_else(|_| serde_json::json!({"message": final_text}));
+                                        store.set(task_id, codex_agents::TaskState::Complete { result: value }).await;
+                                        break;
+                                    }
+                                    EventMsg::TurnAborted(_) => { store.set(task_id, codex_agents::TaskState::Cancelled).await; break; }
+                                    EventMsg::Error(e) => { store.set(task_id, codex_agents::TaskState::Error { message: e.message }).await; break; }
+                                    _ => {}
+                                },
+                                Err(e) => { store.set(task_id, codex_agents::TaskState::Error { message: format!("event error: {e}") }).await; break; }
+                            }
+                        }
+                        // cleanup
+                        let mut guard = running.lock().unwrap();
+                        guard.remove(&task_id);
+                    }
+                    Err(e) => { store.set(task_id, codex_agents::TaskState::Error { message: format!("failed to start conversation: {e}") }).await; }
+                }
+            });
+            let json = serde_json::json!({"task_id": task_id});
+            return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: json.to_string(), success: Some(true) } };
+        }
+        "agents_status" => {
+            #[derive(serde::Deserialize)]
+            struct StatusArgs { task_id: String }
+            let args = match serde_json::from_str::<StatusArgs>(&arguments) { Ok(a) => a, Err(e) => { return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: format!("failed to parse function arguments: {e}"), success: Some(false) } }; } };
+            let tid = Uuid::parse_str(&args.task_id).unwrap_or_else(|_| Uuid::nil());
+            let state = sess.agents_tasks.get(tid).await;
+            let success = state.is_some();
+            let json = state
+                .and_then(|s| serde_json::to_value(s).ok())
+                .unwrap_or_else(|| serde_json::json!({"status":"not-found"}))
+                .to_string();
+            return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: json, success: Some(success) } };
+        }
+        "agents_cancel" => {
+            #[derive(serde::Deserialize)]
+            struct CancelArgs { task_id: String }
+            let args = match serde_json::from_str::<CancelArgs>(&arguments) { Ok(a) => a, Err(e) => { return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: format!("failed to parse function arguments: {e}"), success: Some(false) } }; } };
+            let tid = Uuid::parse_str(&args.task_id).unwrap_or_else(|_| Uuid::nil());
+            let maybe_conv = { sess.agents_running.lock_unchecked().remove(&tid) };
+            let cancelled = if let Some(ref conv) = maybe_conv {
+                let _ = conv.submit(Op::Interrupt).await;
+                sess.agents_tasks
+                    .set(tid, codex_agents::TaskState::Cancelled)
+                    .await;
+                true
+            } else {
+                false
+            };
+            let json = serde_json::json!({"cancelled": cancelled}).to_string();
+            return ResponseInputItem::FunctionCallOutput { call_id, output: FunctionCallOutputPayload { content: json, success: Some(cancelled) } };
+        }
         "container.exec" | "shell" => {
             let params = match parse_container_exec_arguments(arguments, turn_context, &call_id) {
                 Ok(params) => params,
@@ -2941,7 +3089,7 @@ async fn handle_sandbox_error(
 
     match rx_approve.await.unwrap_or_default() {
         ReviewDecision::Approved | ReviewDecision::ApprovedForSession => {
-            // Persist this command as pre‑approved for the
+            // Persist this command as preÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ëœapproved for the
             // remainder of the session so future
             // executions skip the sandbox directly.
             // TODO(ragona): Isn't this a bug? It always saves the command in an | fork?

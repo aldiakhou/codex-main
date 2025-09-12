@@ -134,7 +134,7 @@ impl ToolsConfig {
     }
 }
 
-/// Generic JSON‑Schema subset needed for our tool definitions
+/// Generic JSONÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ËœSchema subset needed for our tool definitions
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum JsonSchema {
@@ -198,13 +198,79 @@ fn create_shell_tool() -> OpenAiTool {
         strict: false,
         parameters: JsonSchema::Object {
             properties,
-            required: Some(vec!["command".to_string()]),
-            additional_properties: Some(false),
+            required: None,
+            additional_properties: None,
         },
     })
 }
 
-fn create_shell_tool_for_sandbox(sandbox_policy: &SandboxPolicy) -> OpenAiTool {
+fn create_agents_list_tool() -> OpenAiTool {
+    OpenAiTool::Function(ResponsesApiTool {
+        name: "agents_list".to_string(),
+        description: "List available built-in and configured agents".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object { properties: BTreeMap::new(), required: None, additional_properties: None },
+    })
+}
+
+fn create_agents_start_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "agent_id".to_string(),
+        JsonSchema::String { description: Some("Optional id of the agent to run (defaults to built-in)".to_string()) },
+    );
+    properties.insert(
+        "goal".to_string(),
+        JsonSchema::String { description: Some("The goal/task description for the agent".to_string()) },
+    );
+    properties.insert(
+        "context".to_string(),
+        JsonSchema::Object { properties: BTreeMap::new(), required: None, additional_properties: Some(true) },
+    );
+    OpenAiTool::Function(ResponsesApiTool {
+        name: "agents_start".to_string(),
+        description: "Start an agent task and get a task id".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object { properties, required: Some(vec!["goal".to_string()]), additional_properties: Some(false) },
+    })
+}
+
+fn create_agents_status_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "task_id".to_string(),
+        JsonSchema::String { description: Some("Task id returned by agents_start".to_string()) },
+    );
+    OpenAiTool::Function(ResponsesApiTool {
+        name: "agents_status".to_string(),
+        description: "Get the current status/result of an agent task".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object { properties, required: Some(vec!["task_id".to_string()]), additional_properties: Some(false) },
+    })
+}
+
+fn create_agents_cancel_tool() -> OpenAiTool {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "task_id".to_string(),
+        JsonSchema::String { description: Some("Task id to cancel".to_string()) },
+    );
+    OpenAiTool::Function(ResponsesApiTool {
+        name: "agents_cancel".to_string(),
+        description: "Request cancellation of an agent task".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object { properties, required: Some(vec!["task_id".to_string()]), additional_properties: Some(false) },
+    })
+}
+
+fn create_agents_reload_tool() -> OpenAiTool {
+    OpenAiTool::Function(ResponsesApiTool {
+        name: "agents_reload".to_string(),
+        description: "Reload agents from ~/.codex/agents.toml and return the list".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object { properties: BTreeMap::new(), required: None, additional_properties: None },
+    })
+}fn create_shell_tool_for_sandbox(sandbox_policy: &SandboxPolicy) -> OpenAiTool {
     let mut properties = BTreeMap::new();
     properties.insert(
         "command".to_string(),
@@ -579,6 +645,13 @@ pub(crate) fn get_openai_tools(
     if config.include_view_image_tool {
         tools.push(create_view_image_tool());
     }
+
+    // Built-in agents controls
+    tools.push(create_agents_list_tool());
+    tools.push(create_agents_start_tool());
+    tools.push(create_agents_status_tool());
+    tools.push(create_agents_cancel_tool());
+    tools.push(create_agents_reload_tool());
 
     if let Some(mcp_tools) = mcp_tools {
         // Ensure deterministic ordering to maximize prompt cache hits.

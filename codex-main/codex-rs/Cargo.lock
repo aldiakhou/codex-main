@@ -742,6 +742,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
+ "codex-agents",
  "codex-apply-patch",
  "codex-login",
  "codex-mcp-client",

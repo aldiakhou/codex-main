@@ -6,16 +6,9 @@ use crate::codex_tool_config::CodexToolCallParam;
 use crate::codex_tool_config::CodexToolCallReplyParam;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
 use crate::codex_tool_config::create_tool_for_codex_tool_call_reply_param;
-use crate::agents_tool_config::create_tool_agents_list;
-use crate::agents_tool_config::create_tool_agents_start;
-use crate::agents_tool_config::create_tool_agents_status;
-use crate::agents_tool_config::create_tool_agents_reload;
-use crate::agents_tool_config::create_tool_agents_cancel;
-use crate::agents_tool_config::AgentsStartParams;
-use crate::agents_tool_config::AgentsStatusParams;
-use crate::agents_tool_config::AgentsCancelParams;
-use crate::agents_tool_config::AgentsToolsetParams;
-use jsonschema::JSONSchema;
+// Agents tools are now built-in in core; MCP server no longer exposes them
+// (agents_* types no longer used here)
+// (no agent-spec mapping in MCP server anymore)
 use crate::error_code::INVALID_REQUEST_ERROR_CODE;
 use crate::outgoing_message::OutgoingMessageSender;
 use codex_protocol::mcp_protocol::ClientRequest;
@@ -52,11 +45,6 @@ pub(crate) struct MessageProcessor {
     codex_linux_sandbox_exe: Option<PathBuf>,
     conversation_manager: Arc<ConversationManager>,
     running_requests_id_to_codex_uuid: Arc<Mutex<HashMap<RequestId, Uuid>>>,
-    agents_registry: codex_agents::AgentRegistry,
-    agents_tasks: codex_agents::TaskStore,
-    agents_running: Arc<Mutex<HashMap<Uuid, Arc<codex_core::CodexConversation>>>>,
-    config: Arc<Config>,
-    configured_agents: Vec<codex_agents::AgentSpec>,
 }
 
 impl MessageProcessor {
@@ -78,13 +66,6 @@ impl MessageProcessor {
             codex_linux_sandbox_exe.clone(),
             config.clone(),
         );
-        let configured_agents = match codex_agents::load_agents_from_home(&config.codex_home) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("failed to load agents.toml: {e}");
-                Vec::new()
-            }
-        };
         Self {
             codex_message_processor,
             outgoing,
@@ -92,11 +73,6 @@ impl MessageProcessor {
             codex_linux_sandbox_exe,
             conversation_manager,
             running_requests_id_to_codex_uuid: Arc::new(Mutex::new(HashMap::new())),
-            agents_registry: codex_agents::AgentRegistry::default_with_builtins(),
-            agents_tasks: codex_agents::TaskStore::new(),
-            agents_running: Arc::new(Mutex::new(HashMap::new())),
-            config,
-            configured_agents,
         }
     }
 
@@ -337,11 +313,7 @@ impl MessageProcessor {
             tools: vec![
                 create_tool_for_codex_tool_call_param(),
                 create_tool_for_codex_tool_call_reply_param(),
-                create_tool_agents_list(),
-                create_tool_agents_start(),
-                create_tool_agents_status(),
-                create_tool_agents_reload(),
-                create_tool_agents_cancel(),
+                
             ],
             next_cursor: None,
         };
@@ -364,101 +336,19 @@ impl MessageProcessor {
                 self.handle_tool_call_codex_session_reply(id, arguments)
                     .await
             }
-            "agents-list" => {
-                self.handle_tool_call_agents_list(id).await
-            }
-            "agents-start" => self.handle_tool_call_agents_start(id, arguments).await,
-            "agents-status" => self.handle_tool_call_agents_status(id, arguments).await,
-            "agents-reload" => {
-                // Reload ~/.codex/agents.toml and return current list
-                match codex_agents::load_agents_from_home(&self.config.codex_home) {
-                    Ok(v) => {
-                        self.configured_agents = v;
-                        let builtins = self.agents_registry.list();
-                        let agents = codex_agents::summarize_agents(&self.configured_agents, &builtins);
-                        let result = CallToolResult {
-                            content: vec![ContentBlock::TextContent(TextContent {
-                                r#type: "text".to_string(),
-                                text: format!("{} agents", agents.len()),
-                                annotations: None,
-                            })],
-                            is_error: Some(false),
-                            structured_content: Some(serde_json::to_value(&agents).unwrap_or(serde_json::Value::Null)),
-                        };
-                        self.send_response::<mcp_types::CallToolRequest>(id, result).await;
-                    }
-                    Err(e) => {
-                        let result = CallToolResult {
-                            content: vec![ContentBlock::TextContent(TextContent {
-                                r#type: "text".to_string(),
-                                text: format!("failed to reload agents: {e}"),
-                                annotations: None,
-                            })],
-                            is_error: Some(true),
-                            structured_content: None,
-                        };
-                        self.send_response::<mcp_types::CallToolRequest>(id, result).await;
-                    }
-                }
-            }
-            "agents-toolset" => {
-                // Return effective built-in and MCP tool allowlists for agent_id
-                let params: AgentsToolsetParams = match arguments
-                    .and_then(|v| serde_json::from_value::<AgentsToolsetParams>(v).ok())
-                {
-                    Some(p) => p,
-                    None => {
-                        let result = CallToolResult {
-                            content: vec![ContentBlock::TextContent(TextContent {
-                                r#type: "text".to_owned(),
-                                text: "Missing arguments for agents-toolset; require `agent_id`".to_owned(),
-                                annotations: None,
-                            })],
-                            is_error: Some(true),
-                            structured_content: None,
-                        };
-                        self.send_response::<mcp_types::CallToolRequest>(id, result).await;
-                        return;
-                    }
+            // agents-* tools are now built-in; no longer exposed via MCP
+            "agents-list" | "agents-start" | "agents-status" | "agents-reload" | "agents-cancel" => {
+                let result = CallToolResult {
+                    content: vec![ContentBlock::TextContent(TextContent {
+                        r#type: "text".to_string(),
+                        text: "agents-* tools are not exposed via MCP; use built-in tools".to_string(),
+                        annotations: None,
+                    })],
+                    is_error: Some(true),
+                    structured_content: None,
                 };
-
-                if let Some(spec) = self.configured_agents.iter().find(|a| a.id == params.agent_id) {
-                    let result = CallToolResult {
-                        content: vec![ContentBlock::TextContent(TextContent {
-                            r#type: "text".to_string(),
-                            text: format!("toolset for '{}'", params.agent_id),
-                            annotations: None,
-                        })],
-                        is_error: Some(false),
-                        structured_content: Some(serde_json::json!({
-                            "allowed_builtin_tools": spec.allowed_builtin_tools,
-                            "allowed_mcp_tools": spec.allowed_mcp_tools,
-                        })),
-                    };
-                    self.send_response::<mcp_types::CallToolRequest>(id, result).await;
-                } else {
-                    // Provide defaults for built-ins
-                    let (builtin, mcp): (Vec<String>, Vec<String>) = if params.agent_id == "web_search" {
-                        (vec!["web_search".to_string(), "plan".to_string()], vec![])
-                    } else {
-                        (vec!["plan".to_string()], vec![])
-                    };
-                    let result = CallToolResult {
-                        content: vec![ContentBlock::TextContent(TextContent {
-                            r#type: "text".to_string(),
-                            text: format!("toolset for '{}' (builtin)", params.agent_id),
-                            annotations: None,
-                        })],
-                        is_error: Some(false),
-                        structured_content: Some(serde_json::json!({
-                            "allowed_builtin_tools": builtin,
-                            "allowed_mcp_tools": mcp,
-                        })),
-                    };
-                    self.send_response::<mcp_types::CallToolRequest>(id, result).await;
-                }
+                self.send_response::<mcp_types::CallToolRequest>(id, result).await;
             }
-            "agents-cancel" => self.handle_tool_call_agents_cancel(id, arguments).await,
             _ => {
                 let result = CallToolResult {
                     content: vec![ContentBlock::TextContent(TextContent {
@@ -475,6 +365,7 @@ impl MessageProcessor {
         }
     }
 
+    #[cfg(test)]
     async fn handle_tool_call_agents_list(&self, id: RequestId) {
         let builtins = self.agents_registry.list();
         let agents = codex_agents::summarize_agents(&self.configured_agents, &builtins);
@@ -490,6 +381,7 @@ impl MessageProcessor {
         self.send_response::<mcp_types::CallToolRequest>(id, result).await;
     }
 
+    #[cfg(test)]
     async fn handle_tool_call_agents_start(
         &self,
         id: RequestId,
@@ -594,20 +486,7 @@ Do not include markdown fences or extra text."#;
             // Spawn conversation (consider configured agent)
             let mut cfg = (*config).clone();
             if let Some(spec) = configured_agents_for_spawn.iter().find(|a| a.id == agent_id_for_spawn) {
-                if let Some(m) = &spec.model { cfg.model = m.clone(); }
-                if let Some(cwd) = &spec.cwd { cfg.cwd = std::path::PathBuf::from(cwd); }
-                if let Some(ap) = &spec.approval_policy {
-                    if let Ok(v) = serde_json::from_str::<codex_core::protocol::AskForApproval>(&format!("\"{}\"", ap)) { cfg.approval_policy = v; }
-                }
-                if let Some(sb) = &spec.sandbox {
-                    if let Ok(v) = serde_json::from_str::<codex_core::protocol::SandboxPolicy>(&format!("{{\"mode\":\"{}\"}}", sb)) { cfg.sandbox_policy = v; }
-                }
-                let allow = |k: &str| spec.allowed_builtin_tools.iter().any(|t| t == k);
-                cfg.include_plan_tool = true;
-                cfg.include_apply_patch_tool = allow("apply_patch");
-                cfg.tools_web_search_request = allow("web_search");
-                cfg.include_view_image_tool = allow("view_image");
-                cfg.allowed_mcp_tools = spec.allowed_mcp_tools.clone();
+                cfg = codex_agents::apply_spec_to_config(cfg, spec);
             } else {
                 if agent_id_for_spawn == "web_search" { cfg.tools_web_search_request = true; }
                 cfg.include_plan_tool = true;
@@ -785,6 +664,7 @@ Do not include markdown fences or extra text."#;
         self.send_response::<mcp_types::CallToolRequest>(id, result).await;
     }
 
+    #[cfg(test)]
     async fn handle_tool_call_agents_status(
         &self,
         id: RequestId,
@@ -839,6 +719,7 @@ Do not include markdown fences or extra text."#;
         self.send_response::<mcp_types::CallToolRequest>(id, result).await;
     }
 
+    #[cfg(test)]
     async fn handle_tool_call_agents_cancel(
         &self,
         id: RequestId,

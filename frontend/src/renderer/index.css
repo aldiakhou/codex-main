@@ -182,6 +182,28 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  transition: background-image 0.6s ease, background-color 0.6s ease;
+}
+
+/* Utility to disable global mesh background entirely (applied to body) */
+body.no-mesh-bg {
+  background-image: none !important;
+}
+
+/* Soft fade overlay for smoother background transitions */
+body.mesh-fade::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.6));
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  z-index: -1;
+}
+
+body.no-mesh-bg.mesh-fade::after {
+  opacity: 1;
 }
 
 /* Agents page specific background: tone down mesh for readability */
@@ -1206,6 +1228,16 @@ body {
 .interactive-card:hover {
   transform: translateY(-2px) scale(1.02);
   box-shadow: var(--shadow-xl);
+}
+
+/* Fade + scale entrance for dynamically mounted elements */
+.fade-in-scale {
+  animation: fadeInScale 0.4s var(--ease-out-cubic) both;
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Icon Interactions */

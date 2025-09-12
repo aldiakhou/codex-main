@@ -32,17 +32,131 @@ const AgentsWorkspace: React.FC = () => {
   const [goal, setGoal] = useState('Demo exec + patch');
   const [params, setParams] = useState('{ "demo_exec_patch": true }');
   const [status, setStatus] = useState('');
-  const [cardGoals, setCardGoals] = useState<Record<string, string>>({
-    search: 'Research: "AI agents frontend architecture best practices"',
-    developer: 'Draft implementation plan for feature X',
-    document: 'Summarize project docs into a brief',
+  const [cardGoals, setCardGoals] = useState<Record<string, string>>(() => {
+    try {
+      const raw = window.localStorage.getItem('agents.cardGoals');
+      if (raw) return JSON.parse(raw);
+    } catch (e) { console.debug('load cardGoals failed', e); }
+    return {};
   });
+  const saveGoals = (updater: (prev: Record<string,string>)=>Record<string,string>) => {
+    setCardGoals(prev => {
+      const next = updater(prev);
+  try { window.localStorage.setItem('agents.cardGoals', JSON.stringify(next)); } catch (e) { console.debug('save cardGoals failed', e); }
+      return next;
+    });
+  };
+  // Search / filter state with persistence
+  const [query, setQuery] = useState<string>(() => {
+    try { return window.localStorage.getItem('agents.searchQuery') || ''; } catch { return ''; }
+  });
+  const debouncedQueryRef = useRef<number | undefined>(undefined);
+  const [effectiveQuery, setEffectiveQuery] = useState('');
+  useEffect(() => {
+    if (debouncedQueryRef.current) window.clearTimeout(debouncedQueryRef.current);
+    debouncedQueryRef.current = window.setTimeout(()=> {
+      const q = query.trim().toLowerCase();
+      setEffectiveQuery(q);
+      try { window.localStorage.setItem('agents.searchQuery', query); } catch (e) { console.debug('persist search query failed', e); }
+    }, 250);
+  }, [query]);
+
+  // Fuzzy filter & rank (lightweight Levenshtein)
+  const filteredAgents = useMemo(() => {
+    if (!effectiveQuery) return liveAgents;
+    const maxDistance = Math.max(1, Math.floor(effectiveQuery.length * 0.4));
+    const levenshtein = (a: string, b: string) => {
+      if (a === b) return 0;
+      const al = a.length, bl = b.length;
+      if (al === 0) return bl; if (bl === 0) return al;
+      const dp = Array.from({ length: al + 1 }, () => new Array<number>(bl + 1));
+      for (let i = 0; i <= al; i++) dp[i][0] = i;
+      for (let j = 0; j <= bl; j++) dp[0][j] = j;
+      for (let i = 1; i <= al; i++) {
+        const ai = a.charCodeAt(i - 1);
+        for (let j = 1; j <= bl; j++) {
+          const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+            dp[i][j] = Math.min(
+              dp[i - 1][j] + 1,
+              dp[i][j - 1] + 1,
+              dp[i - 1][j - 1] + cost
+            );
+        }
+      }
+      return dp[al][bl];
+    };
+    const scored = liveAgents.map(a => {
+      const hayRaw = `${a.id} ${a.name || ''} ${a.description || ''}`.trim();
+      const hay = hayRaw.toLowerCase();
+      if (hay.includes(effectiveQuery)) {
+        return { a, score: 0 }; // direct hit
+      }
+      // Split into tokens and take best token distance
+      const tokens = hay.split(/[^a-z0-9]+/).filter(Boolean);
+      let best = Infinity;
+      for (const t of tokens) {
+        // Early prune if length delta too large
+        if (Math.abs(t.length - effectiveQuery.length) > maxDistance) continue;
+        const d = levenshtein(t, effectiveQuery);
+        if (d < best) best = d;
+        if (best === 0) break;
+      }
+      return { a, score: best }; // Infinity if no tokens
+    }).filter(x => x.score <= maxDistance);
+    scored.sort((x,y)=> x.score - y.score || (x.a.name||'').localeCompare(y.a.name||''));
+    return scored.map(s => s.a);
+  }, [liveAgents, effectiveQuery]);
+
+  // Plan-based progress with fallback heuristic cache
+  const progressCacheRef = useRef<Record<string, number>>({});
+  const progressForRun = (run: { status: string; created_at: number; updated_at: number; task_id: string }) => {
+    if (!run) return 0;
+    // Completed states
+    if (run.status === 'complete' || run.status === 'completed') {
+      progressCacheRef.current[run.task_id] = 100;
+      return 100;
+    }
+    if (run.status === 'cancelled' || run.status === 'failed') {
+      progressCacheRef.current[run.task_id] = 0;
+      return 0;
+    }
+    // Look up plan steps for this run
+    const pWrap = plansByTask[run.task_id] || plan;
+    const steps = pWrap?.plan || [];
+    if (steps.length) {
+      const total = steps.length;
+      const completed = steps.filter(s => s.status === 'completed').length;
+      // If some in progress, give partial credit
+      const inProgress = steps.filter(s => s.status === 'in_progress').length;
+      let pct = (completed / total) * 100;
+      if (inProgress > 0) {
+        pct += (inProgress / total) * 25; // up to +25% distributed among in-progress steps
+      }
+      // Clamp and smooth upward only (never jump backwards)
+      pct = Math.min(99, pct); // keep <100 until explicit completion
+      const prev = progressCacheRef.current[run.task_id] ?? 0;
+      const smooth = pct < prev ? prev : pct;
+      progressCacheRef.current[run.task_id] = smooth;
+      return smooth;
+    }
+    // Fallback time heuristic if no plan yet
+    const elapsed = Date.now() - run.created_at;
+    const heuristic = Math.min(85, (elapsed / 20000) * 85);
+    const prev = progressCacheRef.current[run.task_id] ?? 0;
+    const smooth = heuristic < prev ? prev : heuristic;
+    progressCacheRef.current[run.task_id] = smooth;
+    return smooth;
+  };
 
   // Drawer state for run details
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsAgentId, setDetailsAgentId] = useState<string | null>(null);
   const [detailsTaskId, setDetailsTaskId] = useState<string | null>(null);
-  const [compactMode, setCompactMode] = useState(true);
+  const [compactMode, setCompactMode] = useState<boolean>(() => {
+    try { return window.localStorage.getItem('agents.compactMode') === 'false' ? false : true; } catch { return true; }
+  });
+  const [initialLoading, setInitialLoading] = useState(true); // only for first mount
+  const [reloading, setReloading] = useState(false); // subsequent reloads
 
   const lastAssistant = useMemo<Msg | null>(() => {
     try {
@@ -70,10 +184,20 @@ const AgentsWorkspace: React.FC = () => {
     return () => clearInterval(t);
   }, [agentRuns, agentStatus]);
 
-  // Fetch agents on mount
+  // Fetch agents on mount (initial only)
   useEffect(() => {
-    try { listAgents(); } catch (e) { console.debug('listAgents err', e); }
+    let cancelled = false;
+    (async () => {
+      try { await listAgents(); } catch (e) { console.debug('listAgents err', e); }
+      if (!cancelled) setInitialLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, [listAgents]);
+
+  // Persist compact mode
+  useEffect(() => {
+    try { window.localStorage.setItem('agents.compactMode', String(compactMode)); } catch (e) { console.debug('persist compactMode failed', e); }
+  }, [compactMode]);
 
   const scrollWorkforce = (direction: 'left' | 'right') => {
     if (workforceContainerRef.current) {
@@ -106,8 +230,11 @@ const AgentsWorkspace: React.FC = () => {
 
   const doReloadAgents = async () => {
     setStatus('Reloading agents...');
-    await agentsReload();
-    setStatus('Agents reloaded.');
+    setReloading(true);
+    try { await agentsReload(); } finally {
+      setReloading(false);
+      setStatus('Agents reloaded.');
+    }
   };
 
   const doStartTask = async () => {
@@ -162,8 +289,8 @@ const AgentsWorkspace: React.FC = () => {
                 <button className="px-3 py-1 rounded glass-button border border-[var(--border)] flex items-center gap-2" onClick={doListAgents}>
                   <IconList size={16} /> List Agents
                 </button>
-                <button className="px-3 py-1 rounded glass-button border border-[var(--border)] flex items-center gap-2" onClick={doReloadAgents}>
-                  <IconRefresh size={16} /> Reload Agents
+                <button className="px-3 py-1 rounded glass-button border border-[var(--border)] flex items-center gap-2 disabled:opacity-50" disabled={reloading} onClick={doReloadAgents}>
+                  <IconRefresh size={16} className={reloading ? 'animate-spin' : ''} /> {reloading ? 'Reloading…' : 'Reload Agents'}
                 </button>
                 <button className="px-3 py-1 rounded glass-button border border-[var(--border)] flex items-center gap-2" onClick={()=>window.aiw.listMcpTools()}>
                   <IconRefresh size={16} /> Refresh MCP Tools
@@ -181,6 +308,10 @@ const AgentsWorkspace: React.FC = () => {
                 <div className="flex flex-col gap-1 md:col-span-3">
                   <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
                   <textarea className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[80px]" value={params} onChange={(e)=>setParams(e.target.value)} />
+                </div>
+                <div className="flex flex-col gap-1 md:col-span-3">
+                  <label className="text-2xs text-[var(--text-tertiary)]">Search Agents</label>
+                  <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={query} placeholder="Filter by id, name or description" onChange={(e)=>setQuery(e.target.value)} />
                 </div>
               </div>
               <div className="flex items-center gap-2 mt-2">
@@ -249,10 +380,15 @@ const AgentsWorkspace: React.FC = () => {
           >
             <div className="flex items-center justify-between hierarchy-subtitle">
               <motion.h2 
-                className="text-hierarchy-2 font-bold text-gradient-cosmic hover-accent"
+                className="text-hierarchy-2 font-bold text-gradient-cosmic hover-accent flex items-center gap-2"
                 whileHover={{ x: 4 }}
               >
                 Agent Workforce
+                {!initialLoading && (
+                  <span className="px-2 py-0.5 rounded-full text-2xs bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-tertiary)]">
+                    {filteredAgents.length}/{liveAgents.length}
+                  </span>
+                )}
               </motion.h2>
               <div className="flex items-center gap-sm">
                 <label className="text-2xs text-[var(--text-tertiary)] mr-2">Compact</label>
@@ -286,7 +422,17 @@ const AgentsWorkspace: React.FC = () => {
               initial="hidden"
               animate="visible"
             >
-              {(liveAgents.length ? liveAgents : []).map((a, index) => {
+              {initialLoading && (
+                [...Array(4)].map((_, i) => (
+                  <div key={`skeleton-${i}`} className="agent-card p-md interactive-card animate-pulse opacity-60">
+                    <div className="skeleton-avatar mb-4 bg-gradient-ocean" />
+                    <div className="skeleton-text bg-gradient-primary" />
+                    <div className="skeleton-text-sm bg-gradient-secondary" />
+                    <div className="skeleton-text-sm bg-gradient-forest" />
+                  </div>
+                ))
+              )}
+              {!initialLoading && (filteredAgents.length ? filteredAgents : []).map((a, index) => {
                 // Map static cards to real agent ids
                 const realId = a.id;
                 // Find latest run for this agent
@@ -311,7 +457,7 @@ const AgentsWorkspace: React.FC = () => {
                   variants={cardVariants}
                   whileHover={{ scale: 1.02, y: -5 }}
                   whileTap={{ scale: 0.98 }}
-                  className={`agent-card ${compactMode ? 'p-md' : 'p-lg'} interactive-card hover-lift stagger-item ${
+                  className={`agent-card ${compactMode ? 'p-md' : 'p-lg'} interactive-card hover-lift ${initialLoading ? '' : 'stagger-item'} ${
                     cardStatusClass === 'processing' ? 'loading-pulse shimmer' : ''
                   }`}
                   style={{ animationDelay: `${index * 100}ms` }}
@@ -355,11 +501,11 @@ const AgentsWorkspace: React.FC = () => {
                         <div className="flex justify-between items-center">
                           <span className="text-hierarchy-5 text-[var(--text-secondary)]">Progress</span>
                           <motion.span className="text-hierarchy-5 font-medium neon-blue" whileHover={{ scale: 1.1 }}>
-                            {latestRun ? (latestRun.status === 'running' ? '...' : '100%') : '0%'}
+                            {latestRun ? (latestRun.status === 'running' ? `${Math.round(progressForRun(latestRun))}%` : '100%') : '0%'}
                           </motion.span>
                         </div>
                         <div className="agent-progress hover-brighten border-gradient-primary">
-                          <motion.div className="agent-progress-bar bg-gradient-ocean" initial={{ width: 0 }} animate={{ width: latestRun ? (latestRun.status === 'running' ? '60%' : '100%') : '0%' }} transition={{ duration: 0.6 }} />
+                          <motion.div className="agent-progress-bar bg-gradient-ocean" initial={{ width: 0 }} animate={{ width: latestRun ? (latestRun.status === 'running' ? `${progressForRun(latestRun)}%` : '100%') : '0%' }} transition={{ type: 'spring', stiffness: 120, damping: 20 }} />
                         </div>
                       </div>
                     )}
@@ -379,7 +525,7 @@ const AgentsWorkspace: React.FC = () => {
                       <input
                         className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] w-full"
                         value={goalValue}
-                        onChange={(e)=> setCardGoals((prev)=>({ ...prev, [realId]: e.target.value }))}
+                        onChange={(e)=> saveGoals(prev=>({ ...prev, [realId]: e.target.value }))}
                         placeholder="What should this agent do?"
                       />
                     </div>

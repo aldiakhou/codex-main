@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use mcp_types::Tool;
 use mcp_types::ToolInputSchema;
 use schemars::JsonSchema;
