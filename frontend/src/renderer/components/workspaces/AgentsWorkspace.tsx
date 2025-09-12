@@ -92,6 +92,7 @@ const AgentsWorkspace: React.FC = () => {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsAgentId, setDetailsAgentId] = useState<string | null>(null);
   const [detailsTaskId, setDetailsTaskId] = useState<string | null>(null);
+  const [compactMode, setCompactMode] = useState(true);
 
   const lastAssistant = useMemo(() => {
     try {
@@ -183,78 +184,7 @@ const AgentsWorkspace: React.FC = () => {
 
   return (
     <div className="workspace-layout container-full transition-fade-in bg-gradient-aurora">
-      {/* Minimal Agents Manager controls (wired to proto) */}
-      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--bg-secondary)] m-6 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Agents Manager (Minimal)</h2>
-          <div className="text-sm text-[var(--text-secondary)]">{status}</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={doListAgents}>
-            <IconList size={16} /> List Agents
-          </button>
-          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={doReloadAgents}>
-            <IconRefresh size={16} /> Reload Agents
-          </button>
-          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2" onClick={()=>window.aiw.listMcpTools()}>
-            <IconRefresh size={16} /> Refresh MCP Tools
-          </button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-2xs text-[var(--text-tertiary)]">Agent ID</label>
-            <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={agentId} onChange={(e)=>setAgentId(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1 md:col-span-2">
-            <label className="text-2xs text-[var(--text-tertiary)]">Goal</label>
-            <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={goal} onChange={(e)=>setGoal(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1 md:col-span-3">
-            <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
-            <textarea className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[100px]" value={params} onChange={(e)=>setParams(e.target.value)} />
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="px-3 py-1 rounded bg-[var(--accent)] text-white flex items-center gap-2" onClick={doStartTask}>
-            <IconPlayerPlay size={16} /> Start Task
-          </button>
-          <div className="text-2xs text-[var(--text-tertiary)]">Approvals will appear in Chat; monitor progress there.</div>
-        </div>
-
-        {/* Live Agents list + Runs (compact) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-          <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
-            <div className="font-semibold mb-2 text-sm">Available Agents</div>
-            <div className="space-y-1 max-h-48 overflow-auto">
-              {liveAgents.length === 0 ? (
-                <div className="text-2xs text-[var(--text-tertiary)]">No agents yet. Use Reload Agents.</div>
-              ) : (
-                liveAgents.map(a => (
-                  <div key={a.id} className="flex items-center justify-between text-sm">
-                    <div className="truncate"><span className="font-medium">{a.id}</span> <span className="text-2xs text-[var(--text-tertiary)]">{a.name}</span></div>
-                    <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>{ setAgentId(a.id); setGoal(a.description || goal); }}>Select</button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
-            <div className="font-semibold mb-2 text-sm">Active Runs</div>
-            <div className="space-y-1 max-h-48 overflow-auto">
-              {Object.keys(agentRuns).length === 0 ? (
-                <div className="text-2xs text-[var(--text-tertiary)]">No active runs.</div>
-              ) : (
-                Object.values(agentRuns).sort((a,b)=>b.updated_at-a.updated_at).map(run => (
-                  <div key={run.task_id} className="flex items-center justify-between text-sm">
-                    <div className="truncate"><span className="font-medium">{run.agent_id || 'agent'}</span> <span className="text-2xs text-[var(--text-tertiary)]">{run.status}</span></div>
-                    <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>agentCancel(run.task_id)}>Cancel</button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Minimal manager removed from top; integrated below. */}
       {/* Enhanced Grid Layout with Golden Ratio */}
       <div className="grid-asymmetric-sidebar gap-xl">
         {/* Left Panel: Task Overview - Using Golden Ratio Proportion */}
@@ -262,7 +192,7 @@ const AgentsWorkspace: React.FC = () => {
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5 }}
-          className="workspace-card glass-card hover-lift card-premium"
+          className="workspace-card glass-card hover-lift card-premium max-h-[560px] overflow-auto"
         >
           <div className="content-flow-lg">
             <div>
@@ -276,79 +206,70 @@ const AgentsWorkspace: React.FC = () => {
                 Urgently analyze the reasons behind the unusual surge in new energy stocks. Combine internal user behavior database and investment portfolios. Generate personalized analysis reports and send them to relevant clients.
               </p>
             </div>
-            
-            <div className="glass-card p-lg hover-lift-sm interactive-card">
-              <div className="flex items-center gap-md hierarchy-subtitle">
-                <motion.div 
-                  className="w-10 h-10 bg-gradient-aurora rounded-lg flex items-center justify-center hover-spin interactive-icon shadow-glow-accent"
-                  whileHover={{ rotate: 360 }}
-                  transition={{ duration: 0.5 }}
-                >
-                  <IconActivity size={20} className="text-white" />
-                </motion.div>
-                <div>
-                  <motion.h3 
-                    className="font-semibold text-[var(--text-primary)] text-hierarchy-4 hover-accent"
-                    whileHover={{ x: 4 }}
-                  >
-                    Active Session
-                  </motion.h3>
-                  <p className="text-hierarchy-5 text-[var(--text-secondary)]">3 agents working</p>
+            <div className="glass-card p-md hover-lift-sm interactive-card">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <button className="px-3 py-1 rounded glass-button border border-[var(--border)] flex items-center gap-2" onClick={doListAgents}>
+                  <IconList size={16} /> List Agents
+                </button>
+                <button className="px-3 py-1 rounded glass-button border border-[var(--border)] flex items-center gap-2" onClick={doReloadAgents}>
+                  <IconRefresh size={16} /> Reload Agents
+                </button>
+                <button className="px-3 py-1 rounded glass-button border border-[var(--border)] flex items-center gap-2" onClick={()=>window.aiw.listMcpTools()}>
+                  <IconRefresh size={16} /> Refresh MCP Tools
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-2xs text-[var(--text-tertiary)]">Agent ID</label>
+                  <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={agentId} onChange={(e)=>setAgentId(e.target.value)} />
+                </div>
+                <div className="flex flex-col gap-1 md:col-span-2">
+                  <label className="text-2xs text-[var(--text-tertiary)]">Goal</label>
+                  <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={goal} onChange={(e)=>setGoal(e.target.value)} />
+                </div>
+                <div className="flex flex-col gap-1 md:col-span-3">
+                  <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
+                  <textarea className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[80px]" value={params} onChange={(e)=>setParams(e.target.value)} />
                 </div>
               </div>
-              
-              <div className="content-flow">
-                <div className="flex justify-between items-center">
-                  <span className="text-hierarchy-5 text-[var(--text-secondary)]">Overall Progress</span>
-                  <motion.span 
-                    className="text-hierarchy-5 font-semibold neon-blue"
-                    whileHover={{ scale: 1.1 }}
-                  >
-                    67%
-                  </motion.span>
+              <div className="flex items-center gap-2 mt-2">
+                <button className="px-3 py-1 rounded btn-gradient btn-haptic flex items-center gap-2" onClick={doStartTask}>
+                  <IconPlayerPlay size={16} /> Start Task
+                </button>
+                <div className="text-2xs text-[var(--text-tertiary)]">Approvals will appear in Chat; monitor progress there.</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+                  <div className="font-semibold mb-2 text-sm">Available Agents</div>
+                  <div className="space-y-1 max-h-40 overflow-auto">
+                    {liveAgents.length === 0 ? (
+                      <div className="text-2xs text-[var(--text-tertiary)]">No agents yet. Use Reload Agents.</div>
+                    ) : (
+                      liveAgents.map(a => (
+                        <div key={a.id} className="flex items-center justify-between text-sm">
+                          <div className="truncate"><span className="font-medium">{a.id}</span> <span className="text-2xs text-[var(--text-tertiary)]">{a.name}</span></div>
+                          <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>{ setAgentId(a.id); setGoal(a.description || goal); }}>Select</button>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
-                <div className="agent-progress hover-brighten border-gradient-aurora">
-                  <motion.div 
-                    className="agent-progress-bar bg-gradient-aurora"
-                    initial={{ width: 0 }}
-                    animate={{ width: "67%" }}
-                    transition={{ duration: 1.5, ease: "easeOut" }}
-                  />
+                <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
+                  <div className="font-semibold mb-2 text-sm">Active Runs</div>
+                  <div className="space-y-1 max-h-40 overflow-auto">
+                    {Object.keys(agentRuns).length === 0 ? (
+                      <div className="text-2xs text-[var(--text-tertiary)]">No active runs.</div>
+                    ) : (
+                      Object.values(agentRuns).sort((a,b)=>b.updated_at-a.updated_at).map(run => (
+                        <div key={run.task_id} className="flex items-center justify-between text-sm">
+                          <div className="truncate"><span className="font-medium">{run.agent_id || 'agent'}</span> <span className="text-2xs text-[var(--text-tertiary)]">{run.status}</span></div>
+                          <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>agentCancel(run.task_id)}>Cancel</button>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-md">
-              <motion.div 
-                className="text-center p-md glass-card hover-lift-sm interactive-card shadow-colored"
-                whileHover={{ scale: 1.05 }}
-              >
-                <motion.div 
-                  className="text-hierarchy-2 font-bold neon-green"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ delay: 0.3, type: "spring" }}
-                  whileHover={{ scale: 1.1 }}
-                >
-                  26
-                </motion.div>
-                <div className="text-hierarchy-5 text-[var(--text-secondary)]">Tasks Done</div>
-              </motion.div>
-              <motion.div 
-                className="text-center p-md glass-card hover-lift-sm interactive-card shadow-colored"
-                whileHover={{ scale: 1.05 }}
-              >
-                <motion.div 
-                  className="text-hierarchy-2 font-bold neon-purple"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ delay: 0.4, type: "spring" }}
-                  whileHover={{ scale: 1.1 }}
-                >
-                  12
-                </motion.div>
-                <div className="text-hierarchy-5 text-[var(--text-secondary)]">In Progress</div>
-              </motion.div>
             </div>
 
             {/* Add Agent Button */}
@@ -382,6 +303,8 @@ const AgentsWorkspace: React.FC = () => {
                 Agent Workforce
               </motion.h2>
               <div className="flex items-center gap-sm">
+                <label className="text-2xs text-[var(--text-tertiary)] mr-2">Compact</label>
+                <input type="checkbox" checked={compactMode} onChange={(e)=>setCompactMode(e.target.checked)} />
                 <motion.button 
                   onClick={() => scrollWorkforce('left')}
                   disabled={scrollState.isAtStart}
@@ -406,38 +329,37 @@ const AgentsWorkspace: React.FC = () => {
             {/* Enhanced Agent Grid with Container Queries */}
             <motion.div
               ref={workforceContainerRef}
-              className="agent-grid-enhanced gap-xl"
+              className="agent-grid-enhanced gap-xl max-h-[calc(100vh-220px)] overflow-auto pr-2"
               variants={containerVariants}
               initial="hidden"
               animate="visible"
             >
-              {agents.map((agent, index) => {
+              {(liveAgents.length ? liveAgents : []).map((a, index) => {
                 // Map static cards to real agent ids
-                const mapId = (sid: string) => sid === 'search' ? 'web_search' : sid === 'developer' ? 'structured' : sid === 'document' ? 'structured' : sid;
-                const realId = mapId(agent.id);
+                const realId = a.id;
                 // Find latest run for this agent
                 const latestRun = Object.values(agentRuns || {})
                   .filter(r => (r.agent_id || '') === realId)
                   .sort((a,b)=>b.updated_at - a.updated_at)[0];
-                const cardStatusClass = latestRun ? (latestRun.status === 'running' ? 'processing' : latestRun.status === 'complete' ? 'active' : 'idle') : agent.status;
-                const statusText = latestRun ? latestRun.status : agent.status;
-                const goalValue = cardGoals[agent.id] ?? '';
-                const onStart = async () => {
-                  await startAgent(realId, goalValue || 'Start an agent task.');
-                };
+                const cardStatusClass = latestRun ? (latestRun.status === 'running' ? 'processing' : latestRun.status === 'complete' ? 'active' : 'idle') : 'idle';
+                const statusText = latestRun ? latestRun.status : 'idle';
+                const goalValue = cardGoals[realId] ?? '';
+                const onStart = async () => { await startAgent(realId, goalValue || 'Start an agent task.'); };
                 const onCancel = async () => { if (latestRun) await agentCancel(latestRun.task_id); };
                 const onView = () => {
                   setDetailsAgentId(realId);
                   setDetailsTaskId(latestRun?.task_id || null);
                   setDetailsOpen(true);
                 };
+                const name = a.name || realId;
+                const avatar = (name || realId).trim().charAt(0).toUpperCase();
                 return (
                 <motion.div
-                  key={agent.id}
+                  key={realId}
                   variants={cardVariants}
                   whileHover={{ scale: 1.02, y: -5 }}
                   whileTap={{ scale: 0.98 }}
-                  className={`card-premium glass-card p-lg interactive-card hover-lift stagger-item shadow-multi ${
+                  className={`card-premium glass-card ${compactMode ? 'p-md' : 'p-lg'} interactive-card hover-lift stagger-item shadow-multi ${
                     cardStatusClass === 'processing' ? 'loading-pulse shimmer' : ''
                   }`}
                   style={{ animationDelay: `${index * 100}ms` }}
@@ -448,7 +370,7 @@ const AgentsWorkspace: React.FC = () => {
                         className="agent-avatar hover-spin interactive-icon bg-gradient-sunset shadow-glow-accent"
                         whileHover={{ scale: 1.1, rotate: 10 }}
                       >
-                        {agent.avatar}
+                        {avatar}
                       </motion.div>
                       <motion.div 
                         className={`status-indicator status-${cardStatusClass} neon-border glass`}
@@ -467,69 +389,37 @@ const AgentsWorkspace: React.FC = () => {
                         className="text-hierarchy-4 font-semibold text-gradient-primary hierarchy-subtitle hover-accent"
                         whileHover={{ x: 4 }}
                       >
-                        {agent.name}
+                        {name}
                       </motion.h3>
-                      
-                      <div className="flex items-center gap-sm text-hierarchy-5 text-[var(--text-secondary)] hierarchy-paragraph">
-                        <motion.div
-                          className="interactive-icon text-gradient-aurora"
-                          whileHover={{ scale: 1.2, rotate: 15 }}
-                        >
-                          {agent.icon}
-                        </motion.div>
-                        <span>Last active: {agent.lastActivity}</span>
-                      </div>
+                      {!compactMode && (
+                        <div className="flex items-center gap-sm text-hierarchy-5 text-[var(--text-secondary)] hierarchy-paragraph">
+                          <span>Agent id: {realId}</span>
+                        </div>
+                      )}
                     </div>
 
-                    <div className="content-flow-sm">
-                      <div className="flex justify-between items-center">
-                        <span className="text-hierarchy-5 text-[var(--text-secondary)]">Progress</span>
-                        <motion.span 
-                          className="text-hierarchy-5 font-medium neon-blue"
-                          whileHover={{ scale: 1.1 }}
-                        >
-                          {agent.progress}%
-                        </motion.span>
-                      </div>
-                      <div className="agent-progress hover-brighten border-gradient-primary">
-                        <motion.div 
-                          className="agent-progress-bar bg-gradient-ocean"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${agent.progress}%` }}
-                          transition={{ duration: 1, delay: index * 0.1, ease: "easeOut" }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="content-flow-sm">
-                      <div className="flex justify-between items-center">
-                        <span className="text-hierarchy-5 text-[var(--text-secondary)]">Tasks</span>
-                        <motion.span 
-                          className="text-hierarchy-5 font-medium neon-purple"
-                          whileHover={{ scale: 1.1 }}
-                        >
-                          {agent.tasksCompleted}/{agent.totalTasks}
-                        </motion.span>
-                      </div>
-                      
-                      <div className="flex flex-wrap gap-xs">
-                        {agent.tags.map((tag, tagIndex) => (
-                          <motion.span 
-                            key={tagIndex}
-                            className="text-hierarchy-5 px-sm py-xs glass border-gradient-aurora rounded-full hover-lift-sm interactive-card shimmer-text"
-                            initial={{ opacity: 0, scale: 0.8 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            transition={{ 
-                              delay: (index * 0.1) + (tagIndex * 0.05),
-                              duration: 0.3 
-                            }}
-                            whileHover={{ scale: 1.05, y: -2 }}
-                          >
-                            {tag}
+                    {!compactMode && (
+                      <div className="content-flow-sm">
+                        <div className="flex justify-between items-center">
+                          <span className="text-hierarchy-5 text-[var(--text-secondary)]">Progress</span>
+                          <motion.span className="text-hierarchy-5 font-medium neon-blue" whileHover={{ scale: 1.1 }}>
+                            {latestRun ? (latestRun.status === 'running' ? '...' : '100%') : '0%'}
                           </motion.span>
-                        ))}
+                        </div>
+                        <div className="agent-progress hover-brighten border-gradient-primary">
+                          <motion.div className="agent-progress-bar bg-gradient-ocean" initial={{ width: 0 }} animate={{ width: latestRun ? (latestRun.status === 'running' ? '60%' : '100%') : '0%' }} transition={{ duration: 0.6 }} />
+                        </div>
                       </div>
-                    </div>
+                    )}
+
+                    {!compactMode && (
+                      <div className="content-flow-sm">
+                        <div className="flex justify-between items-center">
+                          <span className="text-hierarchy-5 text-[var(--text-secondary)]">Description</span>
+                        </div>
+                        <div className="text-2xs text-[var(--text-tertiary)] break-words">{a.description || '—'}</div>
+                      </div>
+                    )}
 
                     {/* Per-card goal input */}
                     <div className="content-flow-sm mt-sm">
@@ -537,7 +427,7 @@ const AgentsWorkspace: React.FC = () => {
                       <input
                         className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] w-full"
                         value={goalValue}
-                        onChange={(e)=> setCardGoals((prev)=>({ ...prev, [agent.id]: e.target.value }))}
+                        onChange={(e)=> setCardGoals((prev)=>({ ...prev, [realId]: e.target.value }))}
                         placeholder="What should this agent do?"
                       />
                     </div>
