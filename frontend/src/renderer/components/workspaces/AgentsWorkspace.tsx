@@ -1,59 +1,9 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { IconBolt, IconCode, IconFileText, IconActivity, IconPlus, IconSettings, IconList, IconRefresh, IconPlayerPlay } from '@tabler/icons-react';
+import { IconPlus, IconSettings, IconList, IconRefresh, IconPlayerPlay } from '@tabler/icons-react';
 import { useBackend } from '../../contexts/BackendContext';
 
-interface Agent {
-  id: string;
-  name: string;
-  status: 'active' | 'idle' | 'processing';
-  avatar: string;
-  progress: number;
-  tasksCompleted: number;
-  totalTasks: number;
-  lastActivity: string;
-  icon: React.ReactNode;
-  tags: string[];
-}
-
-const agents: Agent[] = [
-  {
-    id: 'search',
-    name: 'Search Agent',
-    status: 'active',
-    avatar: 'S',
-    progress: 75,
-    tasksCompleted: 8,
-    totalTasks: 12,
-    lastActivity: '2 min ago',
-    icon: <IconBolt size={20} />,
-    tags: ['#eva_search', '#terminal']
-  },
-  {
-    id: 'developer',
-    name: 'Developer Agent',
-    status: 'processing',
-    avatar: 'D',
-    progress: 45,
-    tasksCompleted: 3,
-    totalTasks: 8,
-    lastActivity: '1 min ago',
-    icon: <IconCode size={20} />,
-    tags: ['#terminal']
-  },
-  {
-    id: 'document',
-    name: 'Document Agent',
-    status: 'idle',
-    avatar: 'Doc',
-    progress: 90,
-    tasksCompleted: 15,
-    totalTasks: 16,
-    lastActivity: '5 min ago',
-    icon: <IconFileText size={20} />,
-    tags: ['#google_workspace', '#terminal']
-  }
-];
+type Msg = { id: string; role: 'assistant' | 'reasoning' | 'system' | 'tool' | 'user'; text: string; taskId?: string };
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -94,16 +44,17 @@ const AgentsWorkspace: React.FC = () => {
   const [detailsTaskId, setDetailsTaskId] = useState<string | null>(null);
   const [compactMode, setCompactMode] = useState(true);
 
-  const lastAssistant = useMemo(() => {
+  const lastAssistant = useMemo<Msg | null>(() => {
     try {
-      const arr = (messages || []).slice().reverse();
+      const arr = (messages || []).slice().reverse() as Msg[];
       if (detailsTaskId) {
-        const byTask = arr.find((m: any) => m.role === 'assistant' && m.taskId === detailsTaskId);
+        const byTask = arr.find((m) => m.role === 'assistant' && m.taskId === detailsTaskId);
         if (byTask) return byTask;
       }
-      return arr.find((m: any) => m.role === 'assistant') || null;
-    } catch {
-      return null as any;
+      return arr.find((m) => m.role === 'assistant') || null;
+    } catch (e) {
+      console.debug('lastAssistant parse error', e);
+      return null;
     }
   }, [messages, detailsTaskId]);
 
@@ -112,7 +63,7 @@ const AgentsWorkspace: React.FC = () => {
     const t = setInterval(() => {
       Object.values(agentRuns || {}).forEach((run) => {
         if (run.status === 'running') {
-          try { agentStatus(run.task_id); } catch {}
+      try { agentStatus(run.task_id); } catch (e) { console.debug('agentStatus err', e); }
         }
       });
     }, 3000);
@@ -121,7 +72,7 @@ const AgentsWorkspace: React.FC = () => {
 
   // Fetch agents on mount
   useEffect(() => {
-    try { listAgents(); } catch {}
+    try { listAgents(); } catch (e) { console.debug('listAgents err', e); }
   }, [listAgents]);
 
   const scrollWorkforce = (direction: 'left' | 'right') => {
@@ -160,8 +111,8 @@ const AgentsWorkspace: React.FC = () => {
   };
 
   const doStartTask = async () => {
-    let ctx: any = undefined;
-    try { ctx = params ? JSON.parse(params) : undefined; } catch { ctx = undefined; }
+    let ctx: Record<string, unknown> | undefined = undefined;
+    try { ctx = params ? JSON.parse(params) : undefined; } catch (e) { console.debug('parse ctx err', e); ctx = undefined; }
     setStatus('Starting agent...');
     const ok = await startAgent(agentId, goal, ctx);
     setStatus(ok ? 'Agent started.' : 'Failed to start agent.');
@@ -183,7 +134,7 @@ const AgentsWorkspace: React.FC = () => {
   }, []);
 
   return (
-    <div className="workspace-layout container-full transition-fade-in bg-gradient-aurora">
+  <div className="workspace-layout container-full transition-fade-in agents-page">
       {/* Minimal manager removed from top; integrated below. */}
       {/* Enhanced Grid Layout with Golden Ratio */}
       <div className="grid-asymmetric-sidebar gap-xl">
@@ -192,7 +143,7 @@ const AgentsWorkspace: React.FC = () => {
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5 }}
-          className="workspace-card glass-card hover-lift card-premium max-h-[560px] overflow-auto"
+          className="workspace-card glass-card hover-lift agents-inspector"
         >
           <div className="content-flow-lg">
             <div>
@@ -237,15 +188,16 @@ const AgentsWorkspace: React.FC = () => {
                   <IconPlayerPlay size={16} /> Start Task
                 </button>
                 <div className="text-2xs text-[var(--text-tertiary)]">Approvals will appear in Chat; monitor progress there.</div>
+              {status && <div className="agents-status-text" aria-live="polite">{status}</div>}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                 <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
                   <div className="font-semibold mb-2 text-sm">Available Agents</div>
                   <div className="space-y-1 max-h-40 overflow-auto">
-                    {liveAgents.length === 0 ? (
+                    {(liveAgents && liveAgents.length) === 0 ? (
                       <div className="text-2xs text-[var(--text-tertiary)]">No agents yet. Use Reload Agents.</div>
                     ) : (
-                      liveAgents.map(a => (
+                      (liveAgents || []).map(a => (
                         <div key={a.id} className="flex items-center justify-between text-sm">
                           <div className="truncate"><span className="font-medium">{a.id}</span> <span className="text-2xs text-[var(--text-tertiary)]">{a.name}</span></div>
                           <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>{ setAgentId(a.id); setGoal(a.description || goal); }}>Select</button>
@@ -257,7 +209,7 @@ const AgentsWorkspace: React.FC = () => {
                 <div className="p-2 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
                   <div className="font-semibold mb-2 text-sm">Active Runs</div>
                   <div className="space-y-1 max-h-40 overflow-auto">
-                    {Object.keys(agentRuns).length === 0 ? (
+                    {Object.keys(agentRuns || {}).length === 0 ? (
                       <div className="text-2xs text-[var(--text-tertiary)]">No active runs.</div>
                     ) : (
                       Object.values(agentRuns).sort((a,b)=>b.updated_at-a.updated_at).map(run => (
@@ -287,7 +239,7 @@ const AgentsWorkspace: React.FC = () => {
         </motion.div>
 
         {/* Right Panel: Agent Grid - Main Content Area */}
-        <div className="workspace-content">
+  <div className="workspace-content">
           {/* Agent Workforce Section */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -359,7 +311,7 @@ const AgentsWorkspace: React.FC = () => {
                   variants={cardVariants}
                   whileHover={{ scale: 1.02, y: -5 }}
                   whileTap={{ scale: 0.98 }}
-                  className={`card-premium glass-card ${compactMode ? 'p-md' : 'p-lg'} interactive-card hover-lift stagger-item shadow-multi ${
+                  className={`agent-card ${compactMode ? 'p-md' : 'p-lg'} interactive-card hover-lift stagger-item ${
                     cardStatusClass === 'processing' ? 'loading-pulse shimmer' : ''
                   }`}
                   style={{ animationDelay: `${index * 100}ms` }}
@@ -567,11 +519,11 @@ const AgentsWorkspace: React.FC = () => {
                 <div className="flex items-center justify-between mb-2">
                   <div className="font-semibold text-sm">Final Output (latest assistant)</div>
                   <button className="text-2xs underline" onClick={()=>{
-                    try { const text = (lastAssistant as any)?.text || ''; if (text) navigator.clipboard?.writeText(text); } catch {}
+                    try { const text = lastAssistant?.text ?? ''; if (text) navigator.clipboard?.writeText(text); } catch (e) { console.debug('copy text failed', e); }
                   }}>Copy</button>
                 </div>
                 {lastAssistant ? (
-                  <pre className="whitespace-pre-wrap text-xs bg-black/20 p-2 rounded border border-[var(--border)]">{(lastAssistant as any).text}</pre>
+                  <pre className="whitespace-pre-wrap text-xs bg-black/20 p-2 rounded border border-[var(--border)]">{lastAssistant.text}</pre>
                 ) : (
                   <div className="text-2xs text-[var(--text-tertiary)]">No assistant output captured.</div>
                 )}

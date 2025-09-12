@@ -1,24 +1,28 @@
 import React, { useMemo, useState } from 'react';
 import { useBackend } from '../contexts/BackendContext';
 import { html as diff2html } from 'diff2html';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 const PatchApprovalModal: React.FC = () => {
   const { patchApprovalRequest, patchApproval, clearApprovals } = useBackend();
   if (!patchApprovalRequest) return null;
-  const entries = Object.entries(patchApprovalRequest.changes || {});
+  const entries = Object.entries(patchApprovalRequest.changes || {}) as Array<[
+    string,
+    { type: 'add'; content?: string } | { type: 'delete' } | { type: 'update'; unified_diff?: string; move_path?: string | null }
+  ]>;
   const [activeIdx, setActiveIdx] = useState(0);
-  const [activePath, activeChange] = (entries[activeIdx] || [undefined, undefined]) as any;
+  const [activePath, activeChange] = entries[activeIdx] || [undefined, undefined];
 
   const diffHtml = useMemo(() => {
     if (!activePath || !activeChange) return '';
     if (activeChange.type === 'update' && activeChange.unified_diff) {
       try {
-        return diff2html(activeChange.unified_diff, {
+  return diff2html(activeChange.unified_diff, {
           inputFormat: 'diff',
           matching: 'lines',
           outputFormat: 'side-by-side',
           drawFileList: false,
-        } as any);
+  } as unknown as Parameters<typeof diff2html>[1]);
       } catch {
         return '';
       }
@@ -38,12 +42,13 @@ const PatchApprovalModal: React.FC = () => {
     await patchApproval(patchApprovalRequest.id, d);
     clearApprovals();
   };
+  const { containerRef } = useFocusTrap<HTMLDivElement>(true, clearApprovals);
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
-      <div className="bg-[var(--bg-secondary)] w-full max-w-3xl rounded-lg border border-[var(--border)]">
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="patch-approve-title">
+      <div ref={containerRef} tabIndex={-1} className="bg-[var(--bg-secondary)] w-full max-w-3xl rounded-lg border border-[var(--border)]">
         <div className="p-3 border-b border-[var(--border)] flex justify-between items-center">
-          <div className="font-semibold">Approve Code Changes</div>
+          <div id="patch-approve-title" className="font-semibold">Approve Code Changes</div>
           <button onClick={() => clearApprovals()} aria-label="Close" title="Close">×</button>
         </div>
         <div className="p-4 text-sm space-y-3">

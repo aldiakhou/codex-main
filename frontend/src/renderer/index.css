@@ -184,6 +184,23 @@ body {
   overflow-x: hidden;
 }
 
+/* Agents page specific background: tone down mesh for readability */
+.agents-page {
+  background-image: none;
+}
+
+/* Inspector panel readability tweaks */
+.agents-inspector {
+  max-height: calc(100vh - 200px);
+  overflow: auto;
+}
+
+/* Subtle status text block */
+.agents-status-text {
+  margin-left: var(--space-sm);
+  color: var(--text-tertiary);
+}
+
 /* Shimmer Animation */
 @keyframes shimmer {
   0% {

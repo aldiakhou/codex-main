@@ -2,17 +2,17 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../contexts/ThemeContext';
 import { IconSun, IconMoon, IconSettings } from '@tabler/icons-react';
+// Keep prop types string for broad compatibility across call sites
 
 interface HeaderProps {
   activeWorkspace: string;
   onWorkspaceChange: (workspaceId: string) => void;
-  onOpenSettings?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onOpenSettings }) => {
+const Header: React.FC<HeaderProps> = React.memo(({ activeWorkspace, onWorkspaceChange }) => {
   const { theme, toggleTheme } = useTheme();
 
-  const workspaces = [
+  const workspaces: Array<{ id: string; label: string; icon: string }> = [
     { 
       id: 'chat', 
       label: 'Chat', 
@@ -95,6 +95,8 @@ const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onO
       </motion.div>
 
       <motion.nav 
+        role="navigation"
+        aria-label="Workspaces"
         className="glass-card p-1.5 rounded-full flex items-center space-x-2 hover-lift interactive-card shadow-multi"
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -109,6 +111,7 @@ const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onO
                 ? 'active-workspace btn-gradient shadow-glow-accent' 
                 : 'text-[var(--text-secondary)] glass-button hover-accent border-gradient-primary'
             }`}
+            aria-current={activeWorkspace === workspace.id ? 'page' : undefined}
             style={{ animationDelay: `${200 + index * 100}ms` }}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -140,6 +143,7 @@ const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onO
         <motion.button 
           onClick={toggleTheme}
           className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors p-2 rounded-lg glass-button btn-elastic interactive-icon neon-border"
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           whileHover={{ scale: 1.1, backgroundColor: 'var(--bg-secondary)' }}
           whileTap={{ scale: 0.9 }}
@@ -176,6 +180,7 @@ const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onO
           whileHover={{ scale: 1.1, rotate: 90, backgroundColor: 'var(--bg-secondary)' }}
           whileTap={{ scale: 0.9 }}
           onClick={() => onWorkspaceChange('settings')}
+          aria-label="Open settings"
         >
           <IconSettings className="w-6 h-6 text-gradient-cosmic" />
         </motion.button>
@@ -191,6 +196,6 @@ const Header: React.FC<HeaderProps> = ({ activeWorkspace, onWorkspaceChange, onO
       </motion.div>
     </motion.header>
   );
-};
+});
 
 export default Header;

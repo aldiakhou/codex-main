@@ -1,5 +1,6 @@
 ﻿import React, { useState } from 'react';
 import { useBackend } from '../contexts/BackendContext';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 type Props = { isOpen: boolean; onClose: () => void };
 
@@ -8,6 +9,7 @@ const SettingsModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const [codexPath, setPath] = useState<string>(localStorage.getItem('codexPath') || '');
   const [saving, setSaving] = useState(false);
   if (!isOpen) return null;
+  const { containerRef } = useFocusTrap<HTMLDivElement>(isOpen, onClose);
 
   const save = async () => {
     setSaving(true);
@@ -24,11 +26,11 @@ const SettingsModal: React.FC<Props> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-[var(--bg-secondary)] w-full max-w-xl rounded-lg border border-[var(--border)] shadow-xl">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div ref={containerRef} tabIndex={-1} className="bg-[var(--bg-secondary)] w-full max-w-xl rounded-lg border border-[var(--border)] shadow-xl">
         <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Settings</h2>
-          <button className="text-xl" onClick={onClose}>Cancel</button>
+          <h2 id="settings-title" className="text-lg font-semibold">Settings</h2>
+          <button className="text-xl" aria-label="Close settings" onClick={onClose}>Cancel</button>
         </div>
         <div className="p-4 space-y-4">
           <div>

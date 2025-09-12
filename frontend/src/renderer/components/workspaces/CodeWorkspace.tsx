@@ -10,11 +10,12 @@ const CodeWorkspace: React.FC<CodeWorkspaceProps> = ({ onShowDiffModal }) => {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Code Editor</h1>
         <div>
-          <button className="bg-[var(--bg-tertiary)] hover:bg-[var(--border)] text-[var(--text-primary)] font-bold py-2 px-4 rounded-lg transition-colors">
+          <button aria-label="Save file" className="bg-[var(--bg-tertiary)] hover:bg-[var(--border)] text-[var(--text-primary)] font-bold py-2 px-4 rounded-lg transition-colors">
             Save
           </button>
           <button 
             onClick={onShowDiffModal}
+            aria-label="Open patch review"
             className="bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-bold py-2 px-4 rounded-lg ml-2 transition-colors"
           >
             Apply Patch
@@ -26,6 +27,9 @@ const CodeWorkspace: React.FC<CodeWorkspaceProps> = ({ onShowDiffModal }) => {
           className="w-full h-full bg-transparent text-[var(--text-primary)] p-4 font-mono text-sm resize-none focus:outline-none" 
           placeholder="Write your code here..."
         />
+        <div className="p-4 text-[var(--text-tertiary)] text-sm border-t border-[var(--border)]">
+          No file open. Open a file from the Files workspace to start editing.
+        </div>
       </div>
     </div>
   );

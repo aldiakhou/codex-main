@@ -1,4 +1,5 @@
 import React from 'react';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface DiffModalProps {
   isOpen: boolean;
@@ -12,14 +13,16 @@ const DiffModal: React.FC<DiffModalProps> = ({ isOpen, onClose }) => {
     console.log('Patch confirmed and applied');
     onClose();
   };
+  const { containerRef } = useFocusTrap<HTMLDivElement>(isOpen, onClose);
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-      <div className="bg-[var(--bg-secondary)] w-11/12 max-w-4xl h-5/6 rounded-lg shadow-xl flex flex-col border border-[var(--border)]">
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="diff-modal-title">
+      <div ref={containerRef} tabIndex={-1} className="bg-[var(--bg-secondary)] w-11/12 max-w-4xl h-5/6 rounded-lg shadow-xl flex flex-col border border-[var(--border)]">
         <div className="p-4 border-b border-[var(--border)] flex justify-between items-center">
-          <h2 className="text-xl font-bold">Patch Review</h2>
+          <h2 id="diff-modal-title" className="text-xl font-bold">Patch Review</h2>
           <button 
             onClick={onClose}
+            aria-label="Close patch review"
             className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-2xl font-bold transition-colors"
           >
             ×

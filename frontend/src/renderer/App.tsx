@@ -1,43 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useCallback, useState } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { BackendProvider } from './contexts/BackendContext';
 import Header from './components/Header';
-import ChatInterface from './components/ChatInterface';
 import DiffModal from './components/DiffModal';
 import SettingsModal from './components/SettingsModal';
 import ExecApprovalModal from './components/ExecApprovalModal';
 import PatchApprovalModal from './components/PatchApprovalModal';
-import ChatMessages from './components/ChatMessages';
+import { useWorkspaceManager } from './hooks/useWorkspaceManager';
 
-// Workspace Components
-import DashboardWorkspace from './components/workspaces/DashboardWorkspace';
-import AgentsWorkspace from './components/workspaces/AgentsWorkspace';
-import CodeWorkspace from './components/workspaces/CodeWorkspace';
-import FilesWorkspace from './components/workspaces/FilesWorkspace';
-import PlannerWorkspace from './components/workspaces/PlannerWorkspace';
-import TerminalWorkspace from './components/workspaces/TerminalWorkspace';
-import ToolsWorkspace from './components/workspaces/ToolsWorkspace';
-import ChatWorkspace from './components/workspaces/ChatWorkspace';
-import SettingsWorkspace from './components/workspaces/SettingsWorkspace';
-import GraphWorkspace from './components/workspaces/GraphWorkspace';
+// Lazy-loaded Workspace Components
+const DashboardWorkspace = React.lazy(() => import('./components/workspaces/DashboardWorkspace'));
+const AgentsWorkspace = React.lazy(() => import('./components/workspaces/AgentsWorkspace'));
+const CodeWorkspace = React.lazy(() => import('./components/workspaces/CodeWorkspace'));
+const FilesWorkspace = React.lazy(() => import('./components/workspaces/FilesWorkspace'));
+const PlannerWorkspace = React.lazy(() => import('./components/workspaces/PlannerWorkspace'));
+const TerminalWorkspace = React.lazy(() => import('./components/workspaces/TerminalWorkspace'));
+const ToolsWorkspace = React.lazy(() => import('./components/workspaces/ToolsWorkspace'));
+const ChatWorkspace = React.lazy(() => import('./components/workspaces/ChatWorkspace'));
+const SettingsWorkspace = React.lazy(() => import('./components/workspaces/SettingsWorkspace'));
+const GraphWorkspace = React.lazy(() => import('./components/workspaces/GraphWorkspace'));
 
 const AppContent: React.FC = () => {
-  const [activeWorkspace, setActiveWorkspace] = useState('dashboard');
+  const { activeWorkspace, setActiveWorkspace } = useWorkspaceManager('dashboard');
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  useEffect(() => {
-    const last = window.localStorage.getItem('lastWorkspace');
-    if (last) setActiveWorkspace(last);
-  }, []);
-  useEffect(() => {
-    window.localStorage.setItem('lastWorkspace', activeWorkspace);
-  }, [activeWorkspace]);
-  useEffect(() => {
-    const handler = () => setActiveWorkspace('files');
-    window.addEventListener('open-file-in-files', handler);
-    return () => window.removeEventListener('open-file-in-files', handler);
-  }, []);
+  const handleWorkspaceChange: (id: string) => void = useCallback(
+    (id: string) => {
+      setActiveWorkspace(id as any);
+    },
+    [setActiveWorkspace]
+  );
 
   const renderWorkspace = () => {
     switch (activeWorkspace) {
@@ -68,14 +61,12 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col app-container">
-      <Header
-        activeWorkspace={activeWorkspace}
-        onWorkspaceChange={setActiveWorkspace}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-      />
+  <Header activeWorkspace={activeWorkspace} onWorkspaceChange={handleWorkspaceChange} />
       <div className="flex-1 flex overflow-hidden">
         <main className="flex-1 overflow-hidden main-content">
-          {renderWorkspace()}
+          <Suspense fallback={<div className="p-6 text-[var(--text-secondary)]">Loading workspace…</div>}>
+            {renderWorkspace()}
+          </Suspense>
         </main>
       </div>
       <DiffModal isOpen={isDiffModalOpen} onClose={() => setIsDiffModalOpen(false)} />
