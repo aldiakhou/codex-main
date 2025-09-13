@@ -33,9 +33,12 @@ const SettingsWorkspace: React.FC = () => {
     try { const v = localStorage.getItem('ui.secondaryColor'); if (v) return v; } catch {}
     try { return getComputedStyle(document.documentElement).getPropertyValue('--secondary-color').trim() || '#151520'; } catch { return '#151520'; }
   });
+  const [themePreset, setThemePreset] = useState<string>(() => localStorage.getItem('ui.themePreset') || 'default');
   const [uiFont, setUiFont] = useState<string>(() => localStorage.getItem('ui.fontFamily') || 'cascadia');
   const [monoFont, setMonoFont] = useState<string>(() => localStorage.getItem('ui.fontMono') || 'cascadia');
   const [compact, setCompact] = useState<boolean>(() => localStorage.getItem('ui.compact') === 'true');
+  const [scaleHeadings, setScaleHeadings] = useState<boolean>(() => localStorage.getItem('ui.scaleHeadings') !== 'false');
+  const [scaleButtons, setScaleButtons] = useState<boolean>(() => localStorage.getItem('ui.scaleButtons') !== 'false');
 
   useEffect(() => {
     // Apply current UI vars on entry
@@ -43,9 +46,12 @@ const SettingsWorkspace: React.FC = () => {
       document.documentElement.style.setProperty('--font-size-base', `${uiBasePx}px`);
       document.documentElement.style.setProperty('--primary-color', primaryColor);
       document.documentElement.style.setProperty('--secondary-color', secondaryColor);
+      applyThemePreset(themePreset, false);
       applyUiFont(uiFont);
       applyMonoFont(monoFont);
       if (compact) document.body.classList.add('compact');
+      document.documentElement.style.setProperty('--heading-scale', scaleHeadings ? '1' : '0');
+      document.documentElement.style.setProperty('--button-scale', scaleButtons ? '1' : '0');
     } catch {}
   }, []);
 
@@ -61,6 +67,48 @@ const SettingsWorkspace: React.FC = () => {
     if (choice === 'jetbrains') val = "'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace";
     if (choice === 'cascadia') val = "'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace";
     document.documentElement.style.setProperty('--font-mono', val);
+  }
+
+  function applyThemePreset(preset: string, persist: boolean = true) {
+    const root = document.documentElement;
+    const body = document.body;
+    // Defaults
+    let vars: Record<string, string> = {
+      '--bg-primary': '#0a0a0f',
+      '--bg-secondary': '#151520',
+      '--bg-tertiary': '#1e1e2e',
+      '--text-primary': '#f8fafc',
+      '--text-secondary': '#cbd5e1',
+      '--accent': '#6366f1',
+      '--border': '#374151',
+    };
+    if (preset === 'ocean') {
+      vars = {
+        '--bg-primary': '#0b1221',
+        '--bg-secondary': '#0f1b2d',
+        '--bg-tertiary': '#13233a',
+        '--text-primary': '#e6f1ff',
+        '--text-secondary': '#a6c1e0',
+        '--accent': '#4e9eff',
+        '--border': '#264766',
+      };
+    } else if (preset === 'solarized') {
+      // Solarized dark skew
+      vars = {
+        '--bg-primary': '#002b36',
+        '--bg-secondary': '#073642',
+        '--bg-tertiary': '#0a3946',
+        '--text-primary': '#eee8d5',
+        '--text-secondary': '#93a1a1',
+        '--accent': '#268bd2',
+        '--border': '#0e3d47',
+      };
+    }
+    try {
+      Object.entries(vars).forEach(([k,v]) => root.style.setProperty(k, v));
+      // Persist preset name
+      if (persist) localStorage.setItem('ui.themePreset', preset);
+    } catch {}
   }
   const [workbenchCfg, setWorkbenchCfg] = useState<{ backend?: { codex_path?: string; profile?: string } }>({});
 
@@ -208,6 +256,18 @@ const SettingsWorkspace: React.FC = () => {
           <Section title="UI">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Theme preset</label>
+                <select
+                  value={themePreset}
+                  onChange={(e)=> { const v = e.target.value; setThemePreset(v); applyThemePreset(v, true); }}
+                  className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]"
+                >
+                  <option value="default">Default</option>
+                  <option value="ocean">Ocean</option>
+                  <option value="solarized">Solarized</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
                 <label className="text-sm w-40">UI scale (base px)</label>
                 <input
                   type="range"
@@ -275,6 +335,14 @@ const SettingsWorkspace: React.FC = () => {
                 <input type="checkbox" checked={compact} onChange={(e)=>{ const v = e.target.checked; setCompact(v); try { localStorage.setItem('ui.compact', String(v)); if (v) document.body.classList.add('compact'); else document.body.classList.remove('compact'); } catch {} }} />
                 Compact mode (reduced paddings/gaps)
               </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={scaleHeadings} onChange={(e)=>{ const v = e.target.checked; setScaleHeadings(v); try { localStorage.setItem('ui.scaleHeadings', String(v)); document.documentElement.style.setProperty('--heading-scale', v ? '1' : '0'); } catch {} }} />
+                Apply scale to headings
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={scaleButtons} onChange={(e)=>{ const v = e.target.checked; setScaleButtons(v); try { localStorage.setItem('ui.scaleButtons', String(v)); document.documentElement.style.setProperty('--button-scale', v ? '1' : '0'); } catch {} }} />
+                Apply scale to buttons
+              </label>
             </div>
             <div className="flex justify-end mt-3 gap-2">
               <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={()=>{
@@ -285,6 +353,8 @@ const SettingsWorkspace: React.FC = () => {
                   localStorage.removeItem('ui.fontFamily');
                   localStorage.removeItem('ui.fontMono');
                   localStorage.removeItem('ui.compact');
+                  localStorage.removeItem('ui.scaleHeadings');
+                  localStorage.removeItem('ui.scaleButtons');
                 } catch {}
                 setUiBasePx(13);
                 setPrimaryColor('#6366f1');
@@ -292,6 +362,8 @@ const SettingsWorkspace: React.FC = () => {
                 setUiFont('cascadia');
                 setMonoFont('cascadia');
                 setCompact(false);
+                setScaleHeadings(true);
+                setScaleButtons(true);
                 try {
                   document.documentElement.style.setProperty('--font-size-base', '13px');
                   document.documentElement.style.setProperty('--primary-color', '#6366f1');
@@ -299,6 +371,8 @@ const SettingsWorkspace: React.FC = () => {
                   applyUiFont('cascadia');
                   applyMonoFont('cascadia');
                   document.body.classList.remove('compact');
+                  document.documentElement.style.setProperty('--heading-scale', '1');
+                  document.documentElement.style.setProperty('--button-scale', '1');
                 } catch {}
               }}>Reset to defaults</button>
             </div>

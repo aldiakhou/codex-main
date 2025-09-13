@@ -19,6 +19,7 @@ declare global {
         local_images?: string[];
         image_urls?: string[];
       }) => Promise<boolean>;
+      overrideTurn: (params: Partial<{ cwd: string; approval_policy: 'untrusted' | 'on-failure' | 'on-request' | 'never'; sandbox_mode: 'read-only' | 'workspace-write' | 'danger-full-access'; model: string; effort: 'minimal' | 'low' | 'medium' | 'high'; summary: 'auto' | 'concise' | 'detailed' | 'none'; }>) => Promise<boolean>;
       interrupt: () => Promise<boolean>;
       execApproval: (id: string, decision: string) => Promise<boolean>;
       patchApproval: (id: string, decision: string) => Promise<boolean>;

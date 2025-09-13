@@ -503,6 +503,35 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, []);
 
+  // Keep backend turn context in sync with current chat parameters (cwd/model/effort/summary/policies)
+  const prevCtxRef = useRef<BackendContextType['chatParams'] | null>(null);
+  useEffect(() => {
+    const cur = chatParams;
+    const prev = prevCtxRef.current;
+    prevCtxRef.current = cur;
+    // Fire override on first load and when any field changes
+    const diff = !prev || (
+      prev.cwd !== cur.cwd ||
+      prev.model !== cur.model ||
+      prev.approval_policy !== cur.approval_policy ||
+      prev.sandbox_mode !== cur.sandbox_mode ||
+      prev.effort !== cur.effort ||
+      prev.summary !== cur.summary
+    );
+    if (diff) {
+      try {
+        window.aiw.overrideTurn({
+          cwd: cur.cwd,
+          approval_policy: cur.approval_policy,
+          sandbox_mode: cur.sandbox_mode,
+          model: cur.model,
+          effort: cur.effort,
+          summary: cur.summary,
+        });
+      } catch {}
+    }
+  }, [chatParams]);
+
   // Auto-retry start if not connected
   useEffect(() => {
     let timer: any;

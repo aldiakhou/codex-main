@@ -184,6 +184,25 @@ export class BackendService extends EventEmitter {
     });
   }
 
+  overrideTurnContext(params: Partial<{
+    cwd: string;
+    approval_policy: 'untrusted' | 'on-failure' | 'on-request' | 'never';
+    sandbox_mode: 'read-only' | 'workspace-write' | 'danger-full-access';
+    model: string;
+    effort: 'minimal' | 'low' | 'medium' | 'high';
+    summary: 'auto' | 'concise' | 'detailed' | 'none';
+  }>): boolean {
+    const id = `override_turn_${Date.now()}`;
+    const op: any = { type: 'override_turn_context' };
+    if (params.cwd) op.cwd = (params.cwd || '').replace(/\\/g, '/');
+    if (params.approval_policy) op.approval_policy = params.approval_policy;
+    if (params.sandbox_mode) op.sandbox_policy = { mode: params.sandbox_mode };
+    if (params.model) op.model = params.model;
+    if (params.effort) op.effort = params.effort;
+    if (params.summary) op.summary = params.summary;
+    return this.send({ id, op });
+  }
+
   execApproval(targetSubmissionId: string, decision: ReviewDecision): boolean {
     return this.send({
       id: `exec_approval_${Date.now()}`,

@@ -21,6 +21,7 @@ const wireBackendIpc = () => {
   ipcMain.handle('aiw:stop', () => backend.stop());
   ipcMain.handle('aiw:login', (_e, apiKey?: string) => backend.login(apiKey));
   ipcMain.handle('aiw:userTurn', (_e, params) => backend.userTurn(params));
+  ipcMain.handle('aiw:overrideTurn', (_e, params) => backend.overrideTurnContext(params));
   ipcMain.handle('aiw:interrupt', () => backend.interrupt());
   ipcMain.handle('aiw:execApproval', (_e, id: string, decision: string) => backend.execApproval(id, decision));
   ipcMain.handle('aiw:patchApproval', (_e, id: string, decision: string) => backend.patchApproval(id, decision));
@@ -350,8 +351,12 @@ const wireBackendIpc = () => {
       const query = (payload?.query || '').toString();
       const limit = Math.max(1, Math.min(Number(payload?.limit) || 20, 100));
       const cwd = (payload?.cwd || process.cwd()).toString();
-      if (!indexRoot) {
-        try { await buildIndex(cwd); } catch {}
+      // Ensure index matches requested cwd; rebuild if different or missing.
+      const wantRoot = path.resolve(cwd);
+      const curRoot = indexRoot ? path.resolve(indexRoot) : null;
+      if (!curRoot || curRoot !== wantRoot) {
+        indexRoot = wantRoot;
+        try { await buildIndex(indexRoot); } catch {}
       }
       const q = query.trim().toLowerCase();
       if (!q) return { ok: true, matches: [] };

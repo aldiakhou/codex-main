@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('aiw', {
   loginStatus: () => ipcRenderer.invoke('aiw:loginStatus'),
   authInfo: () => ipcRenderer.invoke('aiw:authInfo'),
   userTurn: (params: any) => ipcRenderer.invoke('aiw:userTurn', params),
+  overrideTurn: (params: any) => ipcRenderer.invoke('aiw:overrideTurn', params),
   interrupt: () => ipcRenderer.invoke('aiw:interrupt'),
   execApproval: (id: string, decision: string) => ipcRenderer.invoke('aiw:execApproval', id, decision),
   patchApproval: (id: string, decision: string) => ipcRenderer.invoke('aiw:patchApproval', id, decision),
