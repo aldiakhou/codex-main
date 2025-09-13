@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('aiw', {
   start: (opts?: { codexPath?: string; profile?: string }) => ipcRenderer.invoke('aiw:start', opts),
   stop: () => ipcRenderer.invoke('aiw:stop'),
   login: (apiKey?: string) => ipcRenderer.invoke('aiw:login', apiKey),
+  loginStatus: () => ipcRenderer.invoke('aiw:loginStatus'),
   userTurn: (params: any) => ipcRenderer.invoke('aiw:userTurn', params),
   interrupt: () => ipcRenderer.invoke('aiw:interrupt'),
   execApproval: (id: string, decision: string) => ipcRenderer.invoke('aiw:execApproval', id, decision),
@@ -74,6 +75,7 @@ contextBridge.exposeInMainWorld('idx', {
   graph: () => ipcRenderer.invoke('idx:graph'),
   watchStart: (dir: string) => ipcRenderer.invoke('idx:watchStart', dir),
   watchStop: () => ipcRenderer.invoke('idx:watchStop'),
+  search: (query: string, limit?: number, cwd?: string) => ipcRenderer.invoke('idx:search', { query, limit, cwd }),
   onUpdate: (cb: (payload: any) => void) => {
     const handler = (_: any, payload: any) => cb(payload);
     ipcRenderer.on('idx:update', handler);

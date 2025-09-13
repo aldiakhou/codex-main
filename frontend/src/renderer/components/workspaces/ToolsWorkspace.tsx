@@ -153,9 +153,20 @@ const ToolsWorkspace: React.FC = () => {
                     <div className="font-semibold truncate" title={fq}>{def?.name || fq}</div>
                   </div>
                   {def?.description ? <div className="text-xs text-[var(--text-tertiary)] mt-1 line-clamp-3" title={def.description}>{def.description}</div> : null}
-                  <div className="mt-2 flex items-center justify-between">
+                  <div className="mt-2 flex items-center justify-between gap-2">
                     <span className="text-2xs text-[var(--text-tertiary)] truncate" title={fq}>{fq}</span>
-                    <span className="text-2xs font-semibold inline-block py-0.5 px-2 uppercase rounded text-[var(--success)] bg-green-200">Available</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-2xs px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)]"
+                        title="Insert a request to run this tool into chat"
+                        onClick={()=>{
+                          const pretty = (def && def.input_schema && def.input_schema.properties) ? JSON.stringify(Object.fromEntries(Object.keys(def.input_schema.properties||{}).map(k=>[k, '...'])), null, 2) : '{}';
+                          const hint = `Run MCP tool ${def?.name || fq} with args: ${pretty}`;
+                          setDraftMessage((prev:any)=> (prev ? prev+"\n\n" : '') + hint);
+                        }}
+                      >Insert</button>
+                      <span className="text-2xs font-semibold inline-block py-0.5 px-2 uppercase rounded text-[var(--success)] bg-green-200">Available</span>
+                    </div>
                   </div>
                 </div>
               ))}

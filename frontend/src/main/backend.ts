@@ -282,6 +282,27 @@ export class BackendService extends EventEmitter {
     }
   }
 
+  public async loginStatus(): Promise<{ ok: boolean; stdout?: string; stderr?: string }> {
+    const exe = this.codexPath || 'codex';
+    return new Promise((resolve) => {
+      try {
+        const p = spawn(exe, ['login', 'status'], { env: { ...process.env, RUST_BACKTRACE: '1' } });
+        let out = '';
+        let err = '';
+        p.stdout?.setEncoding('utf8');
+        p.stdout?.on('data', (d) => { out += String(d); });
+        p.stderr?.setEncoding('utf8');
+        p.stderr?.on('data', (d) => { err += String(d); });
+        p.on('exit', (_code) => {
+          resolve({ ok: true, stdout: out.trim(), stderr: err.trim() });
+        });
+      } catch (e) {
+        this.emit('error', `Login status failed: ${String(e)}`);
+        resolve({ ok: false, stderr: String(e) });
+      }
+    });
+  }
+
   public upsertMcpServer(server: MCPServer): boolean {
     try {
       const { ok, config, error } = this.readCodexConfig();

@@ -9,6 +9,11 @@ const ChatInterface: React.FC = () => {
   const [showCwdEditor, setShowCwdEditor] = useState(false);
   const [cwdInput, setCwdInput] = useState<string>(chatParams.cwd || '');
   const [promptSelect, setPromptSelect] = useState<string>('');
+  // @-file search overlay state
+  const [fsOpen, setFsOpen] = useState<boolean>(false);
+  const [fsQuery, setFsQuery] = useState<string>('');
+  const [fsSel, setFsSel] = useState<number>(0);
+  const [fsResults, setFsResults] = useState<Array<{ path: string; rel?: string }>>([]);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Keyboard shortcut: Ctrl/Cmd+I focuses composer
@@ -141,12 +146,102 @@ const ChatInterface: React.FC = () => {
               onChange={(e) => {
                 setDraftMessage(e.target.value);
                 const el = taRef.current; if (el) { el.style.height = 'auto'; const max = 6 * 24; const h = Math.min(el.scrollHeight, max); el.style.height = h + 'px'; }
+                // update @-file search state
+                try {
+                  const caret = (e.target as HTMLTextAreaElement).selectionStart || 0;
+                  const before = e.target.value.slice(0, caret);
+                  const m = /(^|\s)@([^\s]*)$/.exec(before);
+                  if (m) {
+                    const q = m[2] || '';
+                    setFsOpen(true);
+                    setFsQuery(q);
+                    (async () => {
+                      const res = await window.idx.search(q, 20, chatParams.cwd || undefined);
+                      setFsResults((res && res.ok ? res.matches : []) as any);
+                      setFsSel(0);
+                    })().catch(()=>{});
+                  } else {
+                    setFsOpen(false);
+                    setFsQuery('');
+                    setFsResults([]);
+                  }
+                } catch {}
+              }}
+              onKeyDown={(e)=>{
+                if (!fsOpen) return;
+                if (['ArrowDown','ArrowUp','Tab','Enter','Escape'].includes(e.key)) {
+                  e.stopPropagation();
+                }
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setFsSel((i)=> Math.min(i + 1, Math.max(0, fsResults.length - 1)));
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setFsSel((i)=> Math.max(i - 1, 0));
+                } else if (e.key === 'Escape') {
+                  e.preventDefault(); setFsOpen(false);
+                } else if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault();
+                  const pick = fsResults[fsSel];
+                  if (pick) {
+                    const ta = taRef.current;
+                    const text = draftMessage;
+                    if (ta) {
+                      const caret = ta.selectionStart || 0;
+                      const before = text.slice(0, caret);
+                      const after = text.slice(caret);
+                      const m = /(^|\s)@([^\s]*)$/.exec(before);
+                      if (m) {
+                        const prefix = before.slice(0, before.length - (m[2] ? m[2].length : 0) - 1); // drop '@query'
+                        const insert = (pick.rel || pick.path);
+                        const next = prefix + insert + after;
+                        setDraftMessage(next);
+                        setTimeout(()=>{
+                          try { if (taRef.current) { const pos = prefix.length + insert.length; taRef.current.selectionStart = pos; taRef.current.selectionEnd = pos; } } catch {}
+                        }, 0);
+                      }
+                    }
+                    setFsOpen(false);
+                  }
+                }
               }}
               rows={2}
               placeholder={connected ? 'Delegate a task to Nexus AI...' : 'Starting backend...'}
               className="w-full bg-[var(--bg-tertiary)] rounded-lg py-3 pl-4 pr-12 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] border border-[var(--border)] resize-none leading-6"
               disabled={false}
             />
+            {fsOpen && fsResults.length > 0 && (
+              <div className="absolute left-2 right-10 -bottom-1 translate-y-full z-20 max-h-64 overflow-auto border border-[var(--border)] rounded-md bg-[var(--bg-secondary)] shadow-lg">
+                {fsResults.map((r, idx) => (
+                  <button
+                    type="button"
+                    key={r.path + ':' + idx}
+                    className={`w-full text-left px-2 py-1 text-xs font-mono truncate ${idx===fsSel ? 'bg-[var(--bg-tertiary)]' : ''}`}
+                    title={r.path}
+                    onMouseEnter={()=> setFsSel(idx)}
+                    onMouseDown={(ev)=>{ ev.preventDefault(); }}
+                    onClick={()=>{
+                      const ta = taRef.current;
+                      const text = draftMessage;
+                      if (!ta) return;
+                      const caret = ta.selectionStart || 0;
+                      const before = text.slice(0, caret);
+                      const after = text.slice(caret);
+                      const m = /(^|\s)@([^\s]*)$/.exec(before);
+                      if (!m) { setFsOpen(false); return; }
+                      const prefix = before.slice(0, before.length - (m[2] ? m[2].length : 0) - 1);
+                      const insert = (r.rel || r.path);
+                      const next = prefix + insert + after;
+                      setDraftMessage(next);
+                      setTimeout(()=>{ try { if (taRef.current) { const pos = prefix.length + insert.length; taRef.current.selectionStart = pos; taRef.current.selectionEnd = pos; } } catch {} }, 0);
+                      setFsOpen(false);
+                    }}
+                  >
+                    {r.rel || r.path}
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               type="submit"
               className="absolute inset-y-0 right-0 flex items-center pr-4 text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors disabled:opacity-50"

@@ -68,8 +68,15 @@ const SettingsWorkspace: React.FC = () => {
       ) : (
         <>
           <Section title="Authentication">
-            <div className="text-sm text-[var(--text-secondary)]">Login to ChatGPT (for models that require it)</div>
-            <button className="px-3 py-1 rounded bg-[var(--accent)] text-white" onClick={()=>window.aiw.login()}>Login</button>
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-[var(--text-secondary)]">Login to ChatGPT (for models that require it)</div>
+              <button className="px-3 py-1 rounded bg-[var(--accent)] text-white" onClick={()=>window.aiw.login()}>Login</button>
+              <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={async()=>{
+                const s = await window.aiw.loginStatus();
+                const text = (s.stdout || s.stderr || '').trim();
+                alert(text || 'No status available');
+              }}>Status</button>
+            </div>
           </Section>
 
           <Section title="Profile">

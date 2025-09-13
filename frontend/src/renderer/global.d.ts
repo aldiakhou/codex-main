@@ -6,6 +6,7 @@ declare global {
       start: (opts?: { codexPath?: string; profile?: string }) => Promise<void>;
       stop: () => Promise<void>;
       login: (apiKey?: string) => Promise<boolean>;
+      loginStatus: () => Promise<{ ok: boolean; stdout?: string; stderr?: string }>;
       userTurn: (params: {
         text: string;
         cwd?: string;
@@ -53,6 +54,7 @@ declare global {
       graph: () => Promise<{ ok: boolean; nodes?: Array<{ path: string; name: string }>; edges?: Array<{ from: string; to: string; anchor?: string }>; root?: string; error?: string }>;
       watchStart: (dir: string) => Promise<{ ok: boolean }>;
       watchStop: () => Promise<{ ok: boolean }>;
+      search: (query: string, limit?: number, cwd?: string) => Promise<{ ok: boolean; matches: Array<{ path: string; rel?: string; score: number }> }>;
       onUpdate: (cb: (payload: { stats: { files: number; links: number } }) => void) => () => void;
     };
   }

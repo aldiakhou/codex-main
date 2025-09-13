@@ -337,12 +337,44 @@ const wireBackendIpc = () => {
     idxWatcher = null;
     return { ok: true };
   });
+  ipcMain.handle('idx:search', async (_e, payload: { query: string; limit?: number; cwd?: string }) => {
+    try {
+      const query = (payload?.query || '').toString();
+      const limit = Math.max(1, Math.min(Number(payload?.limit) || 20, 100));
+      const cwd = (payload?.cwd || process.cwd()).toString();
+      if (!indexRoot) {
+        try { await buildIndex(cwd); } catch {}
+      }
+      const q = query.trim().toLowerCase();
+      if (!q) return { ok: true, matches: [] };
+      const scoreFor = (p: string) => {
+        const base = path.basename(p).toLowerCase();
+        if (base.startsWith(q)) return 0;
+        const bi = base.indexOf(q);
+        if (bi >= 0) return 1 + bi;
+        const pi = p.toLowerCase().indexOf(q);
+        if (pi >= 0) return 100 + pi;
+        return 10000;
+      };
+      const files = allFiles.slice(0);
+      const scored = files
+        .map((p) => ({ p, s: scoreFor(p) }))
+        .filter((x) => x.s < 10000)
+        .sort((a, b) => a.s - b.s)
+        .slice(0, limit)
+        .map(({ p, s }) => ({ path: p, rel: path.relative(cwd, p) || p, score: s }));
+      return { ok: true, matches: scored };
+    } catch (e: any) {
+      return { ok: false, matches: [], error: String(e) } as any;
+    }
+  });
   ipcMain.handle('aiw:upsertMcpServer', (_e, server) => backend.upsertMcpServer(server));
   ipcMain.handle('aiw:removeMcpServer', (_e, name: string) => backend.removeMcpServer(name));
   ipcMain.handle('aiw:restartBackend', () => backend.restart());
   ipcMain.handle('aiw:getMcpServers', () => backend.getMcpServers());
   ipcMain.handle('aiw:readCodexConfig', () => backend.readCodexConfig());
   ipcMain.handle('aiw:saveCodexConfig', (_e, cfg) => backend.saveCodexConfig(cfg));
+  ipcMain.handle('aiw:loginStatus', () => backend.loginStatus());
 
   const send = (ch: string, payload: any) => {
     if (mainWindow) mainWindow.webContents.send(ch, payload);
