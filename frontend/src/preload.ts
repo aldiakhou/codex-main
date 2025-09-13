@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('fsapi', {
   read: (filePath: string) => ipcRenderer.invoke('fs:read', filePath),
   readBase64: (filePath: string) => ipcRenderer.invoke('fs:readBase64', filePath),
   stat: (p: string) => ipcRenderer.invoke('fs:stat', p),
+  openPath: (p: string) => ipcRenderer.invoke('fs:openPath', p),
   chooseDir: () => ipcRenderer.invoke('fs:chooseDir'),
   createFile: (filePath: string, content?: string) => ipcRenderer.invoke('fs:createFile', filePath, content ?? ''),
   createDir: (dirPath: string) => ipcRenderer.invoke('fs:createDir', dirPath),

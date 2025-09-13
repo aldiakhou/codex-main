@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
@@ -63,6 +63,16 @@ const wireBackendIpc = () => {
     try {
       const data = await fs.readFile(filePath);
       return { ok: true, base64: data.toString('base64') };
+    } catch (e: any) {
+      return { ok: false, error: String(e) };
+    }
+  });
+  ipcMain.handle('fs:openPath', async (_e, p: string) => {
+    try {
+      const res = await shell.openPath(p);
+      // shell.openPath returns empty string on success, error message otherwise
+      if (res && res.trim()) return { ok: false, error: res };
+      return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e) };
     }

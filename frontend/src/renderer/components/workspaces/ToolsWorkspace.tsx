@@ -30,6 +30,20 @@ const ToolsWorkspace: React.FC = () => {
     const all = names.length ? names : Array.from(counts.keys());
     return all.map((name) => ({ name, count: counts.get(name) || 0 }));
   }, [mcpServers, mcpTools]);
+  // Static built-in tools list to help users understand what's available to the model
+  const builtinTools: Array<{ name: string; description: string }> = [
+    { name: 'shell', description: 'Run shell commands inside Codex sandbox (or streamable exec).' },
+    { name: 'update_plan', description: 'Maintain a step-by-step plan of the task.' },
+    { name: 'apply_patch', description: 'Apply atomic multi-file code changes via a structured patch.' },
+    { name: 'web_search', description: 'Search the web (if enabled) and incorporate results.' },
+    { name: 'view_image', description: 'Attach a local image path to the conversation context.' },
+    { name: 'agents_list', description: 'List available built-in and configured agents.' },
+    { name: 'agents_start', description: 'Start an agent task and get a task id.' },
+    { name: 'agents_status', description: 'Get the current status/result of an agent task.' },
+    { name: 'agents_cancel', description: 'Request cancellation of an agent task.' },
+    { name: 'agents_reload', description: 'Reload agents from ~/.codex/agents.toml and return the list.' },
+  ];
+
   return (
     <div className="flex-1 p-12 overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
@@ -74,6 +88,24 @@ const ToolsWorkspace: React.FC = () => {
           })
         )}
       </div>
+      {/* Built-in Tools (read-only) */}
+      <div className="mt-8">
+        <h2 className="text-lg font-semibold mb-2">Built-in Tools</h2>
+        <div className="border border-[var(--border)] rounded bg-[var(--bg-secondary)] p-2 max-h-80 overflow-auto text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {builtinTools.map((t) => (
+              <div key={t.name} className="border border-[var(--border)] rounded p-3 bg-[var(--bg-tertiary)]">
+                <div className="flex items-center gap-2">
+                  <IconTools size={16} className="text-[var(--text-secondary)]" />
+                  <div className="font-semibold truncate" title={t.name}>{t.name}</div>
+                </div>
+                <div className="text-xs text-[var(--text-tertiary)] mt-1 line-clamp-4" title={t.description}>{t.description}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       <div className="mt-8">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold">Custom Prompts</h2>

@@ -76,7 +76,7 @@ type BackendContextType = {
   refreshCustomPrompts: () => Promise<boolean>;
   // --- Agents proto state/actions ---
   agents: Array<{ id: string; name: string; description: string }>;
-  agentRuns: Record<string, { task_id: string; agent_id: string; status: string; error?: string; created_at: number; updated_at: number }>;
+  agentRuns: Record<string, { task_id: string; agent_id: string; status: string; error?: string; created_at: number; updated_at: number; allowed_mcp_tools?: string[] }>;
   listAgents: () => Promise<boolean>;
   agentsReload: () => Promise<boolean>;
   startAgent: (id: string, input?: string, context?: any) => Promise<boolean>;
@@ -160,10 +160,15 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (type === 'agent_run_started') {
           const agent_id = String(e?.msg?.agent_id || '');
           const task_id = String(e?.msg?.task_id || '');
+          // try to extract allowlist if backend provided it
+          const allowed: string[] | undefined = (e?.structured_content?.allowed_mcp_tools
+            || e?.msg?.structured_content?.allowed_mcp_tools
+            || e?.allowed_mcp_tools
+            || undefined);
           if (!task_id) return;
           setAgentRuns((prev) => ({
             ...prev,
-            [task_id]: { task_id, agent_id, status: 'running', created_at: Date.now(), updated_at: Date.now() },
+            [task_id]: { task_id, agent_id, status: 'running', created_at: Date.now(), updated_at: Date.now(), allowed_mcp_tools: Array.isArray(allowed) ? allowed.map(String) : undefined },
           }));
           return;
         }

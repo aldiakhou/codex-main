@@ -32,6 +32,21 @@ const AgentsWorkspace: React.FC = () => {
   const [goal, setGoal] = useState('Demo exec + patch');
   const [params, setParams] = useState('{ "demo_exec_patch": true }');
   const [status, setStatus] = useState('');
+  // Per-card context JSON (persisted)
+  const [cardContexts, setCardContexts] = useState<Record<string, string>>(() => {
+    try {
+      const raw = window.localStorage.getItem('agents.cardContexts');
+      if (raw) return JSON.parse(raw);
+    } catch (e) { console.debug('load cardContexts failed', e); }
+    return {};
+  });
+  const saveCardContexts = (updater: (prev: Record<string,string>)=>Record<string,string>) => {
+    setCardContexts(prev => {
+      const next = updater(prev);
+      try { window.localStorage.setItem('agents.cardContexts', JSON.stringify(next)); } catch (e) { console.debug('save cardContexts failed', e); }
+      return next;
+    });
+  };
   const [cardGoals, setCardGoals] = useState<Record<string, string>>(() => {
     try {
       const raw = window.localStorage.getItem('agents.cardGoals');
@@ -442,7 +457,12 @@ const AgentsWorkspace: React.FC = () => {
                 const cardStatusClass = latestRun ? (latestRun.status === 'running' ? 'processing' : latestRun.status === 'complete' ? 'active' : 'idle') : 'idle';
                 const statusText = latestRun ? latestRun.status : 'idle';
                 const goalValue = cardGoals[realId] ?? '';
-                const onStart = async () => { await startAgent(realId, goalValue || 'Start an agent task.'); };
+                const onStart = async () => {
+                  let ctx: Record<string, unknown> | undefined = undefined;
+                  const ctxRaw = cardContexts[realId] || '';
+                  try { ctx = ctxRaw ? JSON.parse(ctxRaw) : undefined; } catch (e) { console.debug('card ctx parse error', e); ctx = undefined; }
+                  await startAgent(realId, goalValue || 'Start an agent task.', ctx);
+                };
                 const onCancel = async () => { if (latestRun) await agentCancel(latestRun.task_id); };
                 const onView = () => {
                   setDetailsAgentId(realId);
@@ -530,6 +550,17 @@ const AgentsWorkspace: React.FC = () => {
                       />
                     </div>
 
+                    {/* Optional per-card context */}
+                    <div className="content-flow-sm mt-sm">
+                      <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
+                      <textarea
+                        className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] w-full text-xs min-h-16"
+                        placeholder="{\n  \"key\": \"value\"\n}"
+                        value={cardContexts[realId] || ''}
+                        onChange={(e)=> saveCardContexts(prev=>({ ...prev, [realId]: e.target.value }))}
+                      />
+                    </div>
+
                     {/* Agent Actions */}
                     <div className="flex gap-sm mt-md">
                       <motion.button
@@ -614,6 +645,12 @@ const AgentsWorkspace: React.FC = () => {
                 {detailsTaskId && agentRuns[detailsTaskId] && (
                   <div className="text-sm"><span className="text-[var(--text-tertiary)]">Status:</span> {agentRuns[detailsTaskId].status} {agentRuns[detailsTaskId].error ? (<span className="text-red-400">• {agentRuns[detailsTaskId].error}</span>) : null}</div>
                 )}
+                {detailsTaskId && agentRuns[detailsTaskId] && agentRuns[detailsTaskId].allowed_mcp_tools && agentRuns[detailsTaskId].allowed_mcp_tools!.length ? (
+                  <div className="text-sm mt-1">
+                    <div className="text-[var(--text-tertiary)]">Allowed MCP tools</div>
+                    <div className="text-2xs text-[var(--text-secondary)] break-words">{agentRuns[detailsTaskId].allowed_mcp_tools!.join(', ')}</div>
+                  </div>
+                ) : null}
               </div>
 
               {/* Live Plan */}
