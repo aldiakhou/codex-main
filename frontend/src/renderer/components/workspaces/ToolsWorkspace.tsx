@@ -46,7 +46,7 @@ const ToolsWorkspace: React.FC = () => {
   ];
 
   return (
-    <div className="flex-1 p-12 overflow-y-auto">
+    <div className="flex-1 p-12 overflow-y-auto min-h-0 h-full">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Tools & MCP Servers</h1>
         <div className="text-sm text-[var(--text-secondary)]">Backend: {status}</div>
