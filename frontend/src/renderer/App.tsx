@@ -71,6 +71,32 @@ const AppContent: React.FC = () => {
     return () => body.classList.remove('no-mesh-bg');
   }, [activeWorkspace]);
 
+  // Apply persisted UI variables on app load
+  useEffect(() => {
+    try {
+      const root = document.documentElement;
+      const base = parseFloat(localStorage.getItem('ui.fontSizeBase') || '13');
+      if (!isNaN(base)) root.style.setProperty('--font-size-base', `${base}px`);
+      const p = localStorage.getItem('ui.primaryColor');
+      if (p) root.style.setProperty('--primary-color', p);
+      const s = localStorage.getItem('ui.secondaryColor');
+      if (s) root.style.setProperty('--secondary-color', s);
+      const uiFont = localStorage.getItem('ui.fontFamily');
+      if (uiFont) {
+        if (uiFont === 'inter') root.style.setProperty('--font-ui', "'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif");
+        else if (uiFont === 'jetbrains') root.style.setProperty('--font-ui', "'JetBrains Mono', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif");
+        else root.style.setProperty('--font-ui', "'Cascadia Code', 'Cascadia Mono', 'Segoe UI Variable', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif");
+      }
+      const monoFont = localStorage.getItem('ui.fontMono');
+      if (monoFont) {
+        if (monoFont === 'jetbrains') root.style.setProperty('--font-mono', "'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace");
+        else root.style.setProperty('--font-mono', "'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace");
+      }
+      const compact = localStorage.getItem('ui.compact') === 'true';
+      if (compact) document.body.classList.add('compact');
+    } catch {}
+  }, []);
+
   return (
     <div className="h-screen flex flex-col app-container">
   <Header activeWorkspace={activeWorkspace} onWorkspaceChange={handleWorkspaceChange} />
@@ -100,4 +126,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-

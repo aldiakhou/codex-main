@@ -21,6 +21,47 @@ const SettingsWorkspace: React.FC = () => {
     const v = parseInt(localStorage.getItem('vision.maxDim') || '1280', 10);
     return isNaN(v) ? 1280 : v;
   });
+  const [uiBasePx, setUiBasePx] = useState<number>(() => {
+    const v = parseInt(localStorage.getItem('ui.fontSizeBase') || '13', 10);
+    return isNaN(v) ? 13 : v;
+  });
+  const [primaryColor, setPrimaryColor] = useState<string>(() => {
+    try { const v = localStorage.getItem('ui.primaryColor'); if (v) return v; } catch {}
+    try { return getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim() || '#6366f1'; } catch { return '#6366f1'; }
+  });
+  const [secondaryColor, setSecondaryColor] = useState<string>(() => {
+    try { const v = localStorage.getItem('ui.secondaryColor'); if (v) return v; } catch {}
+    try { return getComputedStyle(document.documentElement).getPropertyValue('--secondary-color').trim() || '#151520'; } catch { return '#151520'; }
+  });
+  const [uiFont, setUiFont] = useState<string>(() => localStorage.getItem('ui.fontFamily') || 'cascadia');
+  const [monoFont, setMonoFont] = useState<string>(() => localStorage.getItem('ui.fontMono') || 'cascadia');
+  const [compact, setCompact] = useState<boolean>(() => localStorage.getItem('ui.compact') === 'true');
+
+  useEffect(() => {
+    // Apply current UI vars on entry
+    try {
+      document.documentElement.style.setProperty('--font-size-base', `${uiBasePx}px`);
+      document.documentElement.style.setProperty('--primary-color', primaryColor);
+      document.documentElement.style.setProperty('--secondary-color', secondaryColor);
+      applyUiFont(uiFont);
+      applyMonoFont(monoFont);
+      if (compact) document.body.classList.add('compact');
+    } catch {}
+  }, []);
+
+  function applyUiFont(choice: string) {
+    let val = "'Cascadia Code', 'Cascadia Mono', 'Segoe UI Variable', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+    if (choice === 'inter') val = "'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+    if (choice === 'jetbrains') val = "'JetBrains Mono', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+    document.documentElement.style.setProperty('--font-ui', val);
+  }
+
+  function applyMonoFont(choice: string) {
+    let val = "'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace";
+    if (choice === 'jetbrains') val = "'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace";
+    if (choice === 'cascadia') val = "'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace";
+    document.documentElement.style.setProperty('--font-mono', val);
+  }
   const [workbenchCfg, setWorkbenchCfg] = useState<{ backend?: { codex_path?: string; profile?: string } }>({});
 
   const profiles = Object.keys((cfg.profiles || {}));
@@ -162,6 +203,105 @@ const SettingsWorkspace: React.FC = () => {
               </div>
             </div>
             <div className="text-2xs text-[var(--text-tertiary)] mt-2">Note: view_image is always enabled at runtime by the frontend for convenience.</div>
+          </Section>
+
+          <Section title="UI">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">UI scale (base px)</label>
+                <input
+                  type="range"
+                  min={11}
+                  max={16}
+                  step={0.5}
+                  value={uiBasePx}
+                  onChange={(e)=> {
+                    const v = parseFloat(e.target.value);
+                    setUiBasePx(v);
+                    try { document.documentElement.style.setProperty('--font-size-base', `${v}px`); localStorage.setItem('ui.fontSizeBase', String(v)); } catch {}
+                  }}
+                  className="flex-1"
+                />
+                <span className="text-xs w-10 text-right">{uiBasePx}px</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Primary color</label>
+                <input
+                  type="color"
+                  value={primaryColor}
+                  onChange={(e)=> {
+                    const v = e.target.value;
+                    setPrimaryColor(v);
+                    try { document.documentElement.style.setProperty('--primary-color', v); localStorage.setItem('ui.primaryColor', v); } catch {}
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Secondary color</label>
+                <input
+                  type="color"
+                  value={secondaryColor}
+                  onChange={(e)=> {
+                    const v = e.target.value;
+                    setSecondaryColor(v);
+                    try { document.documentElement.style.setProperty('--secondary-color', v); localStorage.setItem('ui.secondaryColor', v); } catch {}
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">UI font</label>
+                <select
+                  value={uiFont}
+                  onChange={(e)=> { const v = e.target.value; setUiFont(v); try { localStorage.setItem('ui.fontFamily', v); applyUiFont(v); } catch {} }}
+                  className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]"
+                >
+                  <option value="cascadia">Cascadia</option>
+                  <option value="inter">Inter</option>
+                  <option value="jetbrains">JetBrains</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Mono font</label>
+                <select
+                  value={monoFont}
+                  onChange={(e)=> { const v = e.target.value; setMonoFont(v); try { localStorage.setItem('ui.fontMono', v); applyMonoFont(v); } catch {} }}
+                  className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]"
+                >
+                  <option value="cascadia">Cascadia</option>
+                  <option value="jetbrains">JetBrains</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={compact} onChange={(e)=>{ const v = e.target.checked; setCompact(v); try { localStorage.setItem('ui.compact', String(v)); if (v) document.body.classList.add('compact'); else document.body.classList.remove('compact'); } catch {} }} />
+                Compact mode (reduced paddings/gaps)
+              </label>
+            </div>
+            <div className="flex justify-end mt-3 gap-2">
+              <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={()=>{
+                try {
+                  localStorage.removeItem('ui.fontSizeBase');
+                  localStorage.removeItem('ui.primaryColor');
+                  localStorage.removeItem('ui.secondaryColor');
+                  localStorage.removeItem('ui.fontFamily');
+                  localStorage.removeItem('ui.fontMono');
+                  localStorage.removeItem('ui.compact');
+                } catch {}
+                setUiBasePx(13);
+                setPrimaryColor('#6366f1');
+                setSecondaryColor('#151520');
+                setUiFont('cascadia');
+                setMonoFont('cascadia');
+                setCompact(false);
+                try {
+                  document.documentElement.style.setProperty('--font-size-base', '13px');
+                  document.documentElement.style.setProperty('--primary-color', '#6366f1');
+                  document.documentElement.style.setProperty('--secondary-color', '#151520');
+                  applyUiFont('cascadia');
+                  applyMonoFont('cascadia');
+                  document.body.classList.remove('compact');
+                } catch {}
+              }}>Reset to defaults</button>
+            </div>
           </Section>
 
           <Section title="History">
