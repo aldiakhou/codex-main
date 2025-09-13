@@ -3,11 +3,12 @@ import { useBackend } from '../contexts/BackendContext';
 import ChatControls from './ChatControls';
 
 const ChatInterface: React.FC = () => {
-  const { status, userTurn, login, start, logs, draftMessage, setDraftMessage, chatParams, setChatParams, tokenUsage } = useBackend();
+  const { status, userTurn, login, start, interrupt, logs, draftMessage, setDraftMessage, chatParams, setChatParams, tokenUsage, customPrompts, refreshCustomPrompts } = useBackend();
   const connected = status === 'connected';
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showCwdEditor, setShowCwdEditor] = useState(false);
   const [cwdInput, setCwdInput] = useState<string>(chatParams.cwd || '');
+  const [promptSelect, setPromptSelect] = useState<string>('');
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Keyboard shortcut: Ctrl/Cmd+I focuses composer
@@ -47,12 +48,14 @@ const ChatInterface: React.FC = () => {
               <span>{status}</span>
             </div>
             <div className="flex items-center gap-2">
-            {status !== 'connected' && (
+            {status !== 'connected' ? (
               <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={() => start()}>Start</button>
+            ) : (
+              <button className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={() => interrupt()}>Interrupt</button>
             )}
             {/* Login moved to Settings */}
-            </div>
           </div>
+        </div>
         <form onSubmit={handleSubmit}>
           {/* Parameter bar inside composer */}
           <div className="flex items-center flex-wrap gap-2 mb-2 text-xs sticky top-0 z-10 bg-[var(--bg-primary)]/80 backdrop-blur px-1 py-1 rounded">
@@ -72,6 +75,26 @@ const ChatInterface: React.FC = () => {
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Sandbox: <strong className="ml-1">{chatParams.sandbox_mode}</strong></div>
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Effort: <strong className="ml-1">{chatParams.effort}</strong></div>
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Approval: <strong className="ml-1">{chatParams.approval_policy}</strong></div>
+            {/* Custom prompts picker */}
+            <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2">
+              <span>Prompt:</span>
+              <select
+                value={promptSelect}
+                onFocus={()=>{ try { refreshCustomPrompts(); } catch {} }}
+                onChange={(e)=>{
+                  const id = e.target.value;
+                  setPromptSelect('');
+                  const p = (customPrompts||[]).find((x)=> x.name === id);
+                  if (p && p.content) setDraftMessage((prev)=> (prev ? prev+"\n\n" : '') + p.content);
+                }}
+                className="bg-transparent border-none outline-none text-[var(--text-primary)] text-xs"
+              >
+                <option value="">Insert…</option>
+                {(customPrompts||[]).map((p)=> (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+            </div>
             {/* Show/Hide Reasoning toggle */}
             <button
               type="button"

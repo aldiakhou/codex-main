@@ -25,6 +25,8 @@ const wireBackendIpc = () => {
   ipcMain.handle('aiw:execApproval', (_e, id: string, decision: string) => backend.execApproval(id, decision));
   ipcMain.handle('aiw:patchApproval', (_e, id: string, decision: string) => backend.patchApproval(id, decision));
   ipcMain.handle('aiw:setCodexPath', (_e, codexPath: string) => backend.saveCodexPath(codexPath));
+  ipcMain.handle('aiw:setProfile', (_e, profile: string) => backend.setProfile(profile));
+  ipcMain.handle('aiw:getWorkbenchConfig', () => backend.getWorkbenchConfig());
   ipcMain.handle('aiw:getHistory', () => backend.getHistory());
   ipcMain.handle('aiw:listMcpTools', () => backend.listMcpTools());
   ipcMain.handle('aiw:listCustomPrompts', () => backend.listCustomPrompts());

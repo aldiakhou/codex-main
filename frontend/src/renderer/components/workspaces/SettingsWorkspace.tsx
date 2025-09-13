@@ -15,6 +15,7 @@ const SettingsWorkspace: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [workbenchCfg, setWorkbenchCfg] = useState<{ backend?: { codex_path?: string; profile?: string } }>({});
 
   const profiles = Object.keys((cfg.profiles || {}));
 
@@ -24,7 +25,7 @@ const SettingsWorkspace: React.FC = () => {
     if (res.ok) { setCfg(res.config || {}); setPath(res.path); } else { setError(res.error || 'Failed to read config'); }
     setLoading(false);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); (async()=>{ try { const wb = await window.aiw.getWorkbenchConfig(); if (wb?.ok) setWorkbenchCfg(wb); } catch {} })(); }, []);
 
   const save = async () => {
     setSaving(true); setError(null);
@@ -74,7 +75,11 @@ const SettingsWorkspace: React.FC = () => {
           <Section title="Profile">
             <div className="flex items-center gap-2">
               <label className="text-sm w-40">Active profile</label>
-              <select value={cfg.profile || ''} onChange={(e)=> set('profile', e.target.value)} className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]">
+              <select
+                value={(workbenchCfg?.backend?.profile || '') as string}
+                onChange={async (e)=>{ try { await window.aiw.setProfile(e.target.value); setWorkbenchCfg((prev)=>({ backend: { ...(prev.backend||{}), profile: e.target.value } })); await window.aiw.restart(); } catch {} }}
+                className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]"
+              >
                 <option value="">(none)</option>
                 {profiles.map((p)=> <option key={p} value={p}>{p}</option>)}
               </select>
@@ -90,6 +95,10 @@ const SettingsWorkspace: React.FC = () => {
               <div className="flex items-center gap-2">
                 <label className="text-sm w-40">Model Provider</label>
                 <input value={cfg.model_provider || ''} onChange={(e)=> set('model_provider', e.target.value)} className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Enable web search</label>
+                <input type="checkbox" checked={!!cfg.tools_web_search_request} onChange={(e)=> set('tools_web_search_request', e.target.checked)} />
               </div>
               <div className="flex items-center gap-2">
                 <label className="text-sm w-40">Approval Policy</label>

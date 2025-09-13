@@ -555,7 +555,7 @@ const AgentsWorkspace: React.FC = () => {
                       <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
                       <textarea
                         className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] w-full text-xs min-h-16"
-                        placeholder="{\n  \"key\": \"value\"\n}"
+                        placeholder={'{\n  "key": "value"\n}'}
                         value={cardContexts[realId] || ''}
                         onChange={(e)=> saveCardContexts(prev=>({ ...prev, [realId]: e.target.value }))}
                       />

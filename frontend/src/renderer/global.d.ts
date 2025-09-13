@@ -19,6 +19,8 @@ declare global {
       execApproval: (id: string, decision: string) => Promise<boolean>;
       patchApproval: (id: string, decision: string) => Promise<boolean>;
       setCodexPath: (codexPath: string) => Promise<boolean>;
+      setProfile: (profile: string) => Promise<boolean>;
+      getWorkbenchConfig: () => Promise<{ ok: boolean; backend?: { codex_path?: string; profile?: string } }>;
       getHistory: () => Promise<boolean>;
       listMcpTools: () => Promise<boolean>;
       listCustomPrompts: () => Promise<boolean>;

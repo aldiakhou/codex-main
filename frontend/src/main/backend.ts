@@ -250,6 +250,38 @@ export class BackendService extends EventEmitter {
     }
   }
 
+  public setProfile(newProfile: string): boolean {
+    try {
+      const cfgDir = path.join(os.homedir(), '.ai-workbench');
+      const cfgPath = path.join(cfgDir, 'config.json');
+      let data: AppConfig = {};
+      if (fs.existsSync(cfgPath)) {
+        try { data = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch { data = {}; }
+      }
+      if (!data.backend) data.backend = {} as any;
+      (data.backend as any).profile = newProfile || '';
+      fs.mkdirSync(cfgDir, { recursive: true });
+      fs.writeFileSync(cfgPath, JSON.stringify(data, null, 2), 'utf8');
+      this.profile = newProfile || undefined;
+      this.emit('log', `Saved active profile to ${cfgPath}`);
+      return true;
+    } catch (e) {
+      this.emit('error', `Failed to save profile: ${String(e)}`);
+      return false;
+    }
+  }
+
+  public getWorkbenchConfig(): { ok: boolean; backend?: { codex_path?: string; profile?: string } } {
+    try {
+      const cfg = this.loadAIWConfig();
+      const backend = cfg.backend || {};
+      return { ok: true, backend: { codex_path: backend?.codex_path, profile: backend?.profile } };
+    } catch (e) {
+      this.emit('error', `Failed to read workbench config: ${String(e)}`);
+      return { ok: false };
+    }
+  }
+
   public upsertMcpServer(server: MCPServer): boolean {
     try {
       const { ok, config, error } = this.readCodexConfig();

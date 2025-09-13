@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('aiw', {
   execApproval: (id: string, decision: string) => ipcRenderer.invoke('aiw:execApproval', id, decision),
   patchApproval: (id: string, decision: string) => ipcRenderer.invoke('aiw:patchApproval', id, decision),
   setCodexPath: (codexPath: string) => ipcRenderer.invoke('aiw:setCodexPath', codexPath),
+  setProfile: (profile: string) => ipcRenderer.invoke('aiw:setProfile', profile),
+  getWorkbenchConfig: () => ipcRenderer.invoke('aiw:getWorkbenchConfig'),
   getHistory: () => ipcRenderer.invoke('aiw:getHistory'),
   listMcpTools: () => ipcRenderer.invoke('aiw:listMcpTools'),
   listCustomPrompts: () => ipcRenderer.invoke('aiw:listCustomPrompts'),
