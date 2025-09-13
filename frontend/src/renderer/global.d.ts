@@ -7,6 +7,7 @@ declare global {
       stop: () => Promise<void>;
       login: (apiKey?: string) => Promise<boolean>;
       loginStatus: () => Promise<{ ok: boolean; stdout?: string; stderr?: string }>;
+      authInfo: () => Promise<{ ok: boolean; mode: 'api_key' | 'chatgpt' | 'none'; masked_api_key?: string; email?: string; account_id?: string; plan_type?: string; last_refresh?: string }>;
       userTurn: (params: {
         text: string;
         cwd?: string;
@@ -15,6 +16,8 @@ declare global {
         model?: string;
         effort?: 'minimal' | 'low' | 'medium' | 'high';
         summary?: 'auto' | 'concise' | 'detailed' | 'none';
+        local_images?: string[];
+        image_urls?: string[];
       }) => Promise<boolean>;
       interrupt: () => Promise<boolean>;
       execApproval: (id: string, decision: string) => Promise<boolean>;
@@ -42,6 +45,7 @@ declare global {
       readBase64: (filePath: string) => Promise<{ ok: boolean; base64?: string; error?: string }>;
       stat: (p: string) => Promise<{ ok: boolean; stat?: { size: number; mtimeMs: number; isDir: boolean }; error?: string }>;
       chooseDir: () => Promise<{ ok: boolean; path?: string; canceled?: boolean }>;
+      chooseFiles: (multi?: boolean) => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>;
       createFile: (filePath: string, content?: string) => Promise<{ ok: boolean; error?: string }>;
       createDir: (dirPath: string) => Promise<{ ok: boolean; error?: string }>;
       renamePath: (oldPath: string, newPath: string) => Promise<{ ok: boolean; error?: string }>;

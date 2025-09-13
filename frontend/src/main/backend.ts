@@ -14,6 +14,8 @@ type UserTurnParams = {
   model?: string;
   effort?: 'minimal' | 'low' | 'medium' | 'high';
   summary?: 'auto' | 'concise' | 'detailed' | 'none';
+  local_images?: string[]; // local file paths
+  image_urls?: string[];   // data URL or http(s) URLs
 };
 
 type MCPServer = {
@@ -46,6 +48,8 @@ export class BackendService extends EventEmitter {
     if (this.profile) {
       args.push('-p', this.profile);
     }
+    // Ensure the view_image tool is always enabled so the model can attach images.
+    args.push('-c', 'include_view_image_tool=true');
 
     // MCP servers: single source of truth is ~/.codex/config.toml (edited in Settings).
     // No -c overrides injected from ~/.ai-workbench/config.json.
@@ -153,13 +157,23 @@ export class BackendService extends EventEmitter {
       model = 'gpt-5',
       effort = 'medium',
       summary = 'auto',
+      local_images = [],
+      image_urls = [],
     } = params;
     const safeCwd = (cwd || process.cwd()).replace(/\\/g, '/');
+    const items: any[] = [];
+    for (const p of local_images) {
+      if (p && typeof p === 'string') items.push({ type: 'local_image', path: p });
+    }
+    for (const u of image_urls) {
+      if (u && typeof u === 'string') items.push({ type: 'image', image_url: u });
+    }
+    if ((text || '').trim()) items.push({ type: 'text', text });
     return this.send({
       id,
       op: {
         type: 'user_turn',
-        items: [{ type: 'text', text }],
+        items,
         cwd: safeCwd,
         approval_policy,
         sandbox_policy: { mode: sandbox_mode },
@@ -301,6 +315,55 @@ export class BackendService extends EventEmitter {
         resolve({ ok: false, stderr: String(e) });
       }
     });
+  }
+
+  public async authInfo(): Promise<{
+    ok: boolean;
+    mode: 'api_key' | 'chatgpt' | 'none';
+    masked_api_key?: string;
+    email?: string;
+    account_id?: string;
+    plan_type?: string;
+    last_refresh?: string;
+  }> {
+    try {
+      const cfgDir = this.codexHome();
+      const file = path.join(cfgDir, 'auth.json');
+      if (!fs.existsSync(file)) return { ok: true, mode: 'none' };
+      const raw = fs.readFileSync(file, 'utf8');
+      const data: any = JSON.parse(raw);
+      const apiKey: string | undefined = data?.OPENAI_API_KEY;
+      const tokens: any = data?.tokens || null;
+      const lastRefresh: string | undefined = data?.last_refresh || undefined;
+      const out: any = { ok: true, mode: 'none' };
+      if (tokens && tokens.id_token) {
+        out.mode = 'chatgpt';
+        try {
+          const parts = String(tokens.id_token).split('.');
+          if (parts.length >= 2) {
+            const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const buf = Buffer.from(payloadB64, 'base64');
+            const payload = JSON.parse(buf.toString('utf8'));
+            out.email = payload?.email || undefined;
+            const auth = payload?.['https://api.openai.com/auth'] || {};
+            out.account_id = auth?.chatgpt_account_id || undefined;
+            const plan = auth?.chatgpt_plan_type;
+            out.plan_type = typeof plan === 'string' ? plan : (plan?.string || plan?.as_string || undefined);
+          }
+        } catch {}
+      } else if (apiKey) {
+        out.mode = 'api_key';
+        const k = String(apiKey);
+        out.masked_api_key = k.length > 13 ? `${k.slice(0,8)}***${k.slice(-5)}` : '***';
+      } else {
+        out.mode = 'none';
+      }
+      if (lastRefresh) out.last_refresh = lastRefresh;
+      return out;
+    } catch (e) {
+      this.emit('error', `authInfo error: ${String(e)}`);
+      return { ok: false, mode: 'none' } as any;
+    }
   }
 
   public upsertMcpServer(server: MCPServer): boolean {

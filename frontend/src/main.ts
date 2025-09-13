@@ -92,6 +92,14 @@ const wireBackendIpc = () => {
     if (res.canceled || res.filePaths.length === 0) return { ok: false, canceled: true };
     return { ok: true, path: res.filePaths[0] };
   });
+  ipcMain.handle('fs:chooseFiles', async (_e, opts: { multi?: boolean }) => {
+    const res = await dialog.showOpenDialog({
+      properties: ['openFile', ...(opts?.multi ? ['multiSelections'] : [])] as any,
+      filters: [{ name: 'Images', extensions: ['png','jpg','jpeg','gif','bmp','webp'] }],
+    });
+    if (res.canceled || res.filePaths.length === 0) return { ok: false, canceled: true };
+    return { ok: true, paths: res.filePaths };
+  });
 
   // Edit operations with simple undo to .trash
   const undoStack: Array<{ type: 'delete'|'rename'|'create'; from?: string; to?: string; content?: Buffer }>=[];
@@ -347,13 +355,46 @@ const wireBackendIpc = () => {
       }
       const q = query.trim().toLowerCase();
       if (!q) return { ok: true, matches: [] };
+      const lev = (a: string, b: string) => {
+        if (a === b) return 0;
+        const al = a.length, bl = b.length;
+        if (al === 0) return bl; if (bl === 0) return al;
+        const dp = new Array(al + 1);
+        for (let i = 0; i <= al; i++) dp[i] = new Array<number>(bl + 1).fill(0);
+        for (let i = 0; i <= al; i++) dp[i][0] = i;
+        for (let j = 0; j <= bl; j++) dp[0][j] = j;
+        for (let i = 1; i <= al; i++) {
+          const ai = a.charCodeAt(i - 1);
+          for (let j = 1; j <= bl; j++) {
+            const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+            dp[i][j] = Math.min(
+              dp[i - 1][j] + 1,
+              dp[i][j - 1] + 1,
+              dp[i - 1][j - 1] + cost,
+            );
+          }
+        }
+        return dp[al][bl];
+      };
       const scoreFor = (p: string) => {
+        const lowP = p.toLowerCase();
         const base = path.basename(p).toLowerCase();
         if (base.startsWith(q)) return 0;
         const bi = base.indexOf(q);
-        if (bi >= 0) return 1 + bi;
-        const pi = p.toLowerCase().indexOf(q);
-        if (pi >= 0) return 100 + pi;
+        if (bi >= 0) return 1 + bi; // slight penalty for non-prefix
+        const pi = lowP.indexOf(q);
+        if (pi >= 0) return 50 + pi; // larger penalty for path match
+        const tokens = base.split(/[^a-z0-9]+/);
+        let best = Number.MAX_SAFE_INTEGER;
+        for (const t of tokens) {
+          if (!t) continue;
+          // Skip very dissimilar lengths to keep it snappy
+          if (Math.abs(t.length - q.length) > Math.max(2, Math.floor(q.length * 0.6))) continue;
+          const d = lev(t, q);
+          if (d < best) best = d;
+          if (best === 0) break;
+        }
+        if (best !== Number.MAX_SAFE_INTEGER) return 200 + best; // fallback to fuzzy
         return 10000;
       };
       const files = allFiles.slice(0);
@@ -375,6 +416,7 @@ const wireBackendIpc = () => {
   ipcMain.handle('aiw:readCodexConfig', () => backend.readCodexConfig());
   ipcMain.handle('aiw:saveCodexConfig', (_e, cfg) => backend.saveCodexConfig(cfg));
   ipcMain.handle('aiw:loginStatus', () => backend.loginStatus());
+  ipcMain.handle('aiw:authInfo', () => backend.authInfo());
 
   const send = (ch: string, payload: any) => {
     if (mainWindow) mainWindow.webContents.send(ch, payload);

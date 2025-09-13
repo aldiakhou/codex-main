@@ -2,6 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useBackend } from '../contexts/BackendContext';
 import ChatControls from './ChatControls';
 
+async function fileToDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      const fr = new FileReader();
+      fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : '');
+      fr.onerror = () => resolve('');
+      fr.readAsDataURL(file);
+    } catch {
+      resolve('');
+    }
+  });
+}
+
 const ChatInterface: React.FC = () => {
   const { status, userTurn, login, start, interrupt, logs, draftMessage, setDraftMessage, chatParams, setChatParams, tokenUsage, customPrompts, refreshCustomPrompts } = useBackend();
   const connected = status === 'connected';
@@ -9,11 +22,36 @@ const ChatInterface: React.FC = () => {
   const [showCwdEditor, setShowCwdEditor] = useState(false);
   const [cwdInput, setCwdInput] = useState<string>(chatParams.cwd || '');
   const [promptSelect, setPromptSelect] = useState<string>('');
+  const [attachedImages, setAttachedImages] = useState<string[]>([]); // local file paths
+  const [attachedImageUrls, setAttachedImageUrls] = useState<string[]>([]); // data: URLs (from paste)
+  const [previews, setPreviews] = useState<Record<string, string>>({}); // path -> data URL
   // @-file search overlay state
   const [fsOpen, setFsOpen] = useState<boolean>(false);
   const [fsQuery, setFsQuery] = useState<string>('');
   const [fsSel, setFsSel] = useState<number>(0);
   const [fsResults, setFsResults] = useState<Array<{ path: string; rel?: string }>>([]);
+
+  // Load previews for local image paths
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const out: Record<string, string> = {};
+      for (const p of attachedImages) {
+        if (!p) continue;
+        try {
+          // @ts-ignore
+          const res = await window.fsapi.readBase64(p);
+          if (res && res.ok && res.base64 && !cancelled) {
+            const lower = p.toLowerCase();
+            const type = lower.endsWith('.png') ? 'image/png' : lower.endsWith('.gif') ? 'image/gif' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+            out[p] = `data:${type};base64,${res.base64}`;
+          }
+        } catch {}
+      }
+      if (!cancelled) setPreviews(out);
+    })();
+    return () => { cancelled = true; };
+  }, [attachedImages.join('|')]);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Keyboard shortcut: Ctrl/Cmd+I focuses composer
@@ -39,9 +77,53 @@ const ChatInterface: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = (draftMessage || '').trim();
-    if (!text) return;
+    if (!text && attachedImages.length === 0) return;
     setDraftMessage('');
-    await userTurn(text);
+    let imgs = attachedImages.slice(0);
+    let urls = attachedImageUrls.slice(0);
+    // Optional downscale before sending
+    try {
+      const down = localStorage.getItem('vision.downscale') === 'true';
+      const maxDim = Math.max(64, parseInt(localStorage.getItem('vision.maxDim') || '1280', 10) || 1280);
+      if (down) {
+        // Downscale local paths into data URLs
+        const converted: string[] = [];
+        for (const p of imgs) {
+          try {
+            // @ts-ignore
+            const res = await window.fsapi.readBase64(p);
+            if (res && res.ok && res.base64) {
+              const lower = p.toLowerCase();
+              const type = lower.endsWith('.png') ? 'image/png' : lower.endsWith('.gif') ? 'image/gif' : lower.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+              const dataUrl = `data:${type};base64,${res.base64}`;
+              const scaled = await downscaleDataUrl(dataUrl, maxDim);
+              converted.push(scaled || dataUrl);
+            } else {
+              // fallback to local path if read fails
+              converted.push('');
+            }
+          } catch {
+            converted.push('');
+          }
+        }
+        // Replace successful conversions; drop blanks
+        urls = [...converted.filter(Boolean), ...urls];
+        imgs = [];
+        // Downscale pasted URLs too
+        const scaledUrls: string[] = [];
+        for (const u of urls) {
+          try {
+            const scaled = await downscaleDataUrl(u, maxDim);
+            scaledUrls.push(scaled || u);
+          } catch { scaledUrls.push(u); }
+        }
+        urls = scaledUrls;
+      }
+    } catch {}
+
+    setAttachedImages([]);
+    setAttachedImageUrls([]);
+    await userTurn(text, { local_images: imgs, image_urls: urls });
   };
 
   return (
@@ -80,6 +162,19 @@ const ChatInterface: React.FC = () => {
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Sandbox: <strong className="ml-1">{chatParams.sandbox_mode}</strong></div>
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Effort: <strong className="ml-1">{chatParams.effort}</strong></div>
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)]">Approval: <strong className="ml-1">{chatParams.approval_policy}</strong></div>
+            {/* Attach Images */}
+            <button
+              type="button"
+              className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs"
+              onClick={async()=>{
+                try {
+                  const res = await window.fsapi.chooseFiles(true);
+                  if (res && res.ok && Array.isArray(res.paths)) {
+                    setAttachedImages((prev)=> Array.from(new Set([...(prev||[]), ...res.paths!])));
+                  }
+                } catch {}
+              }}
+            >Attach image</button>
             {/* Custom prompts picker */}
             <div className="px-2 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border)] flex items-center gap-2">
               <span>Prompt:</span>
@@ -139,7 +234,38 @@ const ChatInterface: React.FC = () => {
               <ChatControls />
             </div>
           )}
-          <div className="relative">
+          <div className="relative" onDragOver={(e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; }} onDrop={(e)=>{ e.preventDefault(); try { const files = Array.from(e.dataTransfer.files||[]); const imgs = files.filter(f=>/^image\//.test(f.type)); const paths = imgs.map((f:any)=> f.path).filter(Boolean); if (paths.length) setAttachedImages(prev=> Array.from(new Set([...(prev||[]), ...paths]))); } catch {} }}>
+            {(attachedImages.length || attachedImageUrls.length) ? (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {attachedImages.map((p) => (
+                  <div key={p} className="flex items-center gap-2 text-2xs px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]">
+                    <div className="w-14 h-14 bg-black/20 rounded overflow-hidden flex items-center justify-center">
+                      {previews[p] ? <img src={previews[p]} alt={p} className="w-full h-full object-contain" /> : <span className="text-[var(--text-tertiary)]">img</span>}
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="font-mono truncate max-w-[14rem]" title={p}>{p.replace(/.*[\\/]/,'')}</span>
+                      <div className="flex gap-2">
+                        <button type="button" className="underline text-[var(--text-tertiary)]" onClick={()=> setAttachedImages((prev)=> prev.filter(x=>x!==p))}>Remove</button>
+                        <button type="button" className="underline text-[var(--text-tertiary)]" onClick={async()=>{ try { await (window as any).fsapi.openPath(p); } catch {} }}>Open</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {attachedImageUrls.map((u, idx) => (
+                  <div key={`url_${idx}`} className="flex items-center gap-2 text-2xs px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]">
+                    <div className="w-14 h-14 bg-black/20 rounded overflow-hidden flex items-center justify-center">
+                      <img src={u} alt={`img_${idx}`} className="w-full h-full object-contain" />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="font-mono truncate max-w-[14rem]" title={u.slice(0,64)}>(pasted image)</span>
+                      <div className="flex gap-2">
+                        <button type="button" className="underline text-[var(--text-tertiary)]" onClick={()=> setAttachedImageUrls((prev)=> prev.filter((_,i)=>i!==idx))}>Remove</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <textarea
               ref={taRef}
               value={draftMessage}
@@ -205,6 +331,51 @@ const ChatInterface: React.FC = () => {
                   }
                 }
               }}
+              onPaste={async(e)=>{
+                try {
+                  const files = Array.from(e.clipboardData?.files || []);
+                  const imgs = files.filter(f => f && f.type && f.type.startsWith('image/'));
+                  if (imgs.length) {
+                    e.preventDefault();
+                    const paths: string[] = [];
+                    const urls: string[] = [];
+                    for (const f of imgs) {
+                      const anyFile: any = f as any;
+                      if (anyFile.path) {
+                        paths.push(anyFile.path as string);
+                      } else {
+                        const dataUrl = await fileToDataUrl(f);
+                        if (dataUrl) urls.push(dataUrl);
+                      }
+                    }
+                    if (paths.length) setAttachedImages(prev => Array.from(new Set([...(prev||[]), ...paths])));
+                    if (urls.length) setAttachedImageUrls(prev => [...(prev||[]), ...urls]);
+                  } else {
+                    // Fallback to Async Clipboard API
+                    try {
+                      // @ts-ignore
+                      if (navigator.clipboard && navigator.clipboard.read) {
+                        // @ts-ignore
+                        const items = await navigator.clipboard.read();
+                        const urls: string[] = [];
+                        for (const item of items) {
+                          for (const type of item.types || []) {
+                            if (type.startsWith('image/')) {
+                              const blob = await item.getType(type);
+                              const dataUrl = await fileToDataUrl(blob);
+                              if (dataUrl) urls.push(dataUrl);
+                            }
+                          }
+                        }
+                        if (urls.length) {
+                          e.preventDefault();
+                          setAttachedImageUrls(prev => [...(prev||[]), ...urls]);
+                        }
+                      }
+                    } catch {}
+                  }
+                } catch {}
+              }}
               rows={2}
               placeholder={connected ? 'Delegate a task to Nexus AI...' : 'Starting backend...'}
               className="w-full bg-[var(--bg-tertiary)] rounded-lg py-3 pl-4 pr-12 text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] border border-[var(--border)] resize-none leading-6"
@@ -213,32 +384,38 @@ const ChatInterface: React.FC = () => {
             {fsOpen && fsResults.length > 0 && (
               <div className="absolute left-2 right-10 -bottom-1 translate-y-full z-20 max-h-64 overflow-auto border border-[var(--border)] rounded-md bg-[var(--bg-secondary)] shadow-lg">
                 {fsResults.map((r, idx) => (
-                  <button
-                    type="button"
-                    key={r.path + ':' + idx}
-                    className={`w-full text-left px-2 py-1 text-xs font-mono truncate ${idx===fsSel ? 'bg-[var(--bg-tertiary)]' : ''}`}
-                    title={r.path}
-                    onMouseEnter={()=> setFsSel(idx)}
-                    onMouseDown={(ev)=>{ ev.preventDefault(); }}
-                    onClick={()=>{
-                      const ta = taRef.current;
-                      const text = draftMessage;
-                      if (!ta) return;
-                      const caret = ta.selectionStart || 0;
-                      const before = text.slice(0, caret);
-                      const after = text.slice(caret);
-                      const m = /(^|\s)@([^\s]*)$/.exec(before);
-                      if (!m) { setFsOpen(false); return; }
-                      const prefix = before.slice(0, before.length - (m[2] ? m[2].length : 0) - 1);
-                      const insert = (r.rel || r.path);
-                      const next = prefix + insert + after;
-                      setDraftMessage(next);
-                      setTimeout(()=>{ try { if (taRef.current) { const pos = prefix.length + insert.length; taRef.current.selectionStart = pos; taRef.current.selectionEnd = pos; } } catch {} }, 0);
-                      setFsOpen(false);
-                    }}
-                  >
-                    {r.rel || r.path}
-                  </button>
+                  <div key={r.path + ':' + idx} className={`flex items-center gap-2 px-2 py-1 ${idx===fsSel ? 'bg-[var(--bg-tertiary)]' : ''}`} onMouseEnter={()=> setFsSel(idx)}>
+                    <button
+                      type="button"
+                      className="flex-1 text-left text-xs font-mono truncate"
+                      title={r.path}
+                      onMouseDown={(ev)=>{ ev.preventDefault(); }}
+                      onClick={()=>{
+                        const ta = taRef.current;
+                        const text = draftMessage;
+                        if (!ta) return;
+                        const caret = ta.selectionStart || 0;
+                        const before = text.slice(0, caret);
+                        const after = text.slice(caret);
+                        const m = /(^|\s)@([^\s]*)$/.exec(before);
+                        if (!m) { setFsOpen(false); return; }
+                        const prefix = before.slice(0, before.length - (m[2] ? m[2].length : 0) - 1);
+                        const insert = (r.rel || r.path);
+                        const next = prefix + insert + after;
+                        setDraftMessage(next);
+                        setTimeout(()=>{ try { if (taRef.current) { const pos = prefix.length + insert.length; taRef.current.selectionStart = pos; taRef.current.selectionEnd = pos; } } catch {} }, 0);
+                        setFsOpen(false);
+                      }}
+                    >
+                      {r.rel || r.path}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-2xs underline text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+                      onMouseDown={(ev)=>{ ev.preventDefault(); }}
+                      onClick={async()=>{ try { await (window as any).fsapi.openPath(r.path); } catch {} }}
+                    >Open</button>
+                  </div>
                 ))}
               </div>
             )}
@@ -260,3 +437,35 @@ const ChatInterface: React.FC = () => {
 };
 
 export default ChatInterface;
+
+async function downscaleDataUrl(dataUrl: string, maxDim: number): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let { width, height } = img;
+          if (width <= maxDim && height <= maxDim) {
+            resolve(dataUrl);
+            return;
+          }
+          const scale = Math.min(maxDim / width, maxDim / height);
+          const w = Math.max(1, Math.round(width * scale));
+          const h = Math.max(1, Math.round(height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { resolve(dataUrl); return; }
+          ctx.drawImage(img, 0, 0, w, h);
+          // Preserve type if possible
+          const typeMatch = /^data:(image\/[a-zA-Z0-9.+-]+);/i.exec(dataUrl);
+          const mime = typeMatch ? typeMatch[1] : 'image/png';
+          const out = canvas.toDataURL(mime, 0.92);
+          resolve(out);
+        } catch { resolve(dataUrl); }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    } catch { resolve(dataUrl); }
+  });
+}

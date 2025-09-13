@@ -15,6 +15,12 @@ const SettingsWorkspace: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authInfo, setAuthInfo] = useState<any>(null);
+  const [downscale, setDownscale] = useState<boolean>(() => localStorage.getItem('vision.downscale') === 'true');
+  const [maxDim, setMaxDim] = useState<number>(() => {
+    const v = parseInt(localStorage.getItem('vision.maxDim') || '1280', 10);
+    return isNaN(v) ? 1280 : v;
+  });
   const [workbenchCfg, setWorkbenchCfg] = useState<{ backend?: { codex_path?: string; profile?: string } }>({});
 
   const profiles = Object.keys((cfg.profiles || {}));
@@ -71,12 +77,9 @@ const SettingsWorkspace: React.FC = () => {
             <div className="flex items-center gap-2">
               <div className="text-sm text-[var(--text-secondary)]">Login to ChatGPT (for models that require it)</div>
               <button className="px-3 py-1 rounded bg-[var(--accent)] text-white" onClick={()=>window.aiw.login()}>Login</button>
-              <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={async()=>{
-                const s = await window.aiw.loginStatus();
-                const text = (s.stdout || s.stderr || '').trim();
-                alert(text || 'No status available');
-              }}>Status</button>
+              <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" onClick={async()=>{ try { const info = await window.aiw.authInfo(); setAuthInfo(info||null); } catch {} }}>Status</button>
             </div>
+            <AuthStatusPanel info={authInfo} />
           </Section>
 
           <Section title="Profile">
@@ -127,6 +130,38 @@ const SettingsWorkspace: React.FC = () => {
                 </select>
               </div>
             </div>
+          </Section>
+
+          <Section title="Vision">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!cfg.include_view_image_tool}
+                  onChange={(e)=> set('include_view_image_tool', e.target.checked)}
+                />
+                Allow model to attach images (view_image)
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={downscale}
+                  onChange={(e)=> { setDownscale(e.target.checked); try { localStorage.setItem('vision.downscale', String(e.target.checked)); } catch {} }}
+                />
+                Downscale images before sending
+              </label>
+              <div className="flex items-center gap-2">
+                <label className="text-sm w-40">Max image dimension (px)</label>
+                <input
+                  type="number"
+                  min={64}
+                  value={maxDim}
+                  onChange={(e)=> { const v = Math.max(64, parseInt(e.target.value||'1280',10)||1280); setMaxDim(v); try { localStorage.setItem('vision.maxDim', String(v)); } catch {} }}
+                  className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]"
+                />
+              </div>
+            </div>
+            <div className="text-2xs text-[var(--text-tertiary)] mt-2">Note: view_image is always enabled at runtime by the frontend for convenience.</div>
           </Section>
 
           <Section title="History">
@@ -251,6 +286,33 @@ const SettingsWorkspace: React.FC = () => {
 export default SettingsWorkspace;
 
 // --- Subcomponents ---------------------------------------------------------
+
+const AuthStatusPanel: React.FC<{ info: any }> = ({ info }) => {
+  if (!info) return null;
+  const rows: Array<[string, string]> = [];
+  rows.push(['Mode', info.mode || 'none']);
+  if (info.mode === 'api_key' && info.masked_api_key) rows.push(['API Key', info.masked_api_key]);
+  if (info.email) rows.push(['Email', info.email]);
+  if (info.account_id) rows.push(['Account ID', info.account_id]);
+  if (info.plan_type) rows.push(['Plan', info.plan_type]);
+  if (info.last_refresh) rows.push(['Last Refresh', info.last_refresh]);
+  return (
+    <div className="mt-3 border border-[var(--border)] rounded bg-[var(--bg-tertiary)] p-3 text-sm">
+      {rows.length === 0 ? (
+        <div className="text-[var(--text-tertiary)]">No status available</div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex items-center gap-2">
+              <div className="w-32 text-[var(--text-tertiary)]">{k}</div>
+              <div className="font-mono break-all">{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ModelProvidersEditor: React.FC<{ providers: Record<string, any>, onChange: (m: Record<string, any>)=>void }> = ({ providers, onChange }) => {
   const [newId, setNewId] = useState('');

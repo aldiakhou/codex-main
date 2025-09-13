@@ -4,9 +4,10 @@ import { IconTools } from '@tabler/icons-react';
 import McpServerModal from '../McpServerModal';
 
 const ToolsWorkspace: React.FC = () => {
-  const { status, logs, mcpTools, refreshMcpTools, mcpServers, refreshMcpServers, serverErrors, customPrompts, refreshCustomPrompts, setDraftMessage } = useBackend();
+  const { status, logs, mcpTools, refreshMcpTools, mcpServers, refreshMcpServers, serverErrors, customPrompts, refreshCustomPrompts, setDraftMessage, userTurn } = useBackend();
   const [filter, setFilter] = useState('');
   const [openModal, setOpenModal] = useState<string | false>(false);
+  const [toolModal, setToolModal] = useState<false | { fq: string; def: any }>(false);
   useEffect(() => { refreshMcpServers().then(()=>refreshMcpTools()).catch(()=>{}); }, []);
   const entries = useMemo(() => {
     const items = Object.entries(mcpTools || {});
@@ -156,15 +157,11 @@ const ToolsWorkspace: React.FC = () => {
                   <div className="mt-2 flex items-center justify-between gap-2">
                     <span className="text-2xs text-[var(--text-tertiary)] truncate" title={fq}>{fq}</span>
                     <div className="flex items-center gap-2">
-                      <button
-                        className="text-2xs px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)]"
-                        title="Insert a request to run this tool into chat"
-                        onClick={()=>{
-                          const pretty = (def && def.input_schema && def.input_schema.properties) ? JSON.stringify(Object.fromEntries(Object.keys(def.input_schema.properties||{}).map(k=>[k, '...'])), null, 2) : '{}';
-                          const hint = `Run MCP tool ${def?.name || fq} with args: ${pretty}`;
-                          setDraftMessage((prev:any)=> (prev ? prev+"\n\n" : '') + hint);
-                        }}
-                      >Insert</button>
+                    <button
+                      className="text-2xs px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)]"
+                      title="Fill arguments then insert into chat"
+                      onClick={()=> setToolModal({ fq, def })}
+                    >Use</button>
                       <span className="text-2xs font-semibold inline-block py-0.5 px-2 uppercase rounded text-[var(--success)] bg-green-200">Available</span>
                     </div>
                   </div>
@@ -183,8 +180,123 @@ const ToolsWorkspace: React.FC = () => {
         </div>
       </div>
       <McpServerModal isOpen={openModal !== false} onClose={()=>setOpenModal(false)} onSaved={async()=>{ await refreshMcpServers(); await refreshMcpTools(); }} initial={openModal ? (mcpServers[String(openModal)] || undefined) : undefined} />
+      <ToolArgsModal
+        open={!!toolModal}
+        def={toolModal ? toolModal.def : null}
+        fq={toolModal ? toolModal.fq : ''}
+        onClose={()=> setToolModal(false)}
+        onInsert={(jsonText)=>{
+          const name = (toolModal && (toolModal.def?.name || toolModal.fq)) || 'tool';
+          const hint = `Run MCP tool ${name} with args: ${jsonText}`;
+          setDraftMessage((prev:any)=> (prev ? prev+"\n\n" : '') + hint);
+          setToolModal(false);
+        }}
+        onRun={async(jsonText)=>{
+          try {
+            const name = (toolModal && (toolModal.def?.name || toolModal.fq)) || 'tool';
+            const text = `Please call the MCP tool "${name}" with the following JSON arguments. Return only the tool output.\n\n\`\`\`json\n${jsonText}\n\`\`\``;
+            await userTurn(text);
+          } catch {}
+          setToolModal(false);
+        }}
+      />
     </div>
   );
 };
 
 export default ToolsWorkspace;
+
+const ToolArgsModal: React.FC<{
+  open: boolean;
+  def: any;
+  fq: string;
+  onClose: () => void;
+  onInsert: (jsonText: string) => void;
+  onRun: (jsonText: string) => void;
+}> = ({ open, def, fq, onClose, onInsert, onRun }) => {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const props = def?.input_schema?.properties || {};
+  const required: string[] = Array.isArray(def?.input_schema?.required) ? def.input_schema.required : [];
+  useEffect(() => {
+    if (open) {
+      const initial: Record<string, string> = {};
+      Object.keys(props).forEach((k) => { initial[k] = ''; });
+      setValues(initial);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, fq]);
+  if (!open) return null;
+  const entries = Object.entries(props) as Array<[string, any]>;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="tool-args-title">
+      <div className="bg-[var(--bg-secondary)] w-full max-w-lg rounded-lg border border-[var(--border)]">
+        <div className="p-3 border-b border-[var(--border)] flex items-center justify-between">
+          <div id="tool-args-title" className="font-semibold truncate">Use MCP Tool</div>
+          <button className="text-xl" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <div className="text-[var(--text-tertiary)] truncate">{def?.name || fq}</div>
+          {entries.length === 0 ? (
+            <div className="text-[var(--text-tertiary)]">No arguments</div>
+          ) : (
+            <div className="space-y-2">
+              {entries.map(([k, schema]) => (
+                <div key={k} className="flex items-center gap-2">
+                  <label className="w-32 text-xs text-[var(--text-tertiary)]">
+                    {k}{required.includes(k) ? ' *' : ''}
+                  </label>
+                  <input
+                    className="flex-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs font-mono"
+                    placeholder={schema?.description || schema?.type || 'value'}
+                    value={values[k] ?? ''}
+                    onChange={(e)=> setValues((prev)=> ({ ...prev, [k]: e.target.value }))}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="p-3 border-t border-[var(--border)] flex gap-2 justify-end">
+          <button className="px-3 py-1 rounded bg-[var(--bg-tertiary)]" onClick={onClose}>Cancel</button>
+          <button
+            className="px-3 py-1 rounded bg-[var(--accent)] text-white"
+            onClick={()=>{
+              try {
+                const obj: any = {};
+                entries.forEach(([k]) => { if (values[k]) obj[k] = coerce(values[k]); });
+                const jsonText = JSON.stringify(obj, null, 2);
+                onInsert(jsonText);
+              } catch {
+                onInsert('{}');
+              }
+            }}
+          >Insert</button>
+          <button
+            className="px-3 py-1 rounded bg-[var(--accent)]/90 text-white"
+            onClick={()=>{
+              try {
+                const obj: any = {};
+                entries.forEach(([k]) => { if (values[k]) obj[k] = coerce(values[k]); });
+                const jsonText = JSON.stringify(obj, null, 2);
+                onRun(jsonText);
+              } catch {
+                onRun('{}');
+              }
+            }}
+          >Run</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function coerce(v: string): any {
+  const t = v.trim();
+  if (!t) return '';
+  if (t === 'true') return true;
+  if (t === 'false') return false;
+  if (/^-?\d+$/.test(t)) return parseInt(t, 10);
+  if (/^-?\d+\.\d+$/.test(t)) return parseFloat(t);
+  try { return JSON.parse(t); } catch {}
+  return v;
+}
