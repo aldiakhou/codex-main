@@ -28,8 +28,8 @@ const AgentsWorkspace: React.FC = () => {
   const workforceContainerRef = useRef<HTMLDivElement>(null);
   const [scrollState, setScrollState] = useState({ isAtStart: true, isAtEnd: true });
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
-  const [agentId, setAgentId] = useState('demo_exec_patch');
-  const [goal, setGoal] = useState('Demo exec + patch');
+  const [agentId, setAgentId] = useState('');
+  const [goal, setGoal] = useState('');
   const [params, setParams] = useState('{ "demo_exec_patch": true }');
   const [status, setStatus] = useState('');
   // Session selector (Main vs specific agent run)
@@ -312,7 +312,7 @@ const AgentsWorkspace: React.FC = () => {
                 Task Overview
               </motion.h2>
               <p className="text-hierarchy-5 text-[var(--text-secondary)] rhythm-relaxed hierarchy-paragraph">
-                Urgently analyze the reasons behind the unusual surge in new energy stocks. Combine internal user behavior database and investment portfolios. Generate personalized analysis reports and send them to relevant clients.
+                Start a focused agent run. Pick an Agent, enter your goal, and optionally provide Context (JSON). Use the Session selector to view live plan and tool calls for a specific run.
               </p>
             </div>
             <div className="glass-card p-md hover-lift-sm interactive-card">
@@ -348,16 +348,44 @@ const AgentsWorkspace: React.FC = () => {
                 </div>
                 <div className="flex flex-col gap-1 md:col-span-2">
                   <label className="text-2xs text-[var(--text-tertiary)]">Goal</label>
-                  <input
-                    className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]"
-                    placeholder="What should this agent do?"
+                  <textarea
+                    className="px-2 py-2 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[96px] resize-y"
+                    placeholder="Enter your goal here…"
                     value={goal}
                     onChange={(e)=>setGoal(e.target.value)}
                   />
                 </div>
                 <div className="flex flex-col gap-1 md:col-span-3">
                   <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
-                  <textarea className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[80px]" value={params} onChange={(e)=>setParams(e.target.value)} />
+                  <div className="flex items-center gap-2 mb-1">
+                    <select
+                      className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-2xs"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) return;
+                        if (val === 'ogds') {
+                          const tpl = {
+                            workspace: "",
+                            tasks: ["outline","gather","draft","summarize"],
+                            constraints: { max_tokens: 1500, allow_network: true },
+                            success: ["brief.md created", "citations included"]
+                          };
+                          setParams(JSON.stringify(tpl, null, 2));
+                        } else if (val === 'basic') {
+                          const tpl = { workspace: "", notes: "", options: {} };
+                          setParams(JSON.stringify(tpl, null, 2));
+                        }
+                        // reset selection back to placeholder
+                        e.currentTarget.selectedIndex = 0;
+                      }}
+                    >
+                      <option value="">Insert template…</option>
+                      <option value="ogds">OGDS (Outline/Gather/Draft/Summarize)</option>
+                      <option value="basic">Basic</option>
+                    </select>
+                    <span className="text-2xs text-[var(--text-tertiary)]">Optional structured parameters for this run</span>
+                  </div>
+                  <textarea className="px-2 py-2 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] min-h-[120px] resize-y" value={params} onChange={(e)=>setParams(e.target.value)} />
                 </div>
                 <div className="flex flex-col gap-1 md:col-span-3">
                   <label className="text-2xs text-[var(--text-tertiary)]">Search Agents</label>
