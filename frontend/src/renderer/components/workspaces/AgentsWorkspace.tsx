@@ -32,6 +32,8 @@ const AgentsWorkspace: React.FC = () => {
   const [goal, setGoal] = useState('Demo exec + patch');
   const [params, setParams] = useState('{ "demo_exec_patch": true }');
   const [status, setStatus] = useState('');
+  // Session selector (Main vs specific agent run)
+  const [sessionFilter, setSessionFilter] = useState<'main' | string>('main');
   // Per-card context JSON (persisted)
   const [cardContexts, setCardContexts] = useState<Record<string, string>>(() => {
     try {
@@ -122,6 +124,19 @@ const AgentsWorkspace: React.FC = () => {
     return scored.map(s => s.a);
   }, [liveAgents, effectiveQuery]);
 
+  // Build session selector options
+  const sessionOptions = useMemo(() => {
+    const opts: Array<{ value: string; label: string }> = [{ value: 'main', label: 'Main (codex)' }];
+    Object.keys(agentRuns).forEach((tid) => {
+      const run = agentRuns[tid];
+      const a = liveAgents.find((x) => x.id === run.agent_id);
+      const name = a?.name || run.agent_id || 'agent';
+      const short = tid.slice(0, 8);
+      opts.push({ value: tid, label: `${name} (${short})` });
+    });
+    return opts;
+  }, [agentRuns, liveAgents]);
+
   // Plan-based progress with fallback heuristic cache
   const progressCacheRef = useRef<Record<string, number>>({});
   const progressForRun = (run: { status: string; created_at: number; updated_at: number; task_id: string }) => {
@@ -176,8 +191,9 @@ const AgentsWorkspace: React.FC = () => {
   const lastAssistant = useMemo<Msg | null>(() => {
     try {
       const arr = (messages || []).slice().reverse() as Msg[];
-      if (detailsTaskId) {
-        const byTask = arr.find((m) => m.role === 'assistant' && m.taskId === detailsTaskId);
+      const selTask = sessionFilter !== 'main' ? sessionFilter : undefined;
+      if (selTask) {
+        const byTask = arr.find((m) => m.role === 'assistant' && m.taskId === selTask);
         if (byTask) return byTask;
       }
       return arr.find((m) => m.role === 'assistant') || null;
@@ -185,7 +201,7 @@ const AgentsWorkspace: React.FC = () => {
       console.debug('lastAssistant parse error', e);
       return null;
     }
-  }, [messages, detailsTaskId]);
+  }, [messages, sessionFilter]);
 
   // Periodically refresh status for running tasks
   useEffect(() => {
@@ -312,6 +328,20 @@ const AgentsWorkspace: React.FC = () => {
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Session selector */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-2xs text-[var(--text-tertiary)]">Session</label>
+                  <select className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={sessionFilter} onChange={(e)=>setSessionFilter(e.target.value as any)}>
+                    <option value="main">Main (codex)</option>
+                    {Object.keys(agentRuns).map((tid) => {
+                      const run = agentRuns[tid];
+                      const a = liveAgents.find(x => x.id === run.agent_id);
+                      const name = a?.name || run.agent_id || 'agent';
+                      const short = tid.slice(0,8);
+                      return <option key={tid} value={tid}>{name} ({short})</option>;
+                    })}
+                  </select>
+                </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-2xs text-[var(--text-tertiary)]">Agent ID</label>
                   <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={agentId} onChange={(e)=>setAgentId(e.target.value)} />
@@ -679,7 +709,7 @@ const AgentsWorkspace: React.FC = () => {
               {/* Live Plan */}
               <div className="p-3 rounded border border-[var(--border)] bg-[var(--bg-tertiary)]">
                 <div className="font-semibold mb-2 text-sm">Live Plan</div>
-                {(() => { const p = detailsTaskId && plansByTask[detailsTaskId] ? plansByTask[detailsTaskId] : plan; return p && p.plan && p.plan.length ? (
+                {(() => { const sel = sessionFilter !== 'main' ? sessionFilter : undefined; const p = sel && plansByTask[sel] ? plansByTask[sel] : plan; return p && p.plan && p.plan.length ? (
                   <ul className="space-y-1">
                     {p.plan.map((it, idx) => (
                       <li key={idx} className="flex items-center gap-2 text-sm">
@@ -692,7 +722,7 @@ const AgentsWorkspace: React.FC = () => {
                 ) : (
                   <div className="text-2xs text-[var(--text-tertiary)]">No plan yet.</div>
                 ); })()}
-                {(() => { const p = detailsTaskId && plansByTask[detailsTaskId] ? plansByTask[detailsTaskId] : plan; return p?.explanation ? <div className="mt-2 text-2xs text-[var(--text-tertiary)]">{p.explanation}</div> : null; })()}
+                {(() => { const sel = sessionFilter !== 'main' ? sessionFilter : undefined; const p = sel && plansByTask[sel] ? plansByTask[sel] : plan; return p?.explanation ? <div className="mt-2 text-2xs text-[var(--text-tertiary)]">{p.explanation}</div> : null; })()}
               </div>
 
               {/* Tool Calls (recent) */}
@@ -700,7 +730,7 @@ const AgentsWorkspace: React.FC = () => {
                 <div className="font-semibold mb-2 text-sm">Recent Tool Calls</div>
                 {toolCalls && toolCalls.length ? (
                   <div className="space-y-2">
-                    {toolCalls.filter(tc => !detailsTaskId || tc.task_id === detailsTaskId).slice(0, 10).map((tc) => (
+                    {toolCalls.filter(tc => (sessionFilter === 'main' ? !tc.task_id : tc.task_id === sessionFilter)).slice(0, 10).map((tc) => (
                       <div key={tc.call_id} className="text-sm">
                         <div className="flex items-center justify-between">
                           <div>

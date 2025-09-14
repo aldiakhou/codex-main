@@ -106,6 +106,8 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [tokenUsage, setTokenUsage] = useState<BackendContextType['tokenUsage']>();
   // Keep a ref to agentRuns so event handlers can resolve agent_id for meta-tagging
   const agentRunsRef = useRef<BackendContextType['agentRuns']>({});
+  // Keep a ref for agents list to resolve display name
+  const agentsRef = useRef<BackendContextType['agents']>([]);
   const [toolCalls, setToolCalls] = useState<BackendContextType['toolCalls']>([]);
   const [mcpTools, setMcpTools] = useState<Record<string, any>>({});
   const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
@@ -146,6 +148,10 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     agentRunsRef.current = agentRuns;
   }, [agentRuns]);
+
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
 
   useEffect(() => {
     // wire listeners
@@ -387,12 +393,28 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || `mcp_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'mcp', name, status: 'running', started_at: Date.now(), stdout: '', stderr: '', task_id: metaTaskId }, ...prev]);
+          // Compact hint to differentiate main vs agent
+          setMessages((prev) => {
+            const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+            const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
+            const text = `${prefix}FunctionCall: ${name}`;
+            return [...prev, { id: `mcp_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now(), taskId: metaTaskId } as any];
+          });
           return;
         }
         if (type === 'mcp_tool_call_end') {
           const name = e.msg?.tool || e.msg?.name || 'tool';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now() } : tc));
+          // Compact end hint
+          setMessages((prev) => {
+            const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+            const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
+            const text = `${prefix}FunctionCall done: ${name}`;
+            return [...prev, { id: `mcp_end_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now(), taskId: metaTaskId } as any];
+          });
           return;
         }
         if (type === 'exec_command_begin') {
@@ -402,8 +424,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '', task_id: metaTaskId }, ...prev]);
           // Compact hint: indicate when an agent starts a command
           setMessages((prev) => {
-            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
-            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+            const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
             const text = `${prefix}running: ${cmd}`;
             const last = prev[prev.length - 1];
             if (last && last.role === 'system' && last.text === text) return prev;
@@ -437,12 +460,25 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const out = e.msg?.formatted_output || e.msg?.stdout || '';
           const call_id = e.msg?.call_id || e.id || '';
           setToolCalls((prev) => prev.map(tc => tc.call_id === call_id ? { ...tc, status: 'done', ended_at: Date.now(), exit_code: code, formatted_output: out, stdout: tc.stdout || (e.msg?.stdout || ''), stderr: tc.stderr || (e.msg?.stderr || '') } : tc));
+          // Compact end hint with exit code and command
+          try {
+            const tc = toolCalls.find(t => t.call_id === call_id);
+            const cmd = tc && tc.command ? tc.command.join(' ') : 'exec';
+            setMessages((prev) => {
+              const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+              const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+              const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
+              const text = `${prefix}finished: ${cmd} (code ${typeof code === 'number' ? code : 'n/a'})`;
+              return [...prev, { id: `exec_end_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now(), taskId: metaTaskId } as any];
+            });
+          } catch {}
           return;
         }
         if (type === 'web_search_begin') {
           setMessages((prev) => {
-            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
-            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+            const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
             const text = `${prefix}web search: ${e.msg?.query || ''}`;
             const last = prev[prev.length-1];
             if (last && last.role==='system' && last.text===text) return prev;
@@ -452,8 +488,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         if (type === 'web_search_end') {
           setMessages((prev) => {
-            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
-            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+            const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
             const text = `${prefix}web search done`;
             const last = prev[prev.length-1];
             if (last && last.role==='system' && last.text===text) return prev;
@@ -463,8 +500,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         if (type === 'patch_apply_begin') {
           setMessages((prev) => {
-            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
-            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+            const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
             const text = `${prefix}Applying patch...`;
             const last = prev[prev.length-1];
             if (last && last.role==='system' && last.text===text) return prev;
@@ -475,8 +513,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (type === 'patch_apply_end') {
           const ok = e.msg?.success ? 'success' : 'failed';
           setMessages((prev) => {
-            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
-            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const aid = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const aname = aid ? (agentsRef.current.find(a => a.id === aid)?.name || aid) : undefined;
+            const prefix = aname ? `[Agent ${aname}] ` : 'codex → ';
             const text = `${prefix}Patch apply ${ok}`;
             const last = prev[prev.length-1];
             if (last && last.role==='system' && last.text===text) return prev;
