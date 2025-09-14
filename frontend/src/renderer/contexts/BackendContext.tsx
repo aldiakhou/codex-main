@@ -104,6 +104,8 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [lastError, setLastError] = useState<string | null>(null);
   const [draftMessage, setDraftMessage] = useState<string>('');
   const [tokenUsage, setTokenUsage] = useState<BackendContextType['tokenUsage']>();
+  // Keep a ref to agentRuns so event handlers can resolve agent_id for meta-tagging
+  const agentRunsRef = useRef<BackendContextType['agentRuns']>({});
   const [toolCalls, setToolCalls] = useState<BackendContextType['toolCalls']>([]);
   const [mcpTools, setMcpTools] = useState<Record<string, any>>({});
   const [mcpServers, setMcpServers] = useState<Record<string, any>>({});
@@ -142,6 +144,10 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const unsub = useRef<(() => void)[]>([]);
 
   useEffect(() => {
+    agentRunsRef.current = agentRuns;
+  }, [agentRuns]);
+
+  useEffect(() => {
     // wire listeners
     unsub.current.push(window.aiw.onStatus((s) => setStatus((s as Status) || 'idle')));
     unsub.current.push(window.aiw.onLog((m) => setLogs((prev) => [...prev.slice(-400), m])));
@@ -160,15 +166,27 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (type === 'agent_run_started') {
           const agent_id = String(e?.msg?.agent_id || '');
           const task_id = String(e?.msg?.task_id || '');
-          // try to extract allowlist if backend provided it
+          // try to extract allowlist + policy/sandbox if backend provided it
           const allowed: string[] | undefined = (e?.structured_content?.allowed_mcp_tools
             || e?.msg?.structured_content?.allowed_mcp_tools
             || e?.allowed_mcp_tools
             || undefined);
+          const approval_policy: string | undefined = (e?.structured_content?.approval_policy || e?.msg?.structured_content?.approval_policy);
+          const sandbox_policy: any = (e?.structured_content?.sandbox_policy || e?.msg?.structured_content?.sandbox_policy);
           if (!task_id) return;
           setAgentRuns((prev) => ({
             ...prev,
-            [task_id]: { task_id, agent_id, status: 'running', created_at: Date.now(), updated_at: Date.now(), allowed_mcp_tools: Array.isArray(allowed) ? allowed.map(String) : undefined },
+            [task_id]: {
+              task_id,
+              agent_id,
+              status: 'running',
+              created_at: Date.now(),
+              updated_at: Date.now(),
+              allowed_mcp_tools: Array.isArray(allowed) ? allowed.map(String) : undefined,
+              // Store hints for display/logging when present
+              ...(approval_policy ? { approval_policy } as any : {}),
+              ...(sandbox_policy ? { sandbox_policy } as any : {}),
+            },
           }));
           return;
         }
@@ -315,9 +333,11 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         if (type === 'stream_error') {
           const msg = e.msg?.message || 'model stream error';
-          setLogs((prev) => [...prev.slice(-400), `STREAM ERROR: ${msg}`]);
+          const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+          const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+          setLogs((prev) => [...prev.slice(-400), `STREAM ERROR: ${prefix}${msg}`]);
           setMessages((prev) => {
-            const text = `Stream error: ${msg}`;
+            const text = `${prefix}Stream error: ${msg}`;
             const last = prev[prev.length - 1];
             if (last && last.role === 'system' && last.text === text) return prev;
             return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
@@ -328,7 +348,9 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const msg = e.msg?.message || '';
           if (!msg) return;
           setMessages((prev) => {
-            const text = `Background: ${msg}`;
+            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const text = `${prefix}Background: ${msg}`;
             return [...prev, { id: `bg_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
           });
           return;
@@ -378,6 +400,18 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const cwd = e.msg?.cwd || '';
           const call_id = e.msg?.call_id || e.id || `exec_${Date.now()}`;
           setToolCalls((prev) => [{ call_id, kind: 'exec', command: e.msg?.command || [], cwd, status: 'running', started_at: Date.now(), stdout: '', stderr: '', task_id: metaTaskId }, ...prev]);
+          // Compact hint: indicate when an agent starts a command
+          setMessages((prev) => {
+            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const text = `${prefix}running: ${cmd}`;
+            const last = prev[prev.length - 1];
+            if (last && last.role === 'system' && last.text === text) return prev;
+            return [
+              ...prev,
+              { id: `exec_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now(), taskId: metaTaskId } as any,
+            ];
+          });
           return;
         }
         if (type === 'exec_command_output_delta') {
@@ -406,20 +440,48 @@ export const BackendProvider: React.FC<{ children: React.ReactNode }> = ({ child
           return;
         }
         if (type === 'web_search_begin') {
-          setMessages((prev) => { const text = `web search: ${e.msg?.query || ''}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => {
+            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const text = `${prefix}web search: ${e.msg?.query || ''}`;
+            const last = prev[prev.length-1];
+            if (last && last.role==='system' && last.text===text) return prev;
+            return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
+          });
           return;
         }
         if (type === 'web_search_end') {
-          setMessages((prev) => { const text = 'web search done'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => {
+            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const text = `${prefix}web search done`;
+            const last = prev[prev.length-1];
+            if (last && last.role==='system' && last.text===text) return prev;
+            return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
+          });
           return;
         }
         if (type === 'patch_apply_begin') {
-          setMessages((prev) => { const text = 'Applying patch...'; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => {
+            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const text = `${prefix}Applying patch...`;
+            const last = prev[prev.length-1];
+            if (last && last.role==='system' && last.text===text) return prev;
+            return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
+          });
           return;
         }
         if (type === 'patch_apply_end') {
           const ok = e.msg?.success ? 'success' : 'failed';
-          setMessages((prev) => { const text = `Patch apply ${ok}`; const last = prev[prev.length-1]; if (last && last.role==='system' && last.text===text) return prev; return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any]; });
+          setMessages((prev) => {
+            const agent_id = metaTaskId && agentRunsRef.current[metaTaskId]?.agent_id;
+            const prefix = agent_id ? `[Agent ${agent_id}] ` : '';
+            const text = `${prefix}Patch apply ${ok}`;
+            const last = prev[prev.length-1];
+            if (last && last.role==='system' && last.text===text) return prev;
+            return [...prev, { id: `sys_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, role: 'system', text, ts: Date.now() } as any];
+          });
           return;
         }
         if (type === 'conversation_history') {

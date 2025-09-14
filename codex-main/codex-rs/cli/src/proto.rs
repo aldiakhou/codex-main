@@ -81,9 +81,11 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
     struct EventWithMetaTop<'a> {
         #[serde(rename = "_meta")] meta: EventMetaTop,
         #[serde(flatten)] event: &'a Event,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        structured_content: Option<serde_json::Value>,
     }
-    fn emit_event_with_meta(event: &Event, task_id: Uuid, agent_id: &str) {
-        let wrapped = EventWithMetaTop { meta: EventMetaTop { task_id, agent_id: agent_id.to_string() }, event };
+    fn emit_event_with_meta(event: &Event, task_id: Uuid, agent_id: &str, structured_content: Option<serde_json::Value>) {
+        let wrapped = EventWithMetaTop { meta: EventMetaTop { task_id, agent_id: agent_id.to_string() }, event, structured_content };
         match serde_json::to_string(&wrapped) {
             Ok(s) => println!("{}", s),
             Err(e) => eprintln!("failed to serialize event with meta: {e}"),
@@ -156,6 +158,14 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
                                             cfg.include_plan_tool = true;
                                         }
 
+                                        // Capture resolved policy/sandbox/cwd and allowlist for UI hints
+                                        let resolved_approval_policy = cfg.approval_policy;
+                                        let resolved_sandbox_policy = cfg.sandbox_policy.clone();
+                                        let resolved_cwd = cfg.cwd.clone();
+                                        let allowed_for_response: Vec<String> = if let Some(spec) = specs.iter().find(|a| a.id == agent_id_owned) {
+                                            spec.allowed_mcp_tools.clone()
+                                        } else { Vec::new() };
+
                                         let NewConversation { conversation: agent_conv, .. } = match conversation_manager.new_conversation(cfg).await {
                                             Ok(v) => v,
                                             Err(e) => {
@@ -167,7 +177,13 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
 
                                         // Emit started event with meta
                                         let started = Event { id: sub.id.clone(), msg: EventMsg::AgentRunStarted(AgentRunStartedEvent { agent_id: agent_id_owned.clone(), task_id }) };
-                                        emit_event_with_meta(&started, task_id, &agent_id_owned);
+                                        let sc = serde_json::json!({
+                                            "approval_policy": resolved_approval_policy,
+                                            "sandbox_policy": resolved_sandbox_policy,
+                                            "cwd": resolved_cwd,
+                                            "allowed_mcp_tools": allowed_for_response,
+                                        });
+                                        emit_event_with_meta(&started, task_id, &agent_id_owned, Some(sc));
 
                                         // Submit the user input (input or goal)
                                         let prompt = input.clone().unwrap_or_else(|| "".to_string());
@@ -288,7 +304,7 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
                                             }
                                         };
                                         let ev = Event { id: sub.id.clone(), msg: EventMsg::AgentStatus(AgentStatusEvent { task_id: tid, status, error }) };
-                                        emit_event_with_meta(&ev, tid, &agent_id);
+                                        emit_event_with_meta(&ev, tid, &agent_id, None);
                                         continue;
                                     }
                                     Op::AgentCancel { task_id } => {
@@ -301,7 +317,7 @@ pub async fn run_main(opts: ProtoCli) -> anyhow::Result<()> {
                                             let _ = info.conv.submit(Op::Interrupt).await;
                                         }
                                         let ev = Event { id: sub.id.clone(), msg: EventMsg::AgentCancelled(AgentCancelledEvent { task_id: tid }) };
-                                        emit_event_with_meta(&ev, tid, &agent_id_for_meta);
+                                        emit_event_with_meta(&ev, tid, &agent_id_for_meta, None);
                                         continue;
                                     }
                                     Op::AgentsReload => {

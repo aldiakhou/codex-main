@@ -318,7 +318,12 @@ const AgentsWorkspace: React.FC = () => {
                 </div>
                 <div className="flex flex-col gap-1 md:col-span-2">
                   <label className="text-2xs text-[var(--text-tertiary)]">Goal</label>
-                  <input className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={goal} onChange={(e)=>setGoal(e.target.value)} />
+                  <input
+                    className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]"
+                    placeholder="What should this agent do?"
+                    value={goal}
+                    onChange={(e)=>setGoal(e.target.value)}
+                  />
                 </div>
                 <div className="flex flex-col gap-1 md:col-span-3">
                   <label className="text-2xs text-[var(--text-tertiary)]">Context (JSON)</label>
@@ -346,7 +351,19 @@ const AgentsWorkspace: React.FC = () => {
                       (liveAgents || []).map(a => (
                         <div key={a.id} className="flex items-center justify-between text-sm">
                           <div className="truncate"><span className="font-medium">{a.id}</span> <span className="text-2xs text-[var(--text-tertiary)]">{a.name}</span></div>
-                          <button className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs" onClick={()=>{ setAgentId(a.id); setGoal(a.description || goal); }}>Select</button>
+                          <button
+                            className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-2xs"
+                            onClick={() => {
+                              // Select the agent but do NOT overwrite the goal with the description.
+                              // Users typically want to type a task-specific goal; pre-filling with
+                              // the description made the model treat that text as the actual goal.
+                              setAgentId(a.id);
+                              // Clear the input so the user can provide an explicit goal.
+                              setGoal('');
+                            }}
+                          >
+                            Select
+                          </button>
                         </div>
                       ))
                     )}
@@ -644,6 +661,12 @@ const AgentsWorkspace: React.FC = () => {
                 <div className="text-sm"><span className="text-[var(--text-tertiary)]">Task ID:</span> {detailsTaskId || '-'}</div>
                 {detailsTaskId && agentRuns[detailsTaskId] && (
                   <div className="text-sm"><span className="text-[var(--text-tertiary)]">Status:</span> {agentRuns[detailsTaskId].status} {agentRuns[detailsTaskId].error ? (<span className="text-red-400">• {agentRuns[detailsTaskId].error}</span>) : null}</div>
+                )}
+                {detailsTaskId && agentRuns[detailsTaskId] && (agentRuns[detailsTaskId] as any).approval_policy && (
+                  <div className="text-sm"><span className="text-[var(--text-tertiary)]">Approval:</span> {(agentRuns[detailsTaskId] as any).approval_policy}</div>
+                )}
+                {detailsTaskId && agentRuns[detailsTaskId] && (agentRuns[detailsTaskId] as any).sandbox_policy && (
+                  <div className="text-sm"><span className="text-[var(--text-tertiary)]">Sandbox:</span> {(() => { try { return JSON.stringify((agentRuns[detailsTaskId] as any).sandbox_policy); } catch { return String((agentRuns[detailsTaskId] as any).sandbox_policy); } })()}</div>
                 )}
                 {detailsTaskId && agentRuns[detailsTaskId] && agentRuns[detailsTaskId].allowed_mcp_tools && agentRuns[detailsTaskId].allowed_mcp_tools!.length ? (
                   <div className="text-sm mt-1">
