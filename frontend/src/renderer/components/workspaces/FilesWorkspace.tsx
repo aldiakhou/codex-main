@@ -207,8 +207,8 @@ const FilesWorkspace: React.FC = () => {
   const humanCwd = useMemo(() => cwd.replace(/\\/g, '/'), [cwd]);
 
   return (
-    <div className="flex-1 flex p-6 gap-4 overflow-hidden">
-      <div className="w-1/3 bg-[var(--bg-secondary)] rounded-lg p-4 overflow-y-auto border border-[var(--border)]">
+    <div className="flex-1 min-h-0 h-full flex p-6 gap-4 overflow-hidden">
+      <div className="w-1/3 min-h-0 h-full bg-[var(--bg-secondary)] rounded-lg p-4 overflow-y-auto border border-[var(--border)]">
         <div className="flex items-center justify-between mb-3 gap-2">
           <div className="text-xs text-[var(--text-tertiary)] truncate" title={humanCwd}>
             {humanCwd}
@@ -361,9 +361,9 @@ const FilesWorkspace: React.FC = () => {
           ))}
         </ul>
       </div>
-      <div className="w-2/3 bg-[var(--bg-secondary)] rounded-lg p-4 border border-[var(--border)] overflow-hidden flex flex-col">
+      <div className="w-2/3 min-h-0 h-full bg-[var(--bg-secondary)] rounded-lg p-4 border border-[var(--border)] overflow-hidden flex flex-col">
         <div className="text-sm font-semibold mb-2 truncate">Preview: {selected || '(none)'}</div>
-        <div className="bg-[var(--bg-tertiary)] p-3 rounded flex-1 overflow-auto border border-[var(--border)] relative">
+        <div className="bg-[var(--bg-tertiary)] p-3 rounded flex-1 min-h-0 overflow-auto border border-[var(--border)] relative">
           {downloadUrl && (
             <a
               href={downloadUrl}

@@ -5,6 +5,25 @@ const GraphWorkspace: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [status, setStatus] = useState<string>('');
+  const [dims, setDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  // Keep track of container size and keep Cytoscape resized
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const cr = entry.contentRect;
+        setDims({ w: cr.width, h: cr.height });
+        if (cyRef.current) {
+          cyRef.current.resize();
+          try { cyRef.current.fit(); } catch {}
+        }
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const loadGraph = async () => {
     setStatus('Loading graph...');
@@ -15,6 +34,18 @@ const GraphWorkspace: React.FC = () => {
       edges: (res.edges || []).map((e, i) => ({ data: { id: 'e'+i, source: e.from, target: e.to } })),
     };
     if (!containerRef.current) return;
+    // If the container has zero height now, wait a few frames for layout to settle
+    const waitForSize = async () => {
+      for (let i = 0; i < 20; i++) {
+        const h = containerRef.current?.clientHeight || 0;
+        const w = containerRef.current?.clientWidth || 0;
+        if (h > 0 && w > 0) return true;
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      }
+      return false;
+    };
+    const ok = await waitForSize();
+    if (!ok) setStatus('Waiting for layout…');
     if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null; }
     const cy = cytoscape({
       container: containerRef.current,
@@ -39,6 +70,7 @@ const GraphWorkspace: React.FC = () => {
       } catch {}
     });
     cy.style().selector('.faded').style({ opacity: 0.2 }).update();
+    try { cy.resize(); cy.fit(); } catch {}
     cyRef.current = cy;
     setStatus(`Nodes: ${(res.nodes||[]).length}, edges: ${(res.edges||[]).length}`);
   };
@@ -46,7 +78,7 @@ const GraphWorkspace: React.FC = () => {
   useEffect(() => { loadGraph(); }, []);
 
   return (
-    <div className="flex-1 flex flex-col p-6 overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col p-6 overflow-hidden">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold">Graph</h1>
         <div className="flex gap-2 text-sm">
@@ -54,7 +86,7 @@ const GraphWorkspace: React.FC = () => {
           <div className="text-[var(--text-tertiary)]">{status}</div>
         </div>
       </div>
-      <div ref={containerRef} className="flex-1 border border-[var(--border)] rounded bg-[var(--bg-secondary)]" />
+      <div ref={containerRef} className="flex-1 min-h-0 h-full border border-[var(--border)] rounded bg-[var(--bg-secondary)]" />
     </div>
   );
 };
