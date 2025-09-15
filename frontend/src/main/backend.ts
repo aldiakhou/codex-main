@@ -160,7 +160,8 @@ export class BackendService extends EventEmitter {
       local_images = [],
       image_urls = [],
     } = params;
-    const safeCwd = (cwd || process.cwd()).replace(/\\/g, '/');
+    const hasCwd = typeof cwd === 'string' && cwd.trim().length > 0;
+    const safeCwd = hasCwd ? cwd!.replace(/\\/g, '/') : undefined;
     const items: any[] = [];
     for (const p of local_images) {
       if (p && typeof p === 'string') items.push({ type: 'local_image', path: p });
@@ -169,12 +170,14 @@ export class BackendService extends EventEmitter {
       if (u && typeof u === 'string') items.push({ type: 'image', image_url: u });
     }
     if ((text || '').trim()) items.push({ type: 'text', text });
+    // Build op, only include cwd when explicitly provided so the persistent
+    // session context (set via override_turn_context) remains in effect.
     return this.send({
       id,
       op: {
         type: 'user_turn',
         items,
-        cwd: safeCwd,
+        ...(hasCwd ? { cwd: safeCwd } : {}),
         approval_policy,
         sandbox_policy: { mode: sandbox_mode },
         model,

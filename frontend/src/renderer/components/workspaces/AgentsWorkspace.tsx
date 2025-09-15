@@ -33,7 +33,12 @@ const AgentsWorkspace: React.FC = () => {
   const [params, setParams] = useState('{ "demo_exec_patch": true }');
   const [status, setStatus] = useState('');
   // Session selector (Main vs specific agent run)
-  const [sessionFilter, setSessionFilter] = useState<'main' | string>('main');
+  const [sessionFilter, setSessionFilter] = useState<'main' | string>(() => {
+    try { return (window.localStorage.getItem('agents.sessionFilter') as any) || 'main'; } catch { return 'main'; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem('agents.sessionFilter', sessionFilter); } catch {}
+  }, [sessionFilter]);
   // Per-card context JSON (persisted)
   const [cardContexts, setCardContexts] = useState<Record<string, string>>(() => {
     try {
@@ -331,7 +336,7 @@ const AgentsWorkspace: React.FC = () => {
                 {/* Session selector */}
                 <div className="flex flex-col gap-1">
                   <label className="text-2xs text-[var(--text-tertiary)]">Session</label>
-                  <select className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)]" value={sessionFilter} onChange={(e)=>setSessionFilter(e.target.value as any)}>
+                  <select className="px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]" value={sessionFilter} onChange={(e)=>setSessionFilter(e.target.value as any)}>
                     <option value="main">Main (codex)</option>
                     {Object.keys(agentRuns).map((tid) => {
                       const run = agentRuns[tid];
@@ -762,10 +767,12 @@ const AgentsWorkspace: React.FC = () => {
                       <div key={tc.call_id} className="text-sm">
                         <div className="flex items-center justify-between">
                           <div>
-                            <span className="text-2xs text-[var(--text-tertiary)] mr-2">{tc.kind}</span>
+                            <span className={`text-2xs px-1.5 py-0.5 rounded mr-2 border ${tc.kind === 'mcp' ? 'bg-[var(--bg-secondary)] border-[var(--border)] text-[var(--text-secondary)]' : 'bg-[var(--bg-secondary)] border-[var(--border)] text-[var(--text-secondary)]'}`}>
+                              {tc.kind.toUpperCase()}
+                            </span>
                             {tc.kind === 'mcp' ? <span className="font-medium">{tc.name}</span> : <span className="font-medium">{(tc.command||[]).join(' ')}</span>}
                           </div>
-                          <div className="text-2xs text-[var(--text-tertiary)]">{tc.status}</div>
+                          <div className={`text-2xs ${tc.status === 'done' ? 'text-green-400' : 'text-[var(--text-tertiary)]'}`}>{tc.status}</div>
                         </div>
                         {tc.formatted_output && (
                           <pre className="mt-1 whitespace-pre-wrap text-xs bg-black/20 p-2 rounded border border-[var(--border)]">{tc.formatted_output}</pre>
